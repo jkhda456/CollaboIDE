@@ -1,0 +1,16 @@
+{
+  "check_title": "Python environment check",
+  "interpreter": "Interpreter:",
+  "version": "Version:",
+  "checking_libs": "Checking required/recommended libraries:",
+  "ok": "OK",
+  "missing": "missing",
+  "all_installed": "All libraries are installed.",
+  "done": "Done.",
+  "missing_list": "Missing libraries: ",
+  "auto_install_start": "Starting automatic installation…",
+  "installing": "-> Installing: ",
+  "exit_code": "exit code ",
+  "install_failed": "Installation failed: ",
+  "install_done": "Installation complete."
+}

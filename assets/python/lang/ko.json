@@ -1,0 +1,16 @@
+{
+  "check_title": "Python 환경 점검",
+  "interpreter": "인터프리터:",
+  "version": "버전:",
+  "checking_libs": "필수/권장 라이브러리 확인:",
+  "ok": "OK",
+  "missing": "없음",
+  "all_installed": "모든 라이브러리가 설치되어 있습니다.",
+  "done": "완료.",
+  "missing_list": "누락된 라이브러리: ",
+  "auto_install_start": "자동 설치를 시작합니다…",
+  "installing": "-> 설치 중: ",
+  "exit_code": "종료코드 ",
+  "install_failed": "설치 실패: ",
+  "install_done": "설치 완료."
+}

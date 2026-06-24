@@ -1,0 +1,1667 @@
+<!doctype html>
+<html lang="ko" data-bs-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Collabo IDE</title>
+  <!-- 모든 리소스는 로컬 임베딩(오프라인 동작). vendor/ 는 앱 에셋에서 추출됨. -->
+  <link href="./vendor/bootstrap.min.css" rel="stylesheet">
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { display: flex; height: 100vh; }
+    #center { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0;
+              position: relative; }
+    #messages { flex: 1 1 auto; overflow: auto; }
+    /* 떠 있는 입력창에 가리지 않도록 바닥에 실제 박스로 여백 확보(스크롤 가능). */
+    #messages::after { content: ''; display: block; height: var(--composer-h, 84px); }
+
+    /* 대화창 위에 떠 있는 입력창(composer) */
+    #composer { position: absolute; left: 16px; right: 16px; bottom: 16px;
+                display: flex; align-items: flex-end; gap: .4rem;
+                background: var(--bs-body-bg);
+                border: 1px solid var(--bs-border-color);
+                border-radius: 1.4rem;
+                box-shadow: 0 6px 20px rgba(0, 0, 0, .18);
+                padding: .3rem .4rem; }
+    /* 맨 아래로 가기 버튼 (대화창이 바닥이 아닐 때 표시) */
+    #scroll-bottom-btn { position: absolute; right: 24px; z-index: 5;
+                         width: 34px; height: 34px; border-radius: 50%;
+                         border: 1px solid var(--bs-border-color);
+                         background: var(--bs-body-bg); color: var(--bs-body-color);
+                         box-shadow: 0 2px 10px rgba(0, 0, 0, .22);
+                         display: none; align-items: center; justify-content: center;
+                         cursor: pointer; padding: 0; }
+    #scroll-bottom-btn.show { display: flex; }
+    #prompt { flex: 1 1 auto; border: none; outline: none; resize: none;
+              background: transparent; color: inherit;
+              max-height: 160px; overflow-y: auto; line-height: 1.4;
+              padding: .4rem .25rem; font: inherit; }
+    .composer-btn { flex: 0 0 auto; width: 34px; height: 34px; border: none;
+                    border-radius: 50%; display: inline-flex; align-items: center;
+                    justify-content: center; cursor: pointer; padding: 0;
+                    background: var(--bs-secondary-bg); color: var(--bs-body-color); }
+    .composer-btn:hover { filter: brightness(1.08); }
+    .composer-btn.send { background: var(--bs-primary); color: #fff; }
+    .composer-btn.plus { font-size: 1.3rem; line-height: 1; }
+    /* 비활성(입력 없음) 보내기 버튼: 회색 처리 */
+    .composer-btn:disabled,
+    .composer-btn.send:disabled { background: var(--bs-secondary-bg);
+                                  color: var(--bs-secondary-color);
+                                  cursor: default; filter: none; }
+
+    /* 대화 메시지 */
+    .msg { margin-bottom: 14px; }
+    .msg.user { text-align: right; }
+    .msg .bubble { display: inline-block; text-align: left; padding: .5rem .75rem;
+                   border-radius: .8rem; max-width: 92%; word-break: break-word;
+                   white-space: pre-wrap; }
+    .msg.user .bubble { background: var(--bs-primary); color: #fff; }
+    .msg.assistant .bubble { background: var(--bs-secondary-bg); }
+    .msg.assistant .bubble.md-rendered { white-space: normal; }
+    .msg .reasoning { border-left: 3px solid var(--bs-warning);
+                      padding: .25rem .6rem; margin-bottom: .4rem; font-size: .8rem;
+                      color: var(--bs-secondary-color); white-space: pre-wrap; }
+    .msg .meta-row { font-size: .72rem; color: var(--bs-secondary-color); margin-top: 3px; }
+    .msg .actions { font-size: .72rem; margin-top: 2px; }
+    .msg .actions button { padding: 0 .25rem; }
+    .chat-error { color: var(--bs-danger); }
+    /* 도구 실행 표시 */
+    .msg.tool { font-size: .8rem; padding: .25rem .5rem; margin-bottom: 8px;
+                border-left: 3px solid var(--bs-info); color: var(--bs-secondary-color);
+                background: var(--bs-secondary-bg); border-radius: 4px; word-break: break-word; }
+    .msg.tool code { color: var(--bs-body-color); }
+    .msg.tool .tool-args { opacity: .8; }
+    .msg.tool .tool-summary { opacity: .9; }
+    .msg.tool.has-diff { cursor: pointer; }
+    .msg.tool .tool-diff-link { color: var(--bs-primary); }
+    /* diff 보기 */
+    .diff-view { font-family: var(--bs-font-monospace); font-size: 12px;
+                 padding: 10px 12px; white-space: pre; overflow: auto; line-height: 1.4; }
+    .diff-view .diff-add { color: #2ea043; }
+    .diff-view .diff-del { color: #f85149; }
+    .diff-view .diff-hunk { color: #58a6ff; }
+    .diff-view .diff-meta { color: var(--bs-secondary-color); }
+
+    /* 좌/우 폭 조절 splitter */
+    #right-resizer { flex: 0 0 6px; cursor: col-resize; background: transparent;
+                     border-left: 1px solid var(--bs-border-color); }
+    #right-resizer:hover, #right-resizer.active { background: var(--bs-primary); }
+
+    /* 우측: 트리 + 파일 뷰어 (폭 가변) */
+    #right { width: 340px; flex: 0 0 340px; display: flex; flex-direction: column;
+             min-width: 220px; }
+    #tree { flex: 1 1 60%; overflow: auto; min-height: 0; }
+
+    /* 트리 ↔ 뷰어 높이 조절 splitter */
+    #vert-resizer { flex: 0 0 6px; cursor: row-resize;
+                    border-top: 1px solid var(--bs-border-color); }
+    #vert-resizer:hover, #vert-resizer.active { background: var(--bs-primary); }
+
+    /* 뷰어 섹션(헤더 + 내용). 전체화면 시 창 전체를 덮는다. */
+    #viewer-section { flex: 1 1 40%; display: flex; flex-direction: column; min-height: 0; }
+    #viewer-section.fullscreen { position: fixed; inset: 0; z-index: 1090;
+                                 background: var(--bs-body-bg); flex: 1 1 auto; }
+    /* flex-basis 0 + min-height 0: 내용이 짧아도 섹션 높이를 항상 채운다 */
+    #viewer { flex: 1 1 0; min-height: 0; overflow: auto;
+              font-family: var(--bs-font-monospace); font-size: .82rem; }
+    #viewer.md-rendered { font-family: inherit; font-size: inherit; }
+    /* text/hex: pre 가 뷰어 높이를 채워, 수평 스크롤바가 맨 아래에 오게 한다 */
+    #viewer pre { margin: 0; white-space: pre; min-height: 100%;
+                  box-sizing: border-box; }
+
+    .panel-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+    .path-text { font-size: .8rem; user-select: none; cursor: default; }
+    .icon-btn { line-height: 1; color: var(--bs-secondary-color); }
+    .icon-btn:hover { color: var(--bs-primary); }
+    .head-row { gap: .4rem; min-height: 31px; }
+
+    /* 트리 */
+    .tree-row { display: flex; align-items: center; gap: .25rem; padding: 1px 4px;
+                white-space: nowrap; cursor: default; border-radius: 4px; user-select: none; }
+    .tree-row:hover { background: var(--bs-secondary-bg); }
+    .tree-row.selected { background: var(--bs-primary-bg-subtle); }
+    .tree-caret { width: 1rem; text-align: center; color: var(--bs-secondary-color);
+                  flex: 0 0 auto; }
+    .tree-name { overflow: hidden; text-overflow: ellipsis; }
+    .tree-name.dir { font-weight: 500; }
+    .tree-row.drop-target { background: var(--bs-primary-bg-subtle);
+                            outline: 1px dashed var(--bs-primary); }
+    #viewer mark { background: #ffd54f; color: #000; padding: 0 1px; border-radius: 2px; }
+
+    /* 컨텍스트 메뉴 */
+    #context-menu { position: fixed; z-index: 1080; min-width: 180px; display: none; }
+
+    /* 호출 내역 모달 리스트 */
+    .activity-item { font-size: .8rem; }
+    .activity-item .a-name { font-family: var(--bs-font-monospace); }
+    .activity-item .a-args, .activity-item .a-summary { color: var(--bs-secondary-color);
+                       word-break: break-word; }
+    .activity-empty { padding: 1.5rem; text-align: center; color: var(--bs-secondary-color); }
+    /* 스크롤 이동 시 강조 */
+    .msg.flash { outline: 2px solid var(--bs-primary); outline-offset: 2px;
+                 border-radius: 4px; transition: outline-color .4s; }
+
+    /* assistant 빈 응답 요약 카드 + 알림 */
+    .summary-bubble { background: transparent !important; color: var(--bs-secondary-color);
+                      font-style: italic; padding: .15rem 0 !important; }
+    .msg.notice { font-size: .75rem; text-align: center; color: var(--bs-secondary-color);
+                  margin-bottom: 10px; }
+
+    /* 진행 상태 말풍선(대화 흐름 안, 작업 중 표시 → 완료 시 제거) */
+    .msg.status { display: flex; align-items: center; gap: 8px; }
+    .msg.status .status-queue { flex: none; font-size: .75rem; cursor: pointer;
+                                border: 1px solid var(--bs-border-color); border-radius: 999px;
+                                background: var(--bs-body-bg); color: var(--bs-body-color);
+                                padding: 1px 9px; }
+    .msg.status .status-queue:hover { background: var(--bs-secondary-bg); }
+    #queue-list .queue-text { white-space: pre-wrap; font-size: .85rem;
+                              max-height: 6.5em; overflow: auto; }
+    .msg.status .bubble { display: inline-flex; align-items: center; gap: 7px;
+                          background: var(--bs-secondary-bg); color: var(--bs-secondary-color);
+                          font-size: .82rem; font-style: italic; }
+    .msg.status .status-spin { flex: none; width: 12px; height: 12px; border-radius: 50%;
+                               border: 2px solid var(--bs-secondary-color);
+                               border-top-color: transparent;
+                               animation: status-spin .8s linear infinite; }
+    @keyframes status-spin { to { transform: rotate(360deg); } }
+
+    /* 서브에이전트 실시간 보기 링크 + 전사(transcript) 모달 */
+    .msg.tool.has-sub { cursor: pointer; }
+    .msg.tool .tool-sub-link { color: var(--bs-primary); }
+    .sub-view { padding: .75rem 1rem; }
+    .sub-view .sub-prompt { background: var(--bs-secondary-bg); border-radius: 8px;
+                            padding: .5rem .7rem; margin-bottom: .6rem; white-space: pre-wrap;
+                            font-size: .85rem; }
+    .sub-view .sub-text { white-space: pre-wrap; font-size: .9rem; margin: .3rem 0; }
+    .sub-view .sub-reasoning { white-space: pre-wrap; font-size: .8rem; margin: .3rem 0;
+                              color: var(--bs-secondary-color); padding-left: .5rem;
+                              border-left: 3px solid var(--bs-warning); }
+    .sub-view .sub-tool { font-size: .8rem; color: var(--bs-secondary-color);
+                          font-family: var(--bs-font-monospace); margin: .25rem 0; }
+    .sub-view .sub-turn-sep { border-top: 1px dashed var(--bs-border-color); margin: .6rem 0; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 가운데: 대화 -->
+    <section id="center">
+      <div class="border-bottom px-3 py-2 d-flex align-items-center">
+        <span class="panel-title text-secondary" data-i18n="conversation">대화</span>
+        <div class="vr mx-2 opacity-50" style="height: 14px; align-self: center;"></div>
+        <span id="chat-meta" class="small text-secondary flex-grow-1 text-truncate"></span>
+        <button id="activity-btn" class="btn btn-sm p-1 icon-btn position-relative me-1"
+                type="button" data-i18n-title="activityTitle" title="호출 내역">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+               fill="currentColor" viewBox="0 0 16 16">
+            <path d="M5 11.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5M1.5 12a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1m0-4a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1m0-4a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1"/>
+          </svg>
+          <span id="activity-count"
+                class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-primary d-none"
+                style="font-size:.6rem"></span>
+        </button>
+        <button id="toggle-right" class="btn btn-sm p-1 icon-btn"
+                type="button" data-i18n-title="toggleTreeTitle" title="트리뷰 숨기기/보이기">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+               fill="currentColor" viewBox="0 0 16 16">
+            <path d="M0 3a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2zm10-1v12h4a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM9 2H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7z"/>
+          </svg>
+        </button>
+      </div>
+      <div id="messages" class="p-3">
+        <div class="text-secondary small" data-i18n="messagesEmpty">대화 내용이 여기에 표시됩니다.</div>
+      </div>
+      <!-- 맨 아래로 가기 -->
+      <button id="scroll-bottom-btn" type="button" data-i18n-title="scrollBottomTitle" title="맨 아래로">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+             fill="currentColor" viewBox="0 0 16 16">
+          <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"/>
+        </svg>
+      </button>
+      <!-- 대화창 위에 떠 있는 라운드 입력창 -->
+      <div id="composer">
+        <button id="attach-btn" class="composer-btn plus" type="button"
+                data-i18n-title="attachTitle" title="파일/리소스 첨부">+</button>
+        <textarea id="prompt" rows="1" data-i18n-ph="messagePlaceholder"
+                  placeholder="메시지를 입력하세요…"></textarea>
+        <button id="send-btn" class="composer-btn send" type="button"
+                data-i18n-title="sendTitle" title="보내기">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+               fill="currentColor" viewBox="0 0 16 16">
+            <path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11M6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- 좌/우 폭 조절 핸들 -->
+    <div id="right-resizer" data-i18n-title="resizeWidthTitle" title="드래그하여 폭 조절"></div>
+
+    <!-- 우측: 트리 / 파일 뷰어 -->
+    <aside id="right">
+      <!-- 트리 헤더: [고정 경로] + 파일검색 아이콘 → 클릭 시 검색창이 경로를 덮음 -->
+      <div class="border-bottom px-2 py-2">
+        <div class="d-flex align-items-center head-row" data-search="file">
+          <span id="project-path"
+                class="path-text text-truncate flex-grow-1 text-secondary"
+                data-search-label>열린 프로젝트 없음</span>
+          <button class="btn btn-sm p-1 icon-btn" type="button"
+                  id="tree-open-external" data-search-extra
+                  data-i18n-title="openInExplorer" title="탐색기에서 열기" disabled>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                 fill="currentColor" viewBox="0 0 16 16">
+              <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.374 3.334 5.82 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/>
+            </svg>
+          </button>
+          <button class="btn btn-sm p-1 icon-btn" type="button"
+                  data-search-toggle data-i18n-title="fileSearchTitle" title="파일 이름 검색">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                 fill="currentColor" viewBox="0 0 16 16">
+              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
+            </svg>
+          </button>
+          <div class="input-group input-group-sm flex-grow-1 d-none" data-search-box>
+            <input id="file-search" type="search" class="form-control"
+                   data-i18n-ph="fileSearchPlaceholder"
+                   placeholder="파일 이름 검색…" data-search-input>
+            <button class="btn btn-outline-secondary" type="button"
+                    data-search-close data-i18n="cancel">취소</button>
+          </div>
+        </div>
+      </div>
+      <div id="tree" class="p-2">
+        <div class="text-secondary small" data-i18n="treeEmpty">프로젝트를 열면 파일 트리가 표시됩니다.</div>
+      </div>
+
+      <!-- 트리 ↔ 뷰어 높이 조절 핸들 -->
+      <div id="vert-resizer" data-i18n-title="resizeHeightTitle" title="드래그하여 높이 조절"></div>
+
+      <!-- 뷰어 섹션 (헤더 + 내용). 전체화면 토글 대상. -->
+      <div id="viewer-section">
+        <!-- 뷰어 헤더: [파일명] + 모드(text/hex/md) + 전체화면 + 내용검색 -->
+        <div class="px-2 py-2">
+          <div class="d-flex align-items-center head-row" data-search="content">
+            <span id="file-name"
+                  class="text-truncate flex-grow-1 small fw-semibold"
+                  data-search-label>선택된 파일 없음</span>
+            <select id="viewer-mode" class="form-select form-select-sm w-auto"
+                    data-search-extra title="보기 방식" disabled>
+              <option value="text">Text</option>
+              <option value="hex">Hex</option>
+              <option value="md">Markdown</option>
+            </select>
+            <button class="btn btn-sm p-1 icon-btn" type="button"
+                    id="viewer-copy" data-search-extra
+                    data-i18n-title="copySelection" title="선택 영역 복사">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+                   fill="currentColor" viewBox="0 0 16 16">
+                <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1z"/>
+                <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0z"/>
+              </svg>
+            </button>
+            <button class="btn btn-sm p-1 icon-btn" type="button"
+                    id="viewer-open-external" data-search-extra
+                    data-i18n-title="openWith" title="연결 프로그램으로 열기" disabled>
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+                   fill="currentColor" viewBox="0 0 16 16">
+                <path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/>
+                <path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/>
+              </svg>
+            </button>
+            <button class="btn btn-sm p-1 icon-btn" type="button"
+                    id="fullscreen-toggle" data-search-extra title="전체화면 보기"></button>
+            <button class="btn btn-sm p-1 icon-btn" type="button"
+                    data-search-toggle data-i18n-title="contentSearchTitle" title="파일 내용 검색">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                   fill="currentColor" viewBox="0 0 16 16">
+                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
+              </svg>
+            </button>
+            <div class="input-group input-group-sm flex-grow-1 d-none" data-search-box>
+              <input id="content-search" type="search" class="form-control"
+                     data-i18n-ph="contentSearchPlaceholder"
+                     placeholder="파일 내용 검색…" data-search-input>
+              <button class="btn btn-outline-secondary" type="button"
+                      data-search-close>취소</button>
+            </div>
+          </div>
+          <div id="viewer-notice" class="small text-warning mt-1 d-none"></div>
+        </div>
+        <div id="viewer" class="p-2">
+          <div class="text-secondary small" data-i18n="viewerEmpty">선택한 파일 내용이 여기에 표시됩니다.</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 호출 내역 모달 (런쳐 프로세스 / 도구 호출) -->
+  <div class="modal fade" id="activity-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h6 class="modal-title mb-0" data-i18n="activityTitle">호출 내역</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div id="activity-list" class="list-group list-group-flush"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 변경(diff) 모달 -->
+  <div class="modal fade" id="diff-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h6 class="modal-title mb-0 text-truncate" id="diff-modal-title">diff</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0"><pre id="diff-modal-body" class="diff-view m-0"></pre></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 대기 큐 모달 (생성 중 보낸 메시지: 취소 가능) -->
+  <div class="modal fade" id="queue-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h6 class="modal-title mb-0" data-i18n="queueTitle">대기 큐</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div id="queue-list" class="list-group list-group-flush"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 서브에이전트 실시간 보기 모달 -->
+  <div class="modal fade" id="sub-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h6 class="modal-title mb-0 text-truncate" id="sub-modal-title"
+              data-i18n="subAgentTitle">서브에이전트 (실시간)</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body p-0"><div id="sub-modal-body" class="sub-view"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 우클릭 컨텍스트 메뉴 -->
+  <ul id="context-menu" class="dropdown-menu show">
+    <li><button class="dropdown-item" type="button" id="ctx-copy-path" data-i18n="copyPath">전체 경로 복사</button></li>
+  </ul>
+
+  <script src="./vendor/bootstrap.bundle.min.js"></script>
+  <script src="./vendor/marked.min.js"></script>
+  <script>
+    // ===== Flutter ↔ Web 브리지 =====
+    // 백엔드별 송신: Windows(webview_windows)=chrome.webview,
+    // macOS/모바일(webview_flutter)=JS 채널 'Collabo'.
+    function send(obj) {
+      var json = JSON.stringify(obj);
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(json);
+      } else if (window.Collabo && window.Collabo.postMessage) {
+        window.Collabo.postMessage(json);
+      }
+    }
+    function onBridge(data) {
+      let msg;
+      try { msg = typeof data === 'string' ? JSON.parse(data) : data; }
+      catch (e) { return; }
+      switch (msg.type) {
+        case 'project.changed': onProjectChanged(msg.path); break;
+        case 'dir.children': onDirChildren(msg.path, msg.entries); break;
+        case 'fs.change': onFsChange(msg.paths || [], msg.files || []); break;
+        case 'search.results': onSearchResults(msg); break;
+        case 'fs.error': onChatNotice({ text: msg.message || 'error' }); break;
+        case 'file.content': onFileContent(msg); break;
+        case 'file.error': onFileError(msg); break;
+        case 'chat.meta': onChatMeta(msg); break;
+        case 'chat.history': onChatHistory(msg.messages || []); break;
+        case 'chat.message': onChatMessage(msg); break;
+        case 'chat.begin': onChatBegin(); break;
+        case 'chat.delta': onChatDelta(msg); break;
+        case 'chat.stats': onChatStats(msg); break;
+        case 'chat.done': onChatDone(msg); break;
+        case 'chat.tool': onChatTool(msg); break;
+        case 'chat.activity': recordActivity(msg); break;
+        case 'chat.sub': onChatSub(msg); break;
+        case 'chat.notice': onChatNotice(msg); break;
+        case 'status': onStatus(msg); break;
+        case 'chat.queue': onQueue(msg); break;
+        case 'chat.error': onChatError(msg); break;
+        case 'composer.insert':
+          if (window.collaboComposerInsert) window.collaboComposerInsert(msg.text);
+          break;
+        case 'chat.truncated': onChatTruncated(msg.messageId); break;
+        case 'chat.edited': onChatEdited(msg.messageId, msg.content); break;
+      }
+    }
+    // 수신: Windows 는 네이티브 메시지 이벤트, webview_flutter 는 네이티브가
+    // runJavaScript 로 collaboReceiveB64(base64(UTF-8 JSON)) 를 호출한다.
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.addEventListener('message', function (e) { onBridge(e.data); });
+    }
+    window.collaboReceiveB64 = function (b64) {
+      try {
+        var bin = atob(b64);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        onBridge(new TextDecoder('utf-8').decode(bytes));
+      } catch (e) { /* 손상된 메시지 무시 */ }
+    };
+
+    // 진행 상태 말풍선: 대화 흐름 안(메시지와 같은 레벨)에 표시하며 항상 맨 아래로
+    // 옮긴다. 오른쪽에 대기 큐 칩(클릭 시 모달)을 함께 둔다. 작업이 모두 끝나고
+    // 큐도 비면 제거한다.
+    let queueItems = [];
+    function ensureStatusBubble() {
+      var el = document.getElementById('status-bubble');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'status-bubble';
+        el.className = 'msg status';
+        el.innerHTML =
+          '<div class="bubble"><span class="status-spin"></span>' +
+          '<span class="status-text"></span></div>' +
+          '<button type="button" class="status-queue d-none"></button>';
+        el.querySelector('.status-queue').addEventListener('click', openQueueModal);
+      }
+      var box = document.getElementById('messages');
+      if (box) { box.appendChild(el); box.scrollTop = box.scrollHeight; }
+      return el;
+    }
+    function onStatus(msg) {
+      var text = (msg && msg.text) || '';
+      if (!text) {
+        // 큐가 남아 있으면 풍선 유지(네이티브는 큐가 빌 때만 빈 status 를 보낸다).
+        var el = document.getElementById('status-bubble');
+        if (el && queueItems.length === 0) el.remove();
+        return;
+      }
+      ensureStatusBubble().querySelector('.status-text').textContent = text;
+    }
+    function renderQueueChip() {
+      var el = document.getElementById('status-bubble');
+      if (queueItems.length === 0) {
+        if (el) el.querySelector('.status-queue').classList.add('d-none');
+        return;
+      }
+      var chip = ensureStatusBubble().querySelector('.status-queue');
+      chip.textContent = '📥 ' + queueItems.length + ' ' + T('queued', '대기');
+      chip.classList.remove('d-none');
+    }
+    function onQueue(msg) {
+      queueItems = (msg && msg.items) || [];
+      renderQueueChip();
+      renderQueueModal();
+    }
+    function openQueueModal() {
+      renderQueueModal();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('queue-modal')).show();
+    }
+    function renderQueueModal() {
+      var list = document.getElementById('queue-list');
+      if (!list) return;
+      if (queueItems.length === 0) {
+        list.innerHTML = '<div class="activity-empty">' +
+          T('queueEmpty', '대기 중인 메시지가 없습니다') + '</div>';
+        return;
+      }
+      list.innerHTML = queueItems.map(function (q) {
+        return '<div class="list-group-item d-flex align-items-start gap-2">' +
+          '<div class="flex-grow-1 queue-text">' + esc(q.text) + '</div>' +
+          '<button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0 queue-cancel"' +
+          ' data-id="' + q.id + '">' + T('cancel', '취소') + '</button></div>';
+      }).join('');
+    }
+    (function () {
+      var ql = document.getElementById('queue-list');
+      if (ql) ql.addEventListener('click', function (e) {
+        var btn = e.target.closest('.queue-cancel');
+        if (!btn) return;
+        send({ type: 'chat.queue.cancel', id: parseInt(btn.dataset.id, 10) });
+      });
+    })();
+
+    // 마우스 휠 우회: webview_windows 가 휠을 (0,0) 으로 보내는 버그 때문에
+    // 네이티브가 휠 신호를 잡아 collaboWheel 로 넘겨주면, 커서 아래의
+    // 스크롤 가능한 요소를 직접 스크롤한다.
+    let _wheelX = 0, _wheelY = 0;
+    document.addEventListener('mousemove', function (e) {
+      _wheelX = e.clientX; _wheelY = e.clientY;
+    }, true);
+    window.collaboWheel = function (dx, dy) {
+      let el = document.elementFromPoint(_wheelX, _wheelY);
+      while (el && el !== document.body) {
+        const st = getComputedStyle(el);
+        const canY = (st.overflowY === 'auto' || st.overflowY === 'scroll') &&
+                     el.scrollHeight > el.clientHeight;
+        const canX = (st.overflowX === 'auto' || st.overflowX === 'scroll') &&
+                     el.scrollWidth > el.clientWidth;
+        if (canY && dy !== 0) { el.scrollTop += dy; return; }
+        if (canX && dx !== 0) { el.scrollLeft += dx; return; }
+        el = el.parentElement;
+      }
+      window.scrollBy(dx, dy);
+    };
+
+    // 테마 전환(라이트/다크) — 네이티브가 executeScript 로 직접 호출.
+    window.collaboSetTheme = function (mode) {
+      document.documentElement.setAttribute('data-bs-theme',
+        mode === 'dark' ? 'dark' : 'light');
+    };
+    window.collaboSetProject = function (path) { onProjectChanged(path); };
+
+    // ===== 다국어(i18n): 네이티브가 JSON 리소스를 넘겨준다 =====
+    let STR = {};
+    function T(key, fallback) { return (STR && STR[key]) || fallback; }
+    window.collaboSetStrings = function (dict) {
+      STR = dict || {};
+      applyStrings();
+    };
+    function applyStrings() {
+      document.querySelectorAll('[data-i18n]').forEach(function (el) {
+        const v = STR[el.dataset.i18n];
+        if (v) el.textContent = v;
+      });
+      document.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+        const v = STR[el.dataset.i18nPh];
+        if (v) el.placeholder = v;
+      });
+      document.querySelectorAll('[data-i18n-title]').forEach(function (el) {
+        const v = STR[el.dataset.i18nTitle];
+        if (v) el.title = v;
+      });
+      // JS 가 관리하는 동적 기본 상태도 갱신.
+      if (!rootPath) pathEl.textContent = T('noProject', '열린 프로젝트 없음');
+      if (!currentFilePath) fileNameEl.textContent = T('fileNone', '선택된 파일 없음');
+      if (typeof refreshFullscreenTitle === 'function') refreshFullscreenTitle();
+    }
+
+    // ===== 유틸 =====
+    function baseName(pth) { return (pth || '').split(/[\\/]/).filter(Boolean).pop() || pth; }
+    function esc(s) {
+      return (s || '').replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+
+    // ===== 트리 상태 =====
+    let rootPath = '';
+    const childrenCache = new Map();   // dirPath -> entries[]
+    const expanded = new Set();        // 펼쳐진 dir 경로
+    const dirContainers = new Map();   // dirPath -> 자식 컨테이너 element
+    let selectedPath = null;
+    let draggedPath = null;   // 드래그 중인 항목 경로
+    let searchMode = false;   // 파일명 검색 결과 표시 중
+    const treeEl = document.getElementById('tree');
+    const pathEl = document.getElementById('project-path');
+    const treeOpenBtn = document.getElementById('tree-open-external');
+    // 트리 경로를 OS 탐색기/파인더로 연다.
+    treeOpenBtn.addEventListener('click', function () {
+      if (rootPath) send({ type: 'file.openExternal', path: rootPath });
+    });
+
+    function onProjectChanged(path) {
+      rootPath = path || '';
+      pathEl.textContent = rootPath || T('noProject', '열린 프로젝트 없음');
+      treeOpenBtn.disabled = !rootPath;
+      childrenCache.clear(); expanded.clear(); dirContainers.clear();
+      selectedPath = null;
+      clearViewer();
+      if (!rootPath) {
+        treeEl.innerHTML = '<div class="text-secondary small" data-i18n="treeEmpty"></div>';
+        treeEl.firstChild.textContent = T('treeEmpty', '프로젝트를 열면 파일 트리가 표시됩니다.');
+        return;
+      }
+      treeEl.innerHTML = '<div class="text-secondary small"></div>';
+      treeEl.firstChild.textContent = T('treeLoading', '불러오는 중…');
+      send({ type: 'dir.list', path: rootPath });
+    }
+
+    function onDirChildren(path, entries) {
+      childrenCache.set(path, entries);
+      if (searchMode) return; // 검색 결과 표시 중에는 트리를 갱신하지 않음
+      if (path === rootPath) {
+        treeEl.innerHTML = '';
+        dirContainers.set(rootPath, treeEl);
+        renderDir(rootPath, treeEl, 0);
+      } else if (dirContainers.has(path)) {
+        renderDir(path, dirContainers.get(path), depthOf(path));
+      }
+    }
+
+    function onFsChange(paths, files) {
+      // 트리: 우리가 이미 펼쳐/조회한 디렉토리만 새로고침 → 트리가 접히지 않는다.
+      if (!searchMode) {
+        paths.forEach(function (pth) {
+          if (pth === rootPath || childrenCache.has(pth)) {
+            send({ type: 'dir.list', path: pth });
+          }
+        });
+      }
+      // 뷰어: 지금 보고 있는 파일이 바뀌었으면 디바운스 후 자동 갱신
+      // (연속 변경 시 매번 다시 읽는 과부하를 피하려고 잠깐 모은다).
+      if (currentFilePath && (files || []).indexOf(currentFilePath) !== -1) {
+        scheduleViewerReload();
+      }
+    }
+
+    let viewerReloadTimer = null;
+    let viewerAutoReloading = false;
+    function scheduleViewerReload() {
+      if (viewerReloadTimer) clearTimeout(viewerReloadTimer);
+      viewerReloadTimer = setTimeout(function () {
+        viewerReloadTimer = null;
+        if (currentFilePath) {
+          viewerAutoReloading = true;
+          openFile(currentFilePath, currentMode);
+        }
+      }, 800);
+    }
+
+    // 파일명 검색 결과(플랫 리스트)를 트리 영역에 표시.
+    function onSearchResults(msg) {
+      searchMode = true;
+      treeEl.innerHTML = '';
+      const files = msg.files || [];
+      if (files.length === 0) {
+        const d = document.createElement('div');
+        d.className = 'text-secondary small p-1';
+        d.textContent = T('noResults', '검색 결과 없음');
+        treeEl.appendChild(d);
+        return;
+      }
+      files.forEach(function (f) {
+        const row = document.createElement('div');
+        row.className = 'tree-row';
+        row.style.paddingLeft = '6px';
+        row.title = f.path;
+        const icon = document.createElement('span');
+        icon.className = 'tree-caret';
+        row.appendChild(icon);
+        const name = document.createElement('span');
+        name.className = 'tree-name';
+        name.textContent = f.name;
+        row.appendChild(name);
+        row.draggable = true;
+        row.addEventListener('dragstart', function (ev) {
+          draggedPath = f.path; ev.dataTransfer.setData('text/plain', f.path);
+        });
+        row.addEventListener('click', function () { openFile(f.path); });
+        row.addEventListener('contextmenu', function (ev) { showContextMenu(ev, f.path); });
+        treeEl.appendChild(row);
+      });
+    }
+
+    // 검색 종료 → 트리 복원.
+    function exitSearchMode() {
+      if (!searchMode) return;
+      searchMode = false;
+      if (rootPath && childrenCache.has(rootPath)) {
+        treeEl.innerHTML = '';
+        dirContainers.set(rootPath, treeEl);
+        renderDir(rootPath, treeEl, 0);
+      } else if (rootPath) {
+        send({ type: 'dir.list', path: rootPath });
+      }
+    }
+
+    // 렌더 시 depth 를 알기 위해 컨테이너에 데이터로 저장.
+    function depthOf(path) {
+      const c = dirContainers.get(path);
+      return c && c._depth != null ? c._depth : 0;
+    }
+
+    function renderDir(dirPath, container, depth) {
+      container._depth = depth;
+      const entries = childrenCache.get(dirPath) || [];
+      container.innerHTML = '';
+      if (dirPath === rootPath && entries.length === 0) {
+        container.innerHTML = '<div class="text-secondary small" data-i18n="folderEmpty"></div>';
+        container.firstChild.textContent = T('folderEmpty', '(빈 폴더)');
+        return;
+      }
+      entries.forEach(function (e) {
+        const row = document.createElement('div');
+        row.className = 'tree-row' + (e.path === selectedPath ? ' selected' : '');
+        row.style.paddingLeft = (depth * 14 + 4) + 'px';
+        row.dataset.path = e.path;
+        row.dataset.dir = e.isDir ? '1' : '0';
+
+        const caret = document.createElement('span');
+        caret.className = 'tree-caret';
+        caret.textContent = e.isDir ? (expanded.has(e.path) ? '▾' : '▸') : '';
+        row.appendChild(caret);
+
+        const name = document.createElement('span');
+        name.className = 'tree-name' + (e.isDir ? ' dir' : '');
+        name.textContent = e.name;
+        row.appendChild(name);
+        container.appendChild(row);
+
+        // 드래그하여 폴더로 이동(기본) / 복사(Ctrl).
+        row.draggable = true;
+        row.addEventListener('dragstart', function (ev) {
+          draggedPath = e.path;
+          ev.dataTransfer.setData('text/plain', e.path);
+          ev.dataTransfer.effectAllowed = 'copyMove';
+          ev.stopPropagation();
+        });
+
+        if (e.isDir) {
+          const child = document.createElement('div');
+          child._depth = depth + 1; // 나중에 펼칠 때도 올바른 들여쓰기를 위해 항상 설정
+          dirContainers.set(e.path, child);
+          container.appendChild(child);
+          if (expanded.has(e.path)) {
+            child.style.display = '';
+            if (childrenCache.has(e.path)) renderDir(e.path, child, depth + 1);
+            else { child.innerHTML =
+                   '<div class="text-secondary small" style="padding-left:' +
+                   ((depth + 1) * 14 + 4) + 'px">…</div>'; send({ type: 'dir.list', path: e.path }); }
+          } else {
+            child.style.display = 'none';
+          }
+          row.addEventListener('click', function () { toggleDir(e.path); });
+          // 폴더는 드롭 대상.
+          row.addEventListener('dragover', function (ev) {
+            ev.preventDefault();
+            ev.dataTransfer.dropEffect = ev.ctrlKey ? 'copy' : 'move';
+            row.classList.add('drop-target');
+          });
+          row.addEventListener('dragleave', function () { row.classList.remove('drop-target'); });
+          row.addEventListener('drop', function (ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            row.classList.remove('drop-target');
+            const src = draggedPath || ev.dataTransfer.getData('text/plain');
+            if (src && src !== e.path) {
+              send({ type: ev.ctrlKey ? 'fs.copy' : 'fs.move', src: src, dst: e.path });
+            }
+            draggedPath = null;
+          });
+        } else {
+          row.addEventListener('click', function () { openFile(e.path); });
+        }
+        row.addEventListener('contextmenu', function (ev) { showContextMenu(ev, e.path); });
+      });
+    }
+
+    function toggleDir(path) {
+      const child = dirContainers.get(path);
+      if (expanded.has(path)) {
+        expanded.delete(path);
+        if (child) child.style.display = 'none';
+      } else {
+        expanded.add(path);
+        if (child) {
+          child.style.display = '';
+          if (childrenCache.has(path)) renderDir(path, child, (child._depth || 0));
+          else send({ type: 'dir.list', path: path });
+        }
+      }
+      // caret 갱신: 부모 재렌더 없이 해당 row 만.
+      const row = treeEl.querySelector('.tree-row[data-path="' + cssEscape(path) + '"]');
+      if (row) row.querySelector('.tree-caret').textContent = expanded.has(path) ? '▾' : '▸';
+    }
+
+    function cssEscape(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/"/g, '\\"'); }
+
+    // ===== 컨텍스트 메뉴 =====
+    const ctxMenu = document.getElementById('context-menu');
+    let ctxPath = null;
+    function showContextMenu(ev, path) {
+      ev.preventDefault();
+      ctxPath = path;
+      ctxMenu.style.left = ev.clientX + 'px';
+      ctxMenu.style.top = ev.clientY + 'px';
+      ctxMenu.style.display = 'block';
+    }
+    function hideContextMenu() { ctxMenu.style.display = 'none'; ctxPath = null; }
+    document.getElementById('ctx-copy-path').addEventListener('click', function () {
+      if (ctxPath) send({ type: 'clipboard.write', text: ctxPath });
+      hideContextMenu();
+    });
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('scroll', hideContextMenu, true);
+    window.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideContextMenu(); });
+
+    // ===== 파일 뷰어 =====
+    let currentFilePath = null;
+    let currentMode = null;
+    let viewerRaw = '';       // 현재 파일 원본 내용(검색 하이라이트 복원용)
+    const viewerEl = document.getElementById('viewer');
+    const fileNameEl = document.getElementById('file-name');
+    const noticeEl = document.getElementById('viewer-notice');
+
+    function clearViewer() {
+      currentFilePath = null; currentMode = null; viewerRaw = '';
+      fileNameEl.textContent = T('fileNone', '선택된 파일 없음');
+      noticeEl.classList.add('d-none');
+      viewerEl.className = 'p-2';
+      viewerEl.innerHTML = '<div class="text-secondary small" data-i18n="viewerEmpty"></div>';
+      viewerEl.firstChild.textContent = T('viewerEmpty', '선택한 파일 내용이 여기에 표시됩니다.');
+      updateModeButtons(null);
+    }
+
+    // viewerRaw/currentMode 로부터 뷰어 본문을 다시 그린다(하이라이트 제거됨).
+    function renderViewer() {
+      if (currentMode === 'md') {
+        viewerEl.className = 'p-3 md-rendered';
+        viewerEl.innerHTML = window.marked ? marked.parse(viewerRaw) : esc(viewerRaw);
+      } else {
+        viewerEl.className = 'p-2';
+        const pre = document.createElement('pre');
+        pre.textContent = viewerRaw;
+        viewerEl.innerHTML = '';
+        viewerEl.appendChild(pre);
+      }
+    }
+
+    // 뷰어 내용에서 검색어를 <mark> 로 하이라이트. 빈 검색어면 복원만.
+    function applyViewerSearch(query) {
+      if (!currentFilePath) return;
+      renderViewer();
+      const q = (query || '').trim();
+      if (!q) return;
+      let count = 0;
+      const lower = q.toLowerCase();
+      const walker = document.createTreeWalker(viewerEl, NodeFilter.SHOW_TEXT, null);
+      const targets = [];
+      let n;
+      while ((n = walker.nextNode())) {
+        if (n.nodeValue.toLowerCase().includes(lower)) targets.push(n);
+      }
+      let first = null;
+      targets.forEach(function (node) {
+        const text = node.nodeValue;
+        const frag = document.createDocumentFragment();
+        let i = 0, idx;
+        const low = text.toLowerCase();
+        while ((idx = low.indexOf(lower, i)) !== -1) {
+          if (idx > i) frag.appendChild(document.createTextNode(text.slice(i, idx)));
+          const mark = document.createElement('mark');
+          mark.textContent = text.slice(idx, idx + q.length);
+          if (!first) first = mark;
+          frag.appendChild(mark);
+          count++;
+          i = idx + q.length;
+        }
+        if (i < text.length) frag.appendChild(document.createTextNode(text.slice(i)));
+        node.parentNode.replaceChild(frag, node);
+      });
+      if (first) first.scrollIntoView({ block: 'center' });
+    }
+
+    function openFile(path, mode) {
+      // 다른 파일로 이동하면 대기 중인 자동 갱신은 취소.
+      if (viewerReloadTimer) { clearTimeout(viewerReloadTimer); viewerReloadTimer = null; }
+      selectedPath = path;
+      treeEl.querySelectorAll('.tree-row.selected').forEach(function (r) { r.classList.remove('selected'); });
+      const row = treeEl.querySelector('.tree-row[data-path="' + cssEscape(path) + '"]');
+      if (row) row.classList.add('selected');
+      const m = { type: 'file.open', path: path };
+      if (mode) m.mode = mode;
+      send(m);
+    }
+
+    function onFileContent(msg) {
+      viewerAutoReloading = false;
+      currentFilePath = msg.path;
+      currentMode = msg.mode;
+      viewerRaw = msg.content || '';
+      fileNameEl.textContent = baseName(msg.path);
+      updateModeButtons(msg.mode);
+
+      if (msg.truncated) {
+        noticeEl.textContent = T('truncated', '대용량 파일: 앞부분만 표시합니다') +
+          ' (' + formatSize(msg.size) + ')';
+        noticeEl.classList.remove('d-none');
+      } else {
+        noticeEl.classList.add('d-none');
+      }
+      renderViewer();
+      // 내용 검색이 열려 있으면 즉시 하이라이트 적용.
+      const cs = document.getElementById('content-search');
+      if (cs && cs.value.trim()) applyViewerSearch(cs.value);
+    }
+
+    function onFileError(msg) {
+      // 자동 갱신 중 파일이 사라진(삭제/이동) 경우엔 에러 대신 뷰어를 닫는다.
+      if (viewerAutoReloading) {
+        viewerAutoReloading = false;
+        clearViewer();
+        return;
+      }
+      viewerEl.className = 'p-3';
+      viewerEl.innerHTML = '<div class="text-danger small">' +
+        esc(T('fileOpenError', '파일을 열 수 없습니다: ')) + esc(msg.message || '') + '</div>';
+    }
+
+    const modeSelect = document.getElementById('viewer-mode');
+    const openExternalBtn = document.getElementById('viewer-open-external');
+    function updateModeButtons(mode) {
+      modeSelect.disabled = !currentFilePath;
+      openExternalBtn.disabled = !currentFilePath;
+      if (mode) modeSelect.value = mode;
+    }
+    // 연결 프로그램(OS 기본 앱)으로 현재 파일 열기.
+    openExternalBtn.addEventListener('click', function () {
+      if (currentFilePath) send({ type: 'file.openExternal', path: currentFilePath });
+    });
+    modeSelect.addEventListener('change', function () {
+      if (currentFilePath) openFile(currentFilePath, modeSelect.value);
+    });
+
+    // 뷰어 선택 영역 복사(선택이 없으면 전체).
+    document.getElementById('viewer-copy').addEventListener('click', function () {
+      const sel = window.getSelection();
+      let text = '';
+      if (sel && sel.toString() && viewerEl.contains(sel.anchorNode)) {
+        text = sel.toString();
+      } else {
+        text = viewerRaw;
+      }
+      if (text) send({ type: 'clipboard.write', text: text });
+    });
+
+    function formatSize(n) {
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    // ===== 검색 토글: 아이콘 클릭 시 라벨(경로/파일명)을 검색창이 덮어쓴다 =====
+    let fileSearchTimer = null;
+    document.querySelectorAll('[data-search]').forEach(function (row) {
+      const kind = row.dataset.search; // 'file' | 'content'
+      const label = row.querySelector('[data-search-label]');
+      const toggle = row.querySelector('[data-search-toggle]');
+      const box = row.querySelector('[data-search-box]');
+      const input = row.querySelector('[data-search-input]');
+      const close = row.querySelector('[data-search-close]');
+      const extras = row.querySelectorAll('[data-search-extra]');
+      function open() {
+        label.classList.add('d-none'); toggle.classList.add('d-none');
+        extras.forEach(function (x) { x.classList.add('d-none'); });
+        box.classList.remove('d-none'); input.focus();
+      }
+      function restore() {
+        if (kind === 'file') exitSearchMode();
+        else applyViewerSearch('');
+      }
+      function hide() {
+        box.classList.add('d-none'); label.classList.remove('d-none');
+        toggle.classList.remove('d-none');
+        extras.forEach(function (x) { x.classList.remove('d-none'); });
+        input.value = '';
+        restore();
+      }
+      function onInput() {
+        if (kind === 'file') {
+          clearTimeout(fileSearchTimer);
+          const q = input.value.trim();
+          fileSearchTimer = setTimeout(function () {
+            if (q) send({ type: 'file.search', query: q });
+            else exitSearchMode();
+          }, 250);
+        } else {
+          applyViewerSearch(input.value);
+        }
+      }
+      toggle.addEventListener('click', open);
+      close.addEventListener('click', hide);
+      input.addEventListener('input', onInput);
+      input.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+    });
+
+    // ===== 우측 패널 폭 조절 splitter =====
+    (function () {
+      const app = document.getElementById('app');
+      const right = document.getElementById('right');
+      const resizer = document.getElementById('right-resizer');
+      let dragging = false;
+      resizer.addEventListener('mousedown', function (e) { dragging = true; resizer.classList.add('active'); e.preventDefault(); });
+      window.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        const total = app.clientWidth;
+        let w = total - e.clientX;
+        w = Math.max(220, Math.min(w, total - 320));
+        right.style.flexBasis = w + 'px'; right.style.width = w + 'px';
+      });
+      window.addEventListener('mouseup', function () { dragging = false; resizer.classList.remove('active'); });
+    })();
+
+    // ===== 트리 ↔ 뷰어 높이 조절 splitter =====
+    (function () {
+      const right = document.getElementById('right');
+      const tree = document.getElementById('tree');
+      const rz = document.getElementById('vert-resizer');
+      let dragging = false;
+      rz.addEventListener('mousedown', function (e) { dragging = true; rz.classList.add('active'); e.preventDefault(); });
+      window.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        const top = tree.getBoundingClientRect().top;
+        let h = e.clientY - top;
+        const max = right.clientHeight - 160;          // 뷰어 최소 높이 보장
+        h = Math.max(60, Math.min(h, max > 120 ? max : 120));
+        tree.style.flex = '0 0 ' + h + 'px';
+      });
+      window.addEventListener('mouseup', function () { dragging = false; rz.classList.remove('active'); });
+    })();
+
+    // ===== 우측 트리뷰 숨기기/보이기 토글 =====
+    (function () {
+      const right = document.getElementById('right');
+      const rz = document.getElementById('right-resizer');
+      document.getElementById('toggle-right').addEventListener('click', function () {
+        const hidden = right.style.display === 'none';
+        right.style.display = hidden ? '' : 'none';
+        rz.style.display = hidden ? '' : 'none';
+      });
+    })();
+
+    // ===== 파일 뷰어 전체화면 토글 =====
+    (function () {
+      const btn = document.getElementById('fullscreen-toggle');
+      const section = document.getElementById('viewer-section');
+      const EXPAND = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.828 10.172a.5.5 0 0 0-.707 0l-4.096 4.096V11.5a.5.5 0 0 0-1 0v3.975a.5.5 0 0 0 .5.5H4.5a.5.5 0 0 0 0-1H1.732l4.096-4.096a.5.5 0 0 0 0-.707m4.344 0a.5.5 0 0 1 .707 0l4.096 4.096V11.5a.5.5 0 1 1 1 0v3.975a.5.5 0 0 1-.5.5H11.5a.5.5 0 0 1 0-1h2.768l-4.096-4.096a.5.5 0 0 1 0-.707m0-4.344a.5.5 0 0 0 .707 0l4.096-4.096V6.5a.5.5 0 1 0 1 0V2.525a.5.5 0 0 0-.5-.5H11.5a.5.5 0 0 0 0 1h2.768l-4.096 4.096a.5.5 0 0 0 0 .707m-4.344 0a.5.5 0 0 1-.707 0L1.025 1.732V4.5a.5.5 0 0 1-1 0V.525a.5.5 0 0 1 .5-.5H4.5a.5.5 0 0 1 0 1H1.732l4.096 4.096a.5.5 0 0 1 0 .707"/></svg>';
+      const COLLAPSE = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 0a.5.5 0 0 1 .5.5v4A1.5 1.5 0 0 1 4.5 6h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5m5 0a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 10 4.5v-4a.5.5 0 0 1 .5-.5M0 10.5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 6 11.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5m10 1a1.5 1.5 0 0 1 1.5-1.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0z"/></svg>';
+      btn.innerHTML = EXPAND;
+      // 현재 상태에 맞는 전체화면 버튼 타이틀(언어 변경 시에도 갱신).
+      window.refreshFullscreenTitle = function () {
+        const fs = section.classList.contains('fullscreen');
+        btn.title = fs ? T('fullscreenExitTitle', '전체화면 종료')
+                       : T('fullscreenTitle', '전체화면 보기');
+      };
+      function toggle() {
+        const fs = section.classList.toggle('fullscreen');
+        btn.innerHTML = fs ? COLLAPSE : EXPAND;
+        window.refreshFullscreenTitle();
+      }
+      btn.addEventListener('click', toggle);
+      window.refreshFullscreenTitle();
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && section.classList.contains('fullscreen')) toggle();
+      });
+    })();
+
+    // ===== 대화 렌더링 / 스트리밍 =====
+    const messagesEl = document.getElementById('messages');
+    const composerEl = document.getElementById('composer');
+    const scrollBtn = document.getElementById('scroll-bottom-btn');
+    let streamingEl = null;   // 현재 스트리밍 중인 assistant 버블 컨테이너
+    let streamingText = '';
+    let generating = false;
+    let stick = true;         // 사용자가 바닥 근처면 새 내용에 자동 추종
+
+    function nearBottom() {
+      return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+    }
+    function toBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+    // 새 내용: 사용자가 바닥 근처일 때만 따라 내려간다(읽는 중이면 안 당김).
+    function scrollMessages() { if (stick) toBottom(); updateScrollBtn(); }
+
+    function updateScrollBtn() {
+      scrollBtn.classList.toggle('show', !nearBottom());
+    }
+    // composer(오버레이) 높이만큼 대화창 하단 여백 + 버튼 위치를 확보해
+    // 바닥까지 스크롤해도 마지막 내용이 가려지지 않게 한다.
+    function updateComposerSpace() {
+      const h = composerEl.offsetHeight + 24;
+      // ::after 의 높이를 CSS 변수로 지정 → 입력창 높이만큼 더 스크롤된다.
+      document.documentElement.style.setProperty('--composer-h', h + 'px');
+      scrollBtn.style.bottom = h + 'px';
+      if (stick) toBottom();
+    }
+
+    messagesEl.addEventListener('scroll', function () {
+      stick = nearBottom();
+      updateScrollBtn();
+    });
+    scrollBtn.addEventListener('click', function () {
+      stick = true; toBottom(); updateScrollBtn();
+    });
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () {
+        updateComposerSpace();
+        if (stick) toBottom();
+      }).observe(composerEl);
+    }
+
+    function makeUserMessage(id, content) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg user';
+      wrap.dataset.id = id;
+      renderUserNormal(wrap, content);
+      messagesEl.appendChild(wrap);
+      scrollMessages();
+    }
+
+    // 일반(읽기) 상태의 사용자 버블.
+    function renderUserNormal(wrap, content) {
+      wrap.dataset.content = content; // 편집/취소용 원본 보관
+      wrap.innerHTML = '';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = content;
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const edit = document.createElement('button');
+      edit.className = 'btn btn-link btn-sm';
+      edit.textContent = T('edit', '수정');
+      edit.addEventListener('click', function () { enterEdit(wrap); });
+      actions.appendChild(edit);
+      wrap.appendChild(bubble);
+      wrap.appendChild(actions);
+    }
+
+    // 이 메시지 박스를 인플레이스 편집 박스로 전환.
+    function enterEdit(wrap) {
+      const id = Number(wrap.dataset.id);
+      const content = wrap.dataset.content || '';
+      wrap.innerHTML = '';
+      const ta = document.createElement('textarea');
+      ta.className = 'form-control form-control-sm';
+      ta.rows = 3;
+      ta.value = content;
+      const row = document.createElement('div');
+      row.className = 'actions d-flex gap-2 justify-content-end mt-1';
+      const cancel = document.createElement('button');
+      cancel.className = 'btn btn-sm btn-outline-secondary';
+      cancel.textContent = T('cancel', '취소');
+      cancel.addEventListener('click', function () { renderUserNormal(wrap, content); });
+      const save = document.createElement('button');
+      save.className = 'btn btn-sm btn-primary';
+      save.textContent = T('send', '보내기');
+      save.addEventListener('click', function () {
+        const t = ta.value.trim();
+        if (!t || generating) return;
+        // 네이티브가 이 메시지를 고치고 그 아래만 다시 생성한다.
+        send({ type: 'chat.edit', messageId: id, text: t });
+      });
+      wrap.appendChild(ta);
+      wrap.appendChild(row);
+      row.appendChild(cancel);
+      row.appendChild(save);
+      ta.focus();
+    }
+
+    // 수정 확정: 해당 버블을 새 내용으로 되돌리고, 그 아래 메시지는 제거(재생성됨).
+    function onChatEdited(messageId, content) {
+      const wrap = messagesEl.querySelector('.msg[data-id="' + messageId + '"]');
+      if (wrap) renderUserNormal(wrap, content);
+      messagesEl.querySelectorAll('.msg[data-id]').forEach(function (el) {
+        if (Number(el.dataset.id) > messageId) el.remove();
+      });
+      scrollMessages();
+    }
+
+    function makeAssistantMessage(id, content, meta) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg assistant';
+      if (id != null) wrap.dataset.id = id;
+      let reasoning = (meta && meta.reasoning) || '';
+      if (reasoning) {
+        const r = document.createElement('div');
+        r.className = 'reasoning';
+        r.textContent = reasoning;
+        wrap.appendChild(r);
+      }
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble md-rendered';
+      bubble.innerHTML = window.marked ? marked.parse(content || '') : esc(content || '');
+      wrap.appendChild(bubble);
+      messagesEl.appendChild(wrap);
+      scrollMessages();
+    }
+
+    function onChatMeta(msg) {
+      const el = document.getElementById('chat-meta');
+      const model = (msg.model && msg.model.length) ? msg.model : T('modelUnset', '모델 미설정');
+      const ctx = (msg.contextTokens || 0).toLocaleString();
+      let txt = model + ' · ' + T('contextLabel', '컨텍스트') + ' ' + ctx + ' tok';
+      // 서브 LLM 토큰이 포함된 총합이 더 크면 별도로 표기.
+      if ((msg.totalTokens || 0) > (msg.contextTokens || 0)) {
+        txt += ' · ' + T('totalLabel', '총') + ' ' + msg.totalTokens.toLocaleString() + ' tok';
+      }
+      el.textContent = txt;
+    }
+
+    function onChatHistory(list) {
+      messagesEl.innerHTML = '';
+      streamingEl = null;
+      activityLog.length = 0; // 프로젝트/대화 전환 시 내역 초기화 후 재구성
+      for (const k in subStore) delete subStore[k]; // 서브에이전트 전사도 초기화
+      queueItems = []; renderQueueChip(); renderQueueModal(); // 대기 큐 표시 초기화
+      const argMap = {};      // tool_call_id → {name, args} (assistant 의 tool_calls 에서)
+      list.forEach(function (m) {
+        if (m.role === 'user') {
+          makeUserMessage(m.id, m.content);
+        } else if (m.role === 'assistant') {
+          if (m.toolCalls) {
+            try {
+              JSON.parse(m.toolCalls).forEach(function (c) {
+                argMap[c.id] = { name: c.name, args: c.arguments };
+              });
+            } catch (e) {}
+          }
+          // 빈 응답(도구만 호출했던 턴)은 카드로 만들지 않는다.
+          if ((m.content || '').trim() !== '') makeAssistantMessage(m.id, m.content, null);
+        } else if (m.role === 'tool') {
+          // 저장된 도구 호출 결과를 대화창에 다시 표시(유지). diff 도 복원.
+          let ok = true, summary = '', diff = null, path = null;
+          try {
+            const r = JSON.parse(m.content);
+            ok = r.ok !== false;
+            if (ok && r.result && typeof r.result === 'object') {
+              diff = r.result.diff || null;
+              path = r.result.path || null;
+            }
+            summary = ok ? (diff ? 'edited' : 'ok') : (r.error || r.reason || 'error');
+          } catch (e) {}
+          const info = argMap[m.toolCallId] || {};
+          upsertToolBubble('h' + m.id, {
+            name: m.toolName || info.name || 'tool',
+            args: info.args, status: 'done', ok: ok, summary: summary,
+            diff: diff, path: path,
+          });
+        }
+      });
+      renderActivity();
+      if (list.length === 0) {
+        messagesEl.innerHTML = '<div class="text-secondary small" data-i18n="messagesEmpty"></div>';
+        messagesEl.firstChild.textContent = T('messagesEmpty', '대화 내용이 여기에 표시됩니다.');
+      }
+      scrollMessages();
+    }
+
+    function onChatMessage(msg) {
+      if (msg.role === 'user') makeUserMessage(msg.id, msg.content);
+    }
+
+    function onChatBegin() {
+      generating = true;
+      streamingText = '';
+      streamingEl = document.createElement('div');
+      streamingEl.className = 'msg assistant';
+      streamingEl.innerHTML =
+        '<div class="reasoning d-none"></div>' +
+        '<div class="bubble"></div>' +
+        '<div class="meta-row"></div>';
+      messagesEl.appendChild(streamingEl);
+      scrollMessages();
+    }
+
+    function onChatDelta(msg) {
+      if (!streamingEl) onChatBegin();
+      if (msg.content) {
+        streamingText += msg.content;
+        streamingEl.querySelector('.bubble').textContent = streamingText;
+      }
+      if (msg.reasoning) {
+        const r = streamingEl.querySelector('.reasoning');
+        r.classList.remove('d-none');
+        r.textContent = (r.textContent || '') + msg.reasoning;
+      }
+      scrollMessages();
+    }
+
+    function onChatStats(msg) {
+      if (!streamingEl) return;
+      const exact = msg.exact ? '' : '~';
+      const secs = (msg.elapsedMs / 1000).toFixed(1);
+      const status = T('status_' + msg.status, msg.status);
+      const sent = msg.sent || 0;
+      // 토큰: ↑보낸(프롬프트) ↓받은(완료). 보낸 값은 usage 도착 후에만 표시.
+      let tok = T('tokensLabel', '토큰') + ': ';
+      if (sent > 0) tok += '↑' + sent.toLocaleString() + ' ';
+      tok += '↓' + exact + Number(msg.tokens).toLocaleString();
+      streamingEl.querySelector('.meta-row').textContent =
+        T('statusLabel', '상태') + ': ' + status + ' · ' +
+        tok + ' · ' + msg.speed + ' tok/s · ' + secs + 's';
+    }
+
+    function onChatDone(msg) {
+      generating = false;
+      if (!streamingEl) return;
+      const bubble = streamingEl.querySelector('.bubble');
+      const meta = streamingEl.querySelector('.meta-row');
+      if (streamingText.trim() === '') {
+        // 빈 응답(도구만 호출 등): 빈 카드 대신 요약 문구로 대체.
+        bubble.className = 'summary-bubble';
+        bubble.textContent = summaryLabel(msg.elapsedMs);
+        if (meta) meta.remove();
+      } else {
+        bubble.classList.add('md-rendered');
+        bubble.innerHTML = window.marked ? marked.parse(streamingText) : esc(streamingText);
+      }
+      if (msg.id != null) streamingEl.dataset.id = msg.id;
+      streamingEl = null;
+    }
+
+    // 도구 실행 표시: tid 로 같은 버블을 갱신(running → done) + 호출 내역 기록.
+    function onChatTool(msg) {
+      upsertToolBubble(msg.tid, {
+        name: msg.name, args: msg.args, status: msg.status,
+        ok: msg.ok, summary: msg.summary,
+      });
+      scrollMessages();
+    }
+
+    const diffStore = {}; // tid → {diff, path}
+    function upsertToolBubble(tid, o) {
+      const elId = 'tool-' + tid;
+      let el = document.getElementById(elId);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = elId;
+        el.className = 'msg tool';
+        messagesEl.appendChild(el);
+      }
+      const running = o.status === 'running';
+      const icon = running ? '⏳' : (o.ok ? '✅' : '⚠️');
+      let html = '<span class="tool-icon">' + icon + '</span> <code>' + esc(o.name) + '</code>';
+      if (running && o.args) {
+        html += ' <span class="tool-args">' + esc(String(o.args).slice(0, 200)) + '</span>';
+      }
+      if (!running && o.summary) {
+        html += ' <span class="tool-summary">→ ' + esc(String(o.summary).slice(0, 200)) + '</span>';
+      }
+      if (o.diff) {
+        diffStore[tid] = { diff: o.diff, path: o.path };
+        html += ' <span class="tool-diff-link">' + T('viewDiff', '변경 보기') + ' ▸</span>';
+        el.classList.add('has-diff');
+        el.onclick = function () { openDiff(tid); };
+      }
+      // 서브에이전트 도구: 클릭하면 실시간 대화(전사)를 볼 수 있다.
+      if (SUB_TOOLS[o.name]) {
+        html += ' <span class="tool-sub-link">' + T('viewSub', '실시간 보기') + ' ▸</span>';
+        el.classList.add('has-sub');
+        el.onclick = function () { openSubView(tid); };
+      }
+      el.innerHTML = html;
+      recordActivity({ tid: tid, name: o.name, args: o.args, status: o.status,
+                       ok: o.ok, summary: o.summary, hasDiff: !!o.diff });
+    }
+
+    function openDiff(tid) {
+      const d = diffStore[tid];
+      if (!d) return;
+      document.getElementById('diff-modal-title').textContent = d.path || 'diff';
+      document.getElementById('diff-modal-body').innerHTML = renderDiff(d.diff);
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('diff-modal')).show();
+    }
+
+    function renderDiff(text) {
+      return (text || '').split('\n').map(function (l) {
+        let cls = 'diff-ctx';
+        if (l.startsWith('+++') || l.startsWith('---')) cls = 'diff-meta';
+        else if (l.startsWith('@@')) cls = 'diff-hunk';
+        else if (l.startsWith('+')) cls = 'diff-add';
+        else if (l.startsWith('-')) cls = 'diff-del';
+        return '<span class="' + cls + '">' + esc(l) + '</span>';
+      }).join('\n');
+    }
+
+    // ===== 서브에이전트 실시간 전사(transcript) =====
+    const SUB_TOOLS = { run_subagent: 1, verify_work: 1 };
+    const subStore = {}; // tid → { prompt, parts:[{type:'text'|'tool'|'turn', …}] }
+    let subModalTid = null;
+
+    function onChatSub(msg) {
+      let s = subStore[msg.tid];
+      if (!s) { s = subStore[msg.tid] = { prompt: '', parts: [], wait: null }; }
+      if (msg.prompt != null) s.prompt = msg.prompt;
+      if (msg.wait != null) s.wait = msg.wait; // 무응답 경과(초) — 콘텐츠 오면 해제
+      if (msg.turn) { s.wait = null; s.parts.push({ type: 'turn' }); }
+      if (msg.reasoning) {
+        s.wait = null;
+        let last = s.parts[s.parts.length - 1];
+        if (!last || last.type !== 'reasoning') { last = { type: 'reasoning', text: '' }; s.parts.push(last); }
+        last.text += msg.reasoning;
+      }
+      if (msg.delta) {
+        s.wait = null;
+        let last = s.parts[s.parts.length - 1];
+        if (!last || last.type !== 'text') { last = { type: 'text', text: '' }; s.parts.push(last); }
+        last.text += msg.delta;
+      }
+      if (msg.role === 'tool') {
+        s.wait = null;
+        s.parts.push({ type: 'tool', name: msg.name, summary: msg.summary, ok: msg.ok });
+      }
+      if (subModalTid === msg.tid) renderSubModal();
+    }
+
+    function openSubView(tid) {
+      subModalTid = tid;
+      renderSubModal();
+      const modalEl = document.getElementById('sub-modal');
+      modalEl.addEventListener('hidden.bs.modal',
+        function () { subModalTid = null; }, { once: true });
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    function renderSubModal() {
+      const body = document.getElementById('sub-modal-body');
+      if (!body) return;
+      const s = subStore[subModalTid];
+      if (!s || (!s.prompt && s.parts.length === 0)) {
+        body.innerHTML = '<div class="activity-empty">' + T('subAgentWaiting', '진행 중…') + '</div>';
+        return;
+      }
+      let h = '';
+      if (s.prompt) h += '<div class="sub-prompt">' + esc(s.prompt) + '</div>';
+      s.parts.forEach(function (p) {
+        if (p.type === 'turn') { h += '<div class="sub-turn-sep"></div>'; return; }
+        if (p.type === 'tool') {
+          h += '<div class="sub-tool">' + (p.ok === false ? '⚠️' : '✅') + ' <b>'
+             + esc(p.name) + '</b>'
+             + (p.summary ? ' → ' + esc(String(p.summary).slice(0, 300)) : '') + '</div>';
+          return;
+        }
+        if (p.type === 'reasoning') {
+          h += '<div class="sub-reasoning">' + esc(p.text || '') + '</div>';
+          return;
+        }
+        h += '<div class="sub-text">'
+           + (window.marked ? marked.parse(p.text || '') : esc(p.text || '')) + '</div>';
+      });
+      if (s.wait != null) {
+        h += '<div class="sub-tool">⏳ ' + s.wait + 's · '
+           + T('subAgentWaiting', '진행 중…') + '</div>';
+      }
+      body.innerHTML = h;
+      const mb = body.parentElement; // .modal-body (스크롤 컨테이너)
+      if (mb) mb.scrollTop = mb.scrollHeight;
+    }
+
+    // 재시도/안내 알림 라인.
+    function onChatNotice(msg) {
+      const w = document.createElement('div');
+      w.className = 'msg notice';
+      w.textContent = msg.text || '';
+      messagesEl.appendChild(w);
+      scrollMessages();
+    }
+
+    // ===== 호출 내역(런쳐/도구) =====
+    const activityLog = [];
+    function recordActivity(msg) {
+      let e = activityLog.find(function (a) { return a.tid === msg.tid; });
+      if (!e) {
+        e = { tid: msg.tid, name: msg.name, args: msg.args,
+              time: new Date().toLocaleTimeString() };
+        activityLog.push(e);
+      }
+      e.status = msg.status;
+      if (msg.ok !== undefined) e.ok = msg.ok;
+      if (msg.summary) e.summary = msg.summary;
+      renderActivity();
+    }
+    function renderActivity() {
+      const list = document.getElementById('activity-list');
+      const badge = document.getElementById('activity-count');
+      if (activityLog.length === 0) {
+        list.innerHTML = '<div class="activity-empty">' + T('activityEmpty', '아직 없음') + '</div>';
+        badge.classList.add('d-none');
+        return;
+      }
+      badge.textContent = activityLog.length;
+      badge.classList.remove('d-none');
+      const items = activityLog.slice().reverse().map(function (e) {
+        const running = e.status === 'running';
+        const icon = running ? '⏳' : (e.ok ? '✅' : '⚠️');
+        let h = '<button type="button" class="list-group-item list-group-item-action activity-item" data-tid="' + esc(e.tid) + '">';
+        h += '<div><span>' + icon + '</span> <span class="a-name">' + esc(e.name) + '</span>'
+           + (e.time ? '<span class="text-secondary float-end">' + esc(e.time) + '</span>' : '') + '</div>';
+        if (e.args) h += '<div class="a-args">' + esc(String(e.args).slice(0, 300)) + '</div>';
+        if (e.summary) h += '<div class="a-summary">→ ' + esc(String(e.summary).slice(0, 300)) + '</div>';
+        h += '</button>';
+        return h;
+      }).join('');
+      list.innerHTML = items;
+    }
+    // 호출 내역 모달: 열기 + 항목 클릭 시 해당 대화 위치로 스크롤.
+    (function () {
+      const btn = document.getElementById('activity-btn');
+      const modalEl = document.getElementById('activity-modal');
+      const list = document.getElementById('activity-list');
+      btn.addEventListener('click', function () {
+        renderActivity();
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      });
+      list.addEventListener('click', function (e) {
+        const item = e.target.closest('[data-tid]');
+        if (!item) return;
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        const el = document.getElementById('tool-' + item.dataset.tid);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('flash');
+          setTimeout(function () { el.classList.remove('flash'); }, 1200);
+        }
+      });
+    })();
+
+    // 작업 요약 문구(클로드 코드 스타일).
+    const SUMMARY_VERBS = ['Brewed', 'Cooked', 'Pondered', 'Crafted', 'Noodled',
+                           'Spun', 'Mulled', 'Wrangled', 'Tinkered', 'Forged'];
+    function summaryLabel(elapsedMs) {
+      const verb = SUMMARY_VERBS[Math.floor(Math.random() * SUMMARY_VERBS.length)];
+      return verb + ' for ' + formatDuration(elapsedMs || 0);
+    }
+    function formatDuration(ms) {
+      const sec = Math.round(ms / 1000);
+      if (sec < 60) return sec + 's';
+      return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+    }
+
+    function onChatError(msg) {
+      generating = false;
+      const wrap = document.createElement('div');
+      wrap.className = 'msg assistant';
+      wrap.innerHTML = '<div class="bubble chat-error"></div>' +
+                       '<div class="actions"></div>';
+      wrap.querySelector('.bubble').textContent = T('errorPrefix', '오류: ') + (msg.message || '');
+      const retry = document.createElement('button');
+      retry.className = 'btn btn-sm btn-outline-danger';
+      retry.textContent = T('retry', '다시 시도');
+      retry.addEventListener('click', function () {
+        wrap.remove();
+        send({ type: 'chat.retry' });
+      });
+      wrap.querySelector('.actions').appendChild(retry);
+      messagesEl.appendChild(wrap);
+      streamingEl = null;
+      scrollMessages();
+    }
+
+    function onChatTruncated(messageId) {
+      messagesEl.querySelectorAll('.msg[data-id]').forEach(function (el) {
+        if (Number(el.dataset.id) >= messageId) el.remove();
+      });
+    }
+
+    // ===== 입력창(composer): 자동 높이 확장 + 전송 =====
+    const prompt = document.getElementById('prompt');
+    const sendBtn = document.getElementById('send-btn');
+    function autoGrow() {
+      prompt.style.height = 'auto';
+      prompt.style.height = Math.min(prompt.scrollHeight, 160) + 'px';
+      updateComposerSpace();
+    }
+    function updateSendBtn() {
+      // 내용이 없으면 보내기 비활성화.
+      sendBtn.disabled = prompt.value.trim() === '';
+    }
+    function sendMessage() {
+      const text = prompt.value.trim();
+      if (!text) return;
+      // 생성 중이어도 전송한다. 네이티브가 대기 큐에 넣고 끝나면 순서대로 처리한다.
+      send({ type: 'chat.send', text: text });
+      prompt.value = '';
+      autoGrow();
+      updateSendBtn();
+    }
+    function insertAtCaret(el, text) {
+      const s = (el.selectionStart != null) ? el.selectionStart : el.value.length;
+      const e = (el.selectionEnd != null) ? el.selectionEnd : el.value.length;
+      el.value = el.value.slice(0, s) + text + el.value.slice(e);
+      const pos = s + text.length;
+      el.selectionStart = el.selectionEnd = pos;
+    }
+    prompt.addEventListener('input', function () { autoGrow(); updateSendBtn(); });
+    prompt.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) {
+        // Shift/Ctrl/Alt/Cmd + Enter → 줄바꿈
+        insertAtCaret(prompt, '\n');
+        autoGrow();
+        updateSendBtn();
+      } else {
+        sendMessage(); // 단독 Enter → 전송
+      }
+    });
+    sendBtn.addEventListener('click', sendMessage);
+    // + : 파일 선택 → 텍스트면 내용 붙여넣기, 아니면 경로 삽입(네이티브 처리).
+    document.getElementById('attach-btn').addEventListener('click', function () {
+      send({ type: 'attach.pick' });
+    });
+    // 네이티브가 읽어온 파일 내용을 입력창에 삽입.
+    window.collaboComposerInsert = function (text) {
+      if (text == null) return;
+      if (prompt.value && !prompt.value.endsWith('\n')) insertAtCaret(prompt, '\n');
+      insertAtCaret(prompt, text);
+      autoGrow();
+      updateSendBtn();
+      prompt.focus();
+    };
+    autoGrow();
+    updateSendBtn();
+
+    // ===== 링크는 무조건 외부 브라우저로 (IDE 페이지가 링크로 바뀌지 않게) =====
+    document.addEventListener('click', function (e) {
+      const a = e.target.closest('a[href]');
+      if (!a) return;
+      e.preventDefault(); // 웹뷰 내 네비게이션 차단
+      const href = a.getAttribute('href') || '';
+      if (/^(https?:|mailto:)/i.test(href)) {
+        send({ type: 'open.external', url: a.href }); // 절대 URL
+      }
+    }, true);
+
+    // 초기화 완료 → 네이티브에 준비 통지(현재 프로젝트를 받아옴).
+    clearViewer();
+    send({ type: 'ready' });
+  </script>
+</body>
+</html>
