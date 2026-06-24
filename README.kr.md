@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/collaboIDE.png" width="200">
+  <img src="docs/collaboIDE.gif" width="200">
 
   <br>
 
