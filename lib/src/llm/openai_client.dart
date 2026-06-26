@@ -103,6 +103,9 @@ class OpenAiClient {
         'stream': true,
         'stream_options': {'include_usage': true},
         'messages': messages,
+        // 설정에서 선택한 경우에만 추론 강도를 전달(빈 값이면 미전송).
+        if (cfg.reasoningEffort.isNotEmpty)
+          'reasoning_effort': cfg.reasoningEffort,
         if (tools != null && tools.isNotEmpty) ...{
           'tools': tools,
           'tool_choice': 'auto',

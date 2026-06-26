@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -176,9 +178,9 @@ class _SettingsDialog extends StatelessWidget {
     final l = AppLocalizations.of(context);
     return Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 540),
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
         child: DefaultTabController(
-          length: 4,
+          length: 5,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -198,6 +200,7 @@ class _SettingsDialog extends StatelessWidget {
                   Tab(text: l.tabPrompt),
                   Tab(text: l.tabTools),
                   Tab(text: l.tabAppearance),
+                  Tab(text: l.tabAbout),
                 ],
               ),
               Flexible(
@@ -207,6 +210,7 @@ class _SettingsDialog extends StatelessWidget {
                     _PromptTab(workspace: workspace),
                     _ToolsTab(workspace: workspace),
                     _AppearanceTab(workspace: workspace),
+                    const _AboutTab(),
                   ],
                 ),
               ),
@@ -230,6 +234,88 @@ class _SettingsDialog extends StatelessWidget {
   }
 }
 
+/// 정보 탭: 프로그램명 / 버전·빌드 / GitHub 링크 / 오픈소스 안내.
+class _AboutTab extends StatelessWidget {
+  const _AboutTab();
+
+  static final Uri _github = Uri.parse('https://github.com/jkhda456/CollaboIDE');
+
+  static const String _openSourceList =
+      'Flutter · webview_windows · webview_flutter · sqflite · sqlite3 · '
+      'path · path_provider · http · url_launcher · file_selector · archive · '
+      'intl · package_info_plus · Bootstrap (MIT) · marked (MIT)';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l = AppLocalizations.of(context);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 제목
+          Text('Collabo IDE',
+              style: theme.textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          // 버전 + 빌드 번호
+          FutureBuilder<PackageInfo>(
+            future: PackageInfo.fromPlatform(),
+            builder: (context, snap) {
+              final info = snap.data;
+              final text = info == null
+                  ? '…'
+                  : l.aboutVersion(info.version, info.buildNumber);
+              return Text(text,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant));
+            },
+          ),
+          const SizedBox(height: 16),
+          // GitHub 링크
+          InkWell(
+            onTap: () =>
+                launchUrl(_github, mode: LaunchMode.externalApplication),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.open_in_new, size: 16),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    _github.toString(),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // 오픈소스
+          Text(l.openSourceTitle, style: theme.textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Text(l.openSourceIntro, style: theme.textTheme.bodySmall),
+          const SizedBox(height: 8),
+          Text(_openSourceList,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () =>
+                showLicensePage(context: context, applicationName: 'Collabo IDE'),
+            icon: const Icon(Icons.description_outlined, size: 18),
+            label: Text(l.viewLicenses),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 모델 탭: 연결방식 / URL / KEY / 모델 + 연결 상태 확인.
 class _ModelTab extends StatefulWidget {
   const _ModelTab({super.key, required this.workspace});
@@ -247,7 +333,16 @@ class _ModelTabState extends State<_ModelTab> {
   final OpenAiClient _client = OpenAiClient();
 
   bool _testing = false;
+  bool _showKey = false; // API 키 마스크 해제 여부
+  bool _multimodal = false; // 멀티모달(이미지 입력) 지원
+  String _reasoningEffort = ''; // 추론 강도('' = 미전송 | low | medium | high)
   LlmTestResult? _result;
+
+  // 추론 강도 드롭다운 선택지.
+  // ''      → "안 붙이기": reasoning_effort 를 요청에 아예 포함하지 않음.
+  // 'none'  → reasoning_effort: "none" 전송(추론 끔).
+  // 'low'/'high' → 해당 강도로 전송.
+  static const List<String> _reasoningOptions = ['', 'none', 'low', 'high'];
 
   @override
   void initState() {
@@ -257,6 +352,9 @@ class _ModelTabState extends State<_ModelTab> {
     _baseUrl = TextEditingController(text: cfg.baseUrl);
     _apiKey = TextEditingController(text: cfg.apiKey);
     _model = TextEditingController(text: cfg.model);
+    _multimodal = cfg.multimodal;
+    _reasoningEffort =
+        _reasoningOptions.contains(cfg.reasoningEffort) ? cfg.reasoningEffort : '';
   }
 
   @override
@@ -273,6 +371,8 @@ class _ModelTabState extends State<_ModelTab> {
         baseUrl: _baseUrl.text.trim(),
         apiKey: _apiKey.text.trim(),
         model: _model.text.trim(),
+        multimodal: _multimodal,
+        reasoningEffort: _reasoningEffort,
       );
 
   /// 변경 즉시 자동 저장한다(별도 저장 버튼 없이 입력에 따라 적용).
@@ -329,10 +429,17 @@ class _ModelTabState extends State<_ModelTab> {
           const SizedBox(height: 12),
           TextField(
             controller: _apiKey,
-            obscureText: true,
-            decoration: const InputDecoration(
+            obscureText: !_showKey,
+            decoration: InputDecoration(
               labelText: 'API Key',
-              border: OutlineInputBorder(),
+              border: const OutlineInputBorder(),
+              // 오른쪽 아이콘으로 마스크 보기/숨기기 토글.
+              suffixIcon: IconButton(
+                icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility,
+                    size: 18),
+                tooltip: _showKey ? l.hideKey : l.showKey,
+                onPressed: () => setState(() => _showKey = !_showKey),
+              ),
             ),
             onChanged: (_) => _persist(),
           ),
@@ -346,7 +453,42 @@ class _ModelTabState extends State<_ModelTab> {
             ),
             onChanged: (_) => _persist(),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 4),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: Text(l.multimodalSupport),
+            subtitle: Text(l.multimodalSupportDesc,
+                style: theme.textTheme.bodySmall),
+            value: _multimodal,
+            onChanged: (v) {
+              setState(() => _multimodal = v);
+              _persist();
+            },
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: _reasoningEffort,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: l.reasoningEffort,
+              helperText: l.reasoningEffortDesc,
+              helperMaxLines: 3,
+              border: const OutlineInputBorder(),
+            ),
+            items: [
+              for (final opt in _reasoningOptions)
+                DropdownMenuItem(
+                  value: opt,
+                  child: Text(opt.isEmpty ? l.reasoningEffortOff : opt),
+                ),
+            ],
+            onChanged: (v) {
+              setState(() => _reasoningEffort = v ?? '');
+              _persist();
+            },
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               OutlinedButton.icon(
@@ -776,11 +918,52 @@ class _PythonStatusBar extends StatelessWidget {
 }
 
 /// Python 설정: 사용자가 인터프리터를 직접 선택한다(자동 다운로드 없음).
-class _PythonSettingsDialog extends StatelessWidget {
+///
+/// 경로는 직접 입력(텍스트 필드)하거나 파일 선택으로 지정할 수 있고,
+/// 입력을 멈춘 뒤 잠시 후 자동으로 검증되어 "확인됨" 표시가 갱신된다.
+class _PythonSettingsDialog extends StatefulWidget {
   const _PythonSettingsDialog({required this.workspace});
   final WorkspaceController workspace;
 
+  @override
+  State<_PythonSettingsDialog> createState() => _PythonSettingsDialogState();
+}
+
+class _PythonSettingsDialogState extends State<_PythonSettingsDialog> {
   static final Uri _downloadUrl = Uri.parse('https://www.python.org/downloads/');
+
+  /// 입력 후 자동 검증까지의 대기 시간.
+  static const Duration _verifyDelay = Duration(milliseconds: 700);
+
+  late final TextEditingController _controller;
+  Timer? _debounce;
+
+  WorkspaceController get _ws => widget.workspace;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _ws.pythonInterpreter ?? '');
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// 입력 중에는 디바운스로 기다렸다가, 멈추면 경로를 적용/저장한다.
+  void _onChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(_verifyDelay, () => _commit(value));
+  }
+
+  Future<void> _commit(String value) async {
+    final path = value.trim();
+    if (path == (_ws.pythonInterpreter ?? '')) return;
+    await _ws.setPythonInterpreter(path);
+  }
 
   Future<void> _pick(String allFilesLabel) async {
     // Windows 는 python.exe, 그 외는 확장자 없는 실행 파일.
@@ -788,7 +971,10 @@ class _PythonSettingsDialog extends StatelessWidget {
       const XTypeGroup(label: 'Python', extensions: ['exe']),
       XTypeGroup(label: allFilesLabel),
     ]);
-    if (file != null) await workspace.setPythonInterpreter(file.path);
+    if (file == null) return;
+    _debounce?.cancel();
+    _controller.text = file.path;
+    await _ws.setPythonInterpreter(file.path);
   }
 
   @override
@@ -800,10 +986,10 @@ class _PythonSettingsDialog extends StatelessWidget {
       content: SizedBox(
         width: 480,
         child: ListenableBuilder(
-          listenable: workspace,
+          listenable: _ws,
           builder: (context, _) {
-            final path = workspace.pythonInterpreter;
-            final installed = workspace.pythonInstalled;
+            final path = _ws.pythonInterpreter;
+            final installed = _ws.pythonInstalled;
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -811,15 +997,19 @@ class _PythonSettingsDialog extends StatelessWidget {
                 Text(l.selectPythonPrompt),
                 const SizedBox(height: 10),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: SelectableText(
-                        path ?? l.notSelected,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: path == null
-                              ? theme.colorScheme.onSurfaceVariant
-                              : null,
+                      child: TextField(
+                        controller: _controller,
+                        onChanged: _onChanged,
+                        style: const TextStyle(fontSize: 12),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: l.notSelected,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 10),
                         ),
                       ),
                     ),
@@ -868,7 +1058,12 @@ class _PythonSettingsDialog extends StatelessWidget {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () async {
+            // 닫기 전에 디바운스 중인 입력을 즉시 반영한다.
+            _debounce?.cancel();
+            await _commit(_controller.text);
+            if (context.mounted) Navigator.of(context).pop();
+          },
           child: Text(l.close),
         ),
       ],

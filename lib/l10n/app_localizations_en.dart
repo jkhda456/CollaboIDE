@@ -27,6 +27,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tabAppearance => 'Appearance';
 
   @override
+  String get tabAbout => 'About';
+
+  @override
+  String aboutVersion(String version, String build) {
+    return 'Version $version (build $build)';
+  }
+
+  @override
+  String get openSourceTitle => 'Open source';
+
+  @override
+  String get openSourceIntro =>
+      'Built with these open-source components. See the full licenses below.';
+
+  @override
+  String get viewLicenses => 'View all open-source licenses';
+
+  @override
   String get systemPromptDesc =>
       'System prompt sent at the start of every conversation (execution strategy). Leave empty to use the default.';
 
@@ -168,7 +186,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelLabel => 'Model';
 
   @override
+  String get multimodalSupport => 'Multimodal support';
+
+  @override
+  String get multimodalSupportDesc =>
+      'Enable to attach images to messages with the + button. Use only with a vision-capable model.';
+
+  @override
+  String get reasoningEffort => 'Attach reasoning effort option';
+
+  @override
+  String get reasoningEffortDesc =>
+      '\"Don\'t attach\" omits reasoning_effort from the request; none/low/high are sent as-is (none disables reasoning). Use only with models/servers that support it, e.g. llama.cpp.';
+
+  @override
+  String get reasoningEffortOff => 'Don\'t attach';
+
+  @override
   String get testConnection => 'Test connection';
+
+  @override
+  String get showKey => 'Show key';
+
+  @override
+  String get hideKey => 'Hide key';
 
   @override
   String get toolsDescription =>

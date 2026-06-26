@@ -113,17 +113,40 @@ class WebBridge {
       case 'attach.pick':
         _handleAttachPick();
         break;
+      case 'image.pick':
+        _handleImagePick();
+        break;
       case 'chat.send':
-        _handleChatSend(msg['text'] as String?);
+        _handleChatSend(
+          msg['text'] as String?,
+          _parseAttachments(msg['attachments']),
+        );
         break;
       case 'chat.queue.cancel':
         _handleQueueCancel((msg['id'] as num?)?.toInt());
+        break;
+      case 'chat.checkpoint.preview':
+        _handleCheckpointPreview((msg['size'] as num?)?.toInt() ?? 2000);
+        break;
+      case 'chat.checkpoint.create':
+        _handleCheckpointCreate(
+            msg['compress'] == true, msg['content'] as String?);
+        break;
+      case 'chat.checkpoint.revert':
+        _handleCheckpointRevert((msg['id'] as num?)?.toInt());
+        break;
+      case 'chat.checkpoint.edit':
+        _handleCheckpointEdit(
+            (msg['id'] as num?)?.toInt(), msg['content'] as String?);
         break;
       case 'chat.retry':
         _handleChatRetry();
         break;
       case 'chat.truncateFrom':
         _handleTruncate(msg['messageId'] as int?);
+        break;
+      case 'chat.delete':
+        _handleDeleteMessage((msg['messageId'] as num?)?.toInt());
         break;
       case 'chat.edit':
         _handleChatEdit(msg['messageId'] as int?, msg['text'] as String?);
@@ -148,13 +171,26 @@ class WebBridge {
                 'role': m.role.name,
                 'content': m.content,
                 'model': m.model,
+                'pipeline': m.pipeline,
                 'toolCalls': m.toolCalls,
                 'toolName': m.toolName,
                 'toolCallId': m.toolCallId,
+                if (m.role == MessageRole.user)
+                  'images': _imagesFromMeta(m.metadata),
               })
           .toList(),
     });
     await _pushChatMeta();
+  }
+
+  /// 메시지 metadata(JSON)에서 첨부 이미지 목록을 꺼낸다(없으면 빈 리스트).
+  List<Map<String, Object?>> _imagesFromMeta(String? metadata) {
+    if (metadata == null || metadata.isEmpty) return const [];
+    try {
+      final m = jsonDecode(metadata);
+      if (m is Map) return _parseAttachments(m['images']);
+    } catch (_) {}
+    return const [];
   }
 
   /// 헤더용 메타: 모델명 + 컨텍스트(메인 누적) + 총합(메인 + 서브 LLM 누적).
@@ -170,11 +206,21 @@ class WebBridge {
         total += _sumUsageTotal(await store.messages(sub.id));
       }
     }
+    // 프로젝트 폴더의 마지막 변경 시각(없으면 null) — 타이틀바에 표시.
+    int? lastUpdated;
+    final pp = _projectPath;
+    if (pp != null) {
+      try {
+        lastUpdated = Directory(pp).statSync().modified.millisecondsSinceEpoch;
+      } catch (_) {}
+    }
     _post({
       'type': 'chat.meta',
       'model': _workspace.llmConfig.model,
       'contextTokens': context,
       'totalTokens': total,
+      'lastUpdated': lastUpdated,
+      'multimodal': _workspace.llmConfig.multimodal,
     });
   }
 
@@ -191,45 +237,75 @@ class WebBridge {
     return sum;
   }
 
-  Future<void> _handleChatSend(String? text) async {
+  Future<void> _handleChatSend(
+      String? text, List<Map<String, Object?>> attachments) async {
     final store = _store, convId = _convId;
-    if (text == null || text.trim().isEmpty || store == null || convId == null) {
+    final t = (text ?? '').trim();
+    // 텍스트가 비어 있어도 첨부(이미지)가 있으면 전송을 허용한다.
+    if ((t.isEmpty && attachments.isEmpty) || store == null || convId == null) {
       return;
     }
     // 생성 중이면 드롭하지 않고 대기 큐에 넣는다(끝나면 순서대로 처리).
     if (_generating) {
-      _queue.add({'id': ++_queueSeq, 'text': text});
+      _queue.add({'id': ++_queueSeq, 'text': t, 'attachments': attachments});
       _emitQueue();
       return;
     }
-    await _sendAndDrain(store, convId, text);
+    await _sendAndDrain(store, convId, t, attachments);
   }
 
   /// 메시지를 보내고 생성한다. 끝난 뒤 큐에 쌓인 메시지가 있으면 순서대로 이어서 처리.
-  Future<void> _sendAndDrain(
-      ConversationStore store, int convId, String first) async {
-    await _sendOne(store, convId, first);
+  Future<void> _sendAndDrain(ConversationStore store, int convId, String first,
+      List<Map<String, Object?>> attachments) async {
+    await _sendOne(store, convId, first, attachments);
     await _drainQueue(store, convId);
   }
 
-  Future<void> _sendOne(
-      ConversationStore store, int convId, String text) async {
+  Future<void> _sendOne(ConversationStore store, int convId, String text,
+      List<Map<String, Object?>> attachments) async {
+    // 이미지 첨부는 메시지 metadata 에 JSON 으로 보관(본문은 텍스트 그대로).
+    final meta = attachments.isEmpty
+        ? null
+        : jsonEncode({'images': attachments});
     final userId = await store.addMessage(
       conversationId: convId,
       role: MessageRole.user,
       content: text,
+      metadata: meta,
     );
-    _post({'type': 'chat.message', 'id': userId, 'role': 'user', 'content': text});
+    _post({
+      'type': 'chat.message',
+      'id': userId,
+      'role': 'user',
+      'content': text,
+      if (attachments.isNotEmpty) 'images': attachments,
+    });
     await _generate(store, convId);
   }
 
   /// 생성이 끝난 뒤 대기 큐를 순서대로 비운다(재시도/수정 경로에서도 호출).
   Future<void> _drainQueue(ConversationStore store, int convId) async {
     while (_queue.isNotEmpty) {
-      final text = _queue.removeAt(0)['text'] as String;
+      final item = _queue.removeAt(0);
       _emitQueue();
-      await _sendOne(store, convId, text);
+      await _sendOne(store, convId, item['text'] as String,
+          _parseAttachments(item['attachments']));
     }
+  }
+
+  /// 웹에서 받은 첨부 목록을 {url,name} 맵 리스트로 정규화한다.
+  List<Map<String, Object?>> _parseAttachments(Object? raw) {
+    if (raw is! List) return const [];
+    final out = <Map<String, Object?>>[];
+    for (final e in raw) {
+      if (e is Map) {
+        final url = e['url'];
+        if (url is String && url.isNotEmpty) {
+          out.add({'url': url, 'name': (e['name'] as String?) ?? ''});
+        }
+      }
+    }
+    return out;
   }
 
   /// 현재 대기 큐 상태를 웹으로 전달한다(상태 풍선 칩/모달 갱신용).
@@ -256,6 +332,16 @@ class WebBridge {
     _post({'type': 'chat.truncated', 'messageId': messageId});
   }
 
+  /// 메시지 한 건 삭제(그 메시지만 제거, 앞뒤는 유지).
+  Future<void> _handleDeleteMessage(int? messageId) async {
+    final store = _store, convId = _convId;
+    if (messageId == null || store == null || convId == null || _generating) {
+      return;
+    }
+    await store.deleteMessage(messageId);
+    await _pushHistory();
+  }
+
   /// 인플레이스 수정: 해당 메시지를 고치고, 그 아래는 삭제 후 다시 생성한다.
   Future<void> _handleChatEdit(int? messageId, String? text) async {
     final store = _store, convId = _convId;
@@ -272,6 +358,100 @@ class WebBridge {
     _post({'type': 'chat.edited', 'messageId': messageId, 'content': text});
     await _generate(store, convId);
     await _drainQueue(store, convId);
+  }
+
+  // ===== 시작점(체크포인트): 지금까지의 대화를 (선택적으로 압축해) 새 시작점으로 =====
+
+  /// 시작점 압축 미리보기: 이전 내용을 LLM 으로 약 [sizeTokens] 토큰으로 요약해
+  /// 다이얼로그로 돌려준다(아직 시작점을 만들지는 않는다 → 사용자가 보고 편집).
+  Future<void> _handleCheckpointPreview(int sizeTokens) async {
+    final store = _store, convId = _convId;
+    if (store == null || convId == null || _generating) return;
+    _generating = true;
+    _status('Generating preview…');
+    String summary = '';
+    try {
+      summary = await _compressHistory(
+          await store.messages(convId), sizeTokens.clamp(100, 10000));
+    } finally {
+      _generating = false;
+      _clearStatus();
+    }
+    _post({'type': 'checkpoint.preview', 'text': summary});
+  }
+
+  /// 시작점 생성. [compress] 면 미리보기에서 받은(편집 가능) [content] 를 그대로
+  /// 시작점에 보관한다. 이후 대화는 그 요약 + 시작점 이후 메시지만 컨텍스트에 쓴다.
+  Future<void> _handleCheckpointCreate(bool compress, String? content) async {
+    final store = _store, convId = _convId;
+    if (store == null || convId == null || _generating) return;
+    final summary = compress ? (content ?? '').trim() : '';
+    await store.addMessage(
+      conversationId: convId,
+      role: MessageRole.system,
+      content: summary,
+      pipeline: 'checkpoint',
+    );
+    await _pushHistory();
+    if (_queue.isNotEmpty) await _drainQueue(store, convId);
+  }
+
+  /// 마지막 시작점 이후 메시지(+이전 요약)를 LLM 으로 요약한다. 실패하면 ''.
+  Future<String> _compressHistory(List<Message> all, int targetTokens) async {
+    var startIdx = 0;
+    var prior = '';
+    for (var i = all.length - 1; i >= 0; i--) {
+      if (all[i].pipeline == 'checkpoint') {
+        startIdx = i + 1;
+        prior = all[i].content.trim();
+        break;
+      }
+    }
+    final buf = StringBuffer();
+    if (prior.isNotEmpty) buf.writeln('[Earlier summary]\n$prior\n');
+    for (final m in all.sublist(startIdx)) {
+      if (m.pipeline == 'checkpoint') continue;
+      final c = m.content.trim();
+      if (c.isEmpty) continue;
+      buf.writeln('[${m.role.name}] $c');
+    }
+    final transcript = buf.toString().trim();
+    if (transcript.isEmpty) return '';
+    final cfg = _workspace.llmConfig;
+    final sys =
+        'You compress a conversation into a concise summary that preserves key '
+        'decisions, requirements, file/code changes, and open threads, so the '
+        'assistant can continue seamlessly. Target about $targetTokens tokens '
+        '(~${targetTokens * 4} characters). Output ONLY the summary text.';
+    try {
+      final turn = await _withLlmRetry(
+        () => _runSubModelTurn(cfg, [
+          {'role': 'system', 'content': sys},
+          {'role': 'user', 'content': transcript},
+        ], null),
+        reason: 'Compress',
+        maxAttempts: 2,
+      );
+      return turn.content.trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 시작점 원복: 시작점 메시지 한 건만 삭제(앞뒤 대화는 그대로 유지).
+  Future<void> _handleCheckpointRevert(int? id) async {
+    final store = _store, convId = _convId;
+    if (id == null || store == null || convId == null) return;
+    await store.deleteMessage(id);
+    await _pushHistory();
+  }
+
+  /// 시작점의 압축 내용 편집.
+  Future<void> _handleCheckpointEdit(int? id, String? content) async {
+    final store = _store;
+    if (id == null || content == null || store == null) return;
+    await store.updateMessageContent(id, content);
+    await _pushHistory();
   }
 
   static const int _maxToolIterations = 20;
@@ -486,19 +666,60 @@ class WebBridge {
   }
 
   /// 시스템 프롬프트 + 기존 user/assistant/system 텍스트로 컨텍스트를 만든다.
+  ///
+  /// **시작점(체크포인트)** 이 있으면, 마지막 체크포인트 **이후** 메시지만 LLM 에
+  /// 넣고, 그 이전 내용은 체크포인트에 저장된 **압축 요약**(있으면)으로 대체한다.
   Future<List<Map<String, Object?>>> _buildContextMessages(
       ConversationStore store, int convId) async {
     final messages = <Map<String, Object?>>[];
     final prompt = _workspace.systemPrompt.trim();
     if (prompt.isNotEmpty) messages.add({'role': 'system', 'content': prompt});
-    for (final m in await store.messages(convId)) {
+
+    final all = await store.messages(convId);
+    // 마지막 시작점(체크포인트)을 찾는다.
+    var startIdx = 0;
+    String? summary;
+    for (var i = all.length - 1; i >= 0; i--) {
+      if (all[i].pipeline == 'checkpoint') {
+        startIdx = i + 1;
+        final c = all[i].content.trim();
+        if (c.isNotEmpty) summary = c;
+        break;
+      }
+    }
+    if (summary != null) {
+      messages.add({
+        'role': 'system',
+        'content':
+            'Summary of the earlier conversation (context before the current '
+                'starting point):\n$summary',
+      });
+    }
+    final multimodal = _workspace.llmConfig.multimodal;
+    for (final m in all.sublist(startIdx)) {
+      if (m.pipeline == 'checkpoint') continue;
       final role = switch (m.role) {
         MessageRole.user => 'user',
         MessageRole.assistant => 'assistant',
         MessageRole.system => 'system',
         _ => null,
       };
-      if (role != null && m.content.isNotEmpty) {
+      if (role == null) continue;
+      // 멀티모달이 켜져 있고 사용자 메시지에 이미지가 있으면 content 를
+      // OpenAI 멀티모달 배열(text + image_url)로 구성한다.
+      final images =
+          (multimodal && m.role == MessageRole.user) ? _imagesFromMeta(m.metadata) : const [];
+      if (images.isNotEmpty) {
+        final parts = <Map<String, Object?>>[
+          if (m.content.isNotEmpty) {'type': 'text', 'text': m.content},
+          for (final img in images)
+            {
+              'type': 'image_url',
+              'image_url': {'url': img['url']},
+            },
+        ];
+        messages.add({'role': role, 'content': parts});
+      } else if (m.content.isNotEmpty) {
         messages.add({'role': role, 'content': m.content});
       }
     }
@@ -1046,6 +1267,54 @@ class WebBridge {
     }
   }
 
+  /// 멀티모달용 이미지 선택: 이미지를 골라 base64 data URL 로 웹에 전달한다.
+  /// (웹은 OS 파일시스템에 직접 접근하지 못하므로 네이티브가 읽어 넘긴다.)
+  static const int _maxImageBytes = 12 * 1024 * 1024; // 12MB 가드
+
+  Future<void> _handleImagePick() async {
+    const group = XTypeGroup(
+      label: 'Image',
+      extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
+      mimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+    );
+    final file = await openFile(acceptedTypeGroups: [group]);
+    if (file == null) return;
+    try {
+      final bytes = await file.readAsBytes();
+      if (bytes.length > _maxImageBytes) {
+        _post({'type': 'chat.notice', 'message': 'Image too large (max 12MB).'});
+        return;
+      }
+      final mime = _imageMimeFor(file.path);
+      final url = 'data:$mime;base64,${base64Encode(bytes)}';
+      _post({
+        'type': 'composer.attachImage',
+        'url': url,
+        'name': p.basename(file.path),
+      });
+    } catch (e) {
+      _post({'type': 'chat.notice', 'message': 'Failed to read image: $e'});
+    }
+  }
+
+  String _imageMimeFor(String path) {
+    switch (p.extension(path).toLowerCase()) {
+      case '.png':
+        return 'image/png';
+      case '.gif':
+        return 'image/gif';
+      case '.webp':
+        return 'image/webp';
+      case '.bmp':
+        return 'image/bmp';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+
   /// 뷰어의 현재 파일을 OS 기본(연결) 프로그램으로 연다.
   Future<void> _handleOpenFileExternal(String? path) async {
     if (path == null || path.isEmpty) return;
@@ -1182,6 +1451,8 @@ class WebBridge {
     _flushTimer = null;
     if (dirs.isNotEmpty || files.isNotEmpty) {
       _post({'type': 'fs.change', 'paths': dirs, 'files': files});
+      // 파일 변경 → 프로젝트 폴더 mtime 변동. 헤더의 "마지막 변경" 을 갱신.
+      unawaited(_pushChatMeta());
     }
   }
 

@@ -13,6 +13,8 @@ class LlmConfig {
     this.baseUrl = '',
     this.apiKey = '',
     this.model = '',
+    this.multimodal = false,
+    this.reasoningEffort = '',
   });
 
   /// 연결 방식(OpenAI 호환 등).
@@ -27,6 +29,13 @@ class LlmConfig {
   /// 사용할 모델 이름(예: gpt-4o-mini).
   final String model;
 
+  /// 멀티모달(이미지 입력) 지원 여부. 켜면 대화에서 + 버튼으로 이미지를 첨부할 수 있다.
+  final bool multimodal;
+
+  /// 추론 강도(`reasoning_effort`). 빈 문자열이면 미전송(요청에 포함하지 않음).
+  /// 비어 있지 않으면(예: 'low'|'medium'|'high') 요청 본문에 그대로 전달한다.
+  final String reasoningEffort;
+
   bool get isConfigured => baseUrl.isNotEmpty && model.isNotEmpty;
 
   LlmConfig copyWith({
@@ -34,12 +43,16 @@ class LlmConfig {
     String? baseUrl,
     String? apiKey,
     String? model,
+    bool? multimodal,
+    String? reasoningEffort,
   }) =>
       LlmConfig(
         connection: connection ?? this.connection,
         baseUrl: baseUrl ?? this.baseUrl,
         apiKey: apiKey ?? this.apiKey,
         model: model ?? this.model,
+        multimodal: multimodal ?? this.multimodal,
+        reasoningEffort: reasoningEffort ?? this.reasoningEffort,
       );
 
   Map<String, Object?> toJson() => {
@@ -47,6 +60,8 @@ class LlmConfig {
         'baseUrl': baseUrl,
         'apiKey': apiKey,
         'model': model,
+        'multimodal': multimodal,
+        'reasoningEffort': reasoningEffort,
       };
 
   factory LlmConfig.fromJson(Map<String, Object?> json) => LlmConfig(
@@ -54,5 +69,7 @@ class LlmConfig {
         baseUrl: (json['baseUrl'] as String?) ?? '',
         apiKey: (json['apiKey'] as String?) ?? '',
         model: (json['model'] as String?) ?? '',
+        multimodal: (json['multimodal'] as bool?) ?? false,
+        reasoningEffort: (json['reasoningEffort'] as String?) ?? '',
       );
 }

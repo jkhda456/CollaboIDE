@@ -285,6 +285,11 @@ class ConversationStore {
     );
   }
 
+  /// 메시지 한 건을 삭제한다(체크포인트/시작점 원복 등에 사용).
+  Future<void> deleteMessage(int id) async {
+    await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+  }
+
   /// 메시지 본문을 수정한다.
   Future<void> updateMessageContent(int messageId, String content) async {
     await db.update(

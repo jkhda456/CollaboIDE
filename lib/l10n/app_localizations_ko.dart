@@ -27,6 +27,23 @@ class AppLocalizationsKo extends AppLocalizations {
   String get tabAppearance => '모양';
 
   @override
+  String get tabAbout => '정보';
+
+  @override
+  String aboutVersion(String version, String build) {
+    return '버전 $version (빌드 $build)';
+  }
+
+  @override
+  String get openSourceTitle => '오픈소스';
+
+  @override
+  String get openSourceIntro => '다음 오픈소스 구성요소로 만들어졌습니다. 전체 라이선스는 아래에서 확인하세요.';
+
+  @override
+  String get viewLicenses => '오픈소스 라이선스 전체 보기';
+
+  @override
   String get systemPromptDesc =>
       '모든 대화 시작 시 전달되는 시스템 프롬프트(실행 전략)입니다. 비워두면 기본값이 사용됩니다.';
 
@@ -166,7 +183,30 @@ class AppLocalizationsKo extends AppLocalizations {
   String get modelLabel => '모델';
 
   @override
+  String get multimodalSupport => '멀티모달 지원';
+
+  @override
+  String get multimodalSupportDesc =>
+      '켜면 대화에서 + 버튼으로 이미지를 첨부해 보낼 수 있습니다. 비전(이미지 입력) 지원 모델에서만 사용하세요.';
+
+  @override
+  String get reasoningEffort => '추론강도 옵션 붙이기';
+
+  @override
+  String get reasoningEffortDesc =>
+      '\'안 붙이기\'는 reasoning_effort 를 요청에 아예 넣지 않고, none/low/high 는 그대로 전달합니다(none 은 추론을 끔). 지원하는 모델/서버에서만 사용하세요(예: llama.cpp).';
+
+  @override
+  String get reasoningEffortOff => '안 붙이기';
+
+  @override
   String get testConnection => '연결 상태 확인';
+
+  @override
+  String get showKey => '키 보기';
+
+  @override
+  String get hideKey => '키 숨기기';
 
   @override
   String get toolsDescription =>

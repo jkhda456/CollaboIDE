@@ -17,12 +17,35 @@
 
     /* 대화창 위에 떠 있는 입력창(composer) */
     #composer { position: absolute; left: 16px; right: 16px; bottom: 16px;
-                display: flex; align-items: flex-end; gap: .4rem;
+                display: flex; flex-direction: column; gap: .35rem;
                 background: var(--bs-body-bg);
                 border: 1px solid var(--bs-border-color);
                 border-radius: 1.4rem;
                 box-shadow: 0 6px 20px rgba(0, 0, 0, .18);
                 padding: .3rem .4rem; }
+    #composer-row { display: flex; align-items: flex-end; gap: .4rem; }
+    /* 첨부 이미지 미리보기 스트립 */
+    #attachments { display: flex; flex-wrap: wrap; gap: .4rem; padding: .15rem .15rem 0; }
+    .att-chip { position: relative; width: 56px; height: 56px; border-radius: .5rem;
+                overflow: hidden; border: 1px solid var(--bs-border-color);
+                background: var(--bs-secondary-bg); flex: 0 0 auto; }
+    .att-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .att-chip .att-remove { position: absolute; top: 1px; right: 1px; width: 16px; height: 16px;
+                            border: none; border-radius: 50%; cursor: pointer; padding: 0;
+                            background: rgba(0,0,0,.6); color: #fff; font-size: 11px; line-height: 16px; }
+    /* + 첨부 메뉴(멀티모달일 때만 표시) */
+    #attach-menu { position: fixed; z-index: 20; min-width: 130px;
+                   background: var(--bs-body-bg); border: 1px solid var(--bs-border-color);
+                   border-radius: .5rem; box-shadow: 0 6px 20px rgba(0,0,0,.2);
+                   padding: .25rem; }
+    #attach-menu button { display: block; width: 100%; text-align: left; border: none;
+                          background: transparent; color: inherit; padding: .35rem .6rem;
+                          border-radius: .35rem; cursor: pointer; font-size: .85rem; }
+    #attach-menu button:hover { background: var(--bs-secondary-bg); }
+    /* 메시지 안의 첨부 이미지 */
+    .msg .msg-images { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .35rem; }
+    .msg .msg-images img { max-width: 220px; max-height: 220px; border-radius: .5rem;
+                           border: 1px solid var(--bs-border-color); cursor: pointer; }
     /* 맨 아래로 가기 버튼 (대화창이 바닥이 아닐 때 표시) */
     #scroll-bottom-btn { position: absolute; right: 24px; z-index: 5;
                          width: 34px; height: 34px; border-radius: 50%;
@@ -59,11 +82,28 @@
     .msg.assistant .bubble { background: var(--bs-secondary-bg); }
     .msg.assistant .bubble.md-rendered { white-space: normal; }
     .msg .reasoning { border-left: 3px solid var(--bs-warning);
-                      padding: .25rem .6rem; margin-bottom: .4rem; font-size: .8rem;
-                      color: var(--bs-secondary-color); white-space: pre-wrap; }
-    .msg .meta-row { font-size: .72rem; color: var(--bs-secondary-color); margin-top: 3px; }
+                      margin-bottom: .4rem; font-size: .8rem;
+                      color: var(--bs-secondary-color); }
+    .msg .reasoning-head { padding: .2rem .6rem; cursor: pointer; user-select: none;
+                           display: flex; align-items: center; gap: .35rem; opacity: .85; }
+    .msg .reasoning-head:hover { opacity: 1; }
+    .msg .reasoning-icon { display: inline-flex; }
+    .msg .reasoning-head::before { content: '\25B8'; display: inline-block;
+                                   transition: transform .15s; font-size: .8em; }
+    .msg .reasoning:not(.collapsed) .reasoning-head::before { transform: rotate(90deg); }
+    .msg .reasoning-body { padding: 0 .6rem .3rem 1.1rem; white-space: pre-wrap; }
+    .msg .reasoning.collapsed .reasoning-body { display: none; }
+    .msg .meta-row { font-size: .72rem; color: var(--bs-secondary-color); margin-top: 3px;
+                     display: flex; align-items: center; gap: .35rem; }
+    .msg .meta-row .cp-icon { padding: 0 2px; }
+    .msg .meta-row .cp-icon svg { width: 12px; height: 12px; }
     .msg .actions { font-size: .72rem; margin-top: 2px; }
     .msg .actions button { padding: 0 .25rem; }
+    /* 메시지 수정/삭제 아이콘: 항상 표시(작게). 색은 .cp-icon 규칙을 따름. */
+    .msg-tools { display: flex; gap: .15rem; margin-top: 1px; }
+    .msg.user > .msg-tools { justify-content: flex-end; }
+    .msg-tools .cp-icon { padding: 1px 3px; }
+    .msg-tools .cp-icon svg { width: 12px; height: 12px; }
     .chat-error { color: var(--bs-danger); }
     /* 도구 실행 표시 */
     .msg.tool { font-size: .8rem; padding: .25rem .5rem; margin-bottom: 8px;
@@ -105,9 +145,13 @@
     #viewer { flex: 1 1 0; min-height: 0; overflow: auto;
               font-family: var(--bs-font-monospace); font-size: .82rem; }
     #viewer.md-rendered { font-family: inherit; font-size: inherit; }
-    /* text/hex: pre 가 뷰어 높이를 채워, 수평 스크롤바가 맨 아래에 오게 한다 */
-    #viewer pre { margin: 0; white-space: pre; min-height: 100%;
-                  box-sizing: border-box; }
+    /* text/hex: 패딩을 pre 에 두고(스크롤 컨테이너에는 두지 않음) pre 가 뷰어를
+       가로·세로로 모두 채우게 한다. 이렇게 하면 가로/세로 스크롤바가 모두
+       #viewer(스크롤 컨테이너)에 생겨, 가로 스크롤바가 항상 패널 맨 아래에
+       고정되고 둘이 동시에 보인다. */
+    #viewer pre { margin: 0; white-space: pre; display: inline-block;
+                  min-width: 100%; min-height: 100%; box-sizing: border-box;
+                  padding: .5rem .6rem; }
 
     .panel-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
     .path-text { font-size: .8rem; user-select: none; cursor: default; }
@@ -179,6 +223,29 @@
     .sub-view .sub-tool { font-size: .8rem; color: var(--bs-secondary-color);
                           font-family: var(--bs-font-monospace); margin: .25rem 0; }
     .sub-view .sub-turn-sep { border-top: 1px dashed var(--bs-border-color); margin: .6rem 0; }
+
+    /* 시작점(체크포인트): 80% 폭 점선 + 가운데 라벨, hover 시 편집/원복 */
+    .msg.checkpoint { margin: 20px 0; }
+    .cp-divider { display: flex; align-items: center; width: 80%; margin: 0 auto; }
+    .cp-divider::before, .cp-divider::after { content: ''; flex: 1;
+                         border-top: 1px dashed var(--bs-border-color); }
+    .cp-divider .cp-label { padding: 0 .6rem; font-size: .72rem; white-space: nowrap;
+                            color: var(--bs-secondary-color); }
+    .cp-memory-label { width: 80%; margin: .35rem auto 0; font-size: .7rem;
+                       color: var(--bs-secondary-color); }
+    .cp-summary { width: 80%; margin: .15rem auto 0; font-size: .8rem; white-space: pre-wrap;
+                  color: var(--bs-secondary-color); background: var(--bs-secondary-bg);
+                  border-radius: 8px; padding: .5rem .7rem; max-height: 8em; overflow: auto; }
+    .cp-actions { display: flex; width: 80%; margin: .25rem auto 0; gap: .5rem;
+                  justify-content: center; }
+    /* 대화창 아이콘 버튼: 기본 무채색, 호버 시 각자 활성화 색(편집=파랑, 삭제/원복=빨강) */
+    .cp-icon { color: var(--bs-secondary-color); opacity: .5; line-height: 1;
+               text-decoration: none; }
+    .cp-icon:hover { opacity: 1; color: var(--bs-primary); }
+    .cp-icon.danger:hover { color: var(--bs-danger); }
+    .msg.checkpoint .cp-edit { width: 80%; margin: .4rem auto 0; display: block;
+                               font-family: var(--bs-font-monospace); font-size: .8rem; }
+    .msg.checkpoint .cp-edit-row { width: 80%; margin: .3rem auto 0; }
   </style>
 </head>
 <body>
@@ -189,6 +256,13 @@
         <span class="panel-title text-secondary" data-i18n="conversation">대화</span>
         <div class="vr mx-2 opacity-50" style="height: 14px; align-self: center;"></div>
         <span id="chat-meta" class="small text-secondary flex-grow-1 text-truncate"></span>
+        <button id="checkpoint-btn" class="btn btn-sm p-1 icon-btn me-1"
+                type="button" data-i18n-title="checkpointTitle" title="대화 시작점 만들기">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+               fill="currentColor" viewBox="0 0 16 16">
+            <path d="M3.5 3.5c-.614-.884-.074-1.962.858-2.5L8 7.226 11.642 1c.932.538 1.472 1.616.858 2.5L8.81 8.61l1.556 2.661a2.5 2.5 0 1 1-.794.637L8 9.73l-1.572 2.177a2.5 2.5 0 1 1-.794-.637L7.19 8.61zm2.5 10a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0m7 0a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0"/>
+          </svg>
+        </button>
         <button id="activity-btn" class="btn btn-sm p-1 icon-btn position-relative me-1"
                 type="button" data-i18n-title="activityTitle" title="호출 내역">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
@@ -219,17 +293,25 @@
       </button>
       <!-- 대화창 위에 떠 있는 라운드 입력창 -->
       <div id="composer">
-        <button id="attach-btn" class="composer-btn plus" type="button"
-                data-i18n-title="attachTitle" title="파일/리소스 첨부">+</button>
-        <textarea id="prompt" rows="1" data-i18n-ph="messagePlaceholder"
-                  placeholder="메시지를 입력하세요…"></textarea>
-        <button id="send-btn" class="composer-btn send" type="button"
-                data-i18n-title="sendTitle" title="보내기">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
-               fill="currentColor" viewBox="0 0 16 16">
-            <path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11M6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>
-          </svg>
-        </button>
+        <div id="attachments" class="d-none"></div>
+        <div id="composer-row">
+          <button id="attach-btn" class="composer-btn plus" type="button"
+                  data-i18n-title="attachTitle" title="파일/리소스 첨부">+</button>
+          <textarea id="prompt" rows="1" data-i18n-ph="messagePlaceholder"
+                    placeholder="메시지를 입력하세요…"></textarea>
+          <button id="send-btn" class="composer-btn send" type="button"
+                  data-i18n-title="sendTitle" title="보내기">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                 fill="currentColor" viewBox="0 0 16 16">
+              <path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11M6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <!-- + 멀티모달 메뉴(이미지/파일 첨부) -->
+      <div id="attach-menu" class="d-none">
+        <button type="button" data-act="image" data-i18n="attachImage">이미지 첨부</button>
+        <button type="button" data-act="file" data-i18n="attachFile">파일 첨부</button>
       </div>
     </section>
 
@@ -283,12 +365,18 @@
             <span id="file-name"
                   class="text-truncate flex-grow-1 small fw-semibold"
                   data-search-label>선택된 파일 없음</span>
-            <select id="viewer-mode" class="form-select form-select-sm w-auto"
-                    data-search-extra title="보기 방식" disabled>
-              <option value="text">Text</option>
-              <option value="hex">Hex</option>
-              <option value="md">Markdown</option>
-            </select>
+            <!-- 네이티브 <select> 팝업은 webview_windows 에서 안 떠서 DOM 드롭다운 사용 -->
+            <div class="dropdown" data-search-extra>
+              <button id="viewer-mode-btn"
+                      class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                      type="button" data-bs-toggle="dropdown" data-bs-display="static"
+                      aria-expanded="false" title="보기 방식" disabled>Text</button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><button class="dropdown-item" type="button" data-mode="text">Text</button></li>
+                <li><button class="dropdown-item" type="button" data-mode="hex">Hex</button></li>
+                <li><button class="dropdown-item" type="button" data-mode="md">Markdown</button></li>
+              </ul>
+            </div>
             <button class="btn btn-sm p-1 icon-btn" type="button"
                     id="viewer-copy" data-search-extra
                     data-i18n-title="copySelection" title="선택 영역 복사">
@@ -376,6 +464,61 @@
     </div>
   </div>
 
+  <!-- 대화 시작점(체크포인트) 만들기 모달 -->
+  <div class="modal fade" id="checkpoint-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h6 class="modal-title mb-0" data-i18n="checkpointTitle">대화 시작점 만들기</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary" data-i18n="checkpointDesc">
+            지금까지의 대화를 접고 새 시작점을 만듭니다. 이후 AI는 시작점 이후만 봅니다.</p>
+          <div class="small text-secondary mb-2">
+            <span data-i18n="checkpointCurrentContext">시작 전 컨텍스트</span>:
+            <span id="cp-current" class="fw-semibold">–</span> tok
+          </div>
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" id="cp-compress" checked>
+            <label class="form-check-label" for="cp-compress"
+                   data-i18n="checkpointCompress">기존 내용을 압축해서 보관</label>
+          </div>
+          <div id="cp-size-row">
+            <label class="form-label small mb-1">
+              <span data-i18n="checkpointSize">압축 크기</span>:
+              <span id="cp-size-label" class="fw-semibold"></span>
+            </label>
+            <input type="range" class="form-range" id="cp-size"
+                   min="100" max="10000" step="100" value="2000">
+            <button type="button" class="btn btn-sm btn-outline-primary mt-1" id="cp-preview">
+              <span data-i18n="checkpointPreview">미리보기 생성</span>
+            </button>
+          </div>
+          <div id="cp-preview-row" class="mt-2 d-none">
+            <label class="form-label small mb-1">
+              <span data-i18n="checkpointMemory">지난 기억</span>
+              (~<span id="cp-preview-tokens">0</span> tok)
+            </label>
+            <textarea id="cp-preview-text" class="form-control form-control-sm"
+                      rows="7" style="font-size:.8rem"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer py-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary"
+                  data-bs-dismiss="modal" data-i18n="cancel">취소</button>
+          <button type="button" class="btn btn-sm btn-primary" id="cp-create" disabled>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                 fill="currentColor" viewBox="0 0 16 16" class="me-1">
+              <path d="M3.5 3.5c-.614-.884-.074-1.962.858-2.5L8 7.226 11.642 1c.932.538 1.472 1.616.858 2.5L8.81 8.61l1.556 2.661a2.5 2.5 0 1 1-.794.637L8 9.73l-1.572 2.177a2.5 2.5 0 1 1-.794-.637L7.19 8.61zm2.5 10a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0m7 0a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0"/>
+            </svg>
+            <span data-i18n="checkpointCreate">시작점 만들기</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 서브에이전트 실시간 보기 모달 -->
   <div class="modal fade" id="sub-modal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -434,9 +577,13 @@
         case 'chat.notice': onChatNotice(msg); break;
         case 'status': onStatus(msg); break;
         case 'chat.queue': onQueue(msg); break;
+        case 'checkpoint.preview': onCheckpointPreview(msg); break;
         case 'chat.error': onChatError(msg); break;
         case 'composer.insert':
           if (window.collaboComposerInsert) window.collaboComposerInsert(msg.text);
+          break;
+        case 'composer.attachImage':
+          if (window.collaboAttachImage) window.collaboAttachImage(msg);
           break;
         case 'chat.truncated': onChatTruncated(msg.messageId); break;
         case 'chat.edited': onChatEdited(msg.messageId, msg.content); break;
@@ -526,6 +673,77 @@
         var btn = e.target.closest('.queue-cancel');
         if (!btn) return;
         send({ type: 'chat.queue.cancel', id: parseInt(btn.dataset.id, 10) });
+      });
+    })();
+
+    // ===== 시작점 만들기 다이얼로그 (압축 미리보기 → 생성) =====
+    var cpPreviewText = document.getElementById('cp-preview-text');
+    var cpCreateBtn = document.getElementById('cp-create');
+    var cpPreviewBtn = document.getElementById('cp-preview');
+    // 미리보기 결과 수신 → 텍스트 채우고 토큰 추정 + 생성 버튼 활성화.
+    function onCheckpointPreview(msg) {
+      var text = (msg && msg.text) || '';
+      document.getElementById('cp-preview-row').classList.remove('d-none');
+      cpPreviewText.value = text;
+      updateCpPreviewTokens();
+      cpPreviewBtn.disabled = false;
+      cpPreviewBtn.querySelector('span').textContent = T('checkpointPreview', '미리보기 생성');
+      cpCreateBtn.disabled = false;
+    }
+    function updateCpPreviewTokens() {
+      document.getElementById('cp-preview-tokens').textContent =
+        Math.round((cpPreviewText.value || '').length / 4).toLocaleString();
+    }
+    (function () {
+      var btn = document.getElementById('checkpoint-btn');
+      var modalEl = document.getElementById('checkpoint-modal');
+      var sizeEl = document.getElementById('cp-size');
+      var labelEl = document.getElementById('cp-size-label');
+      var compressEl = document.getElementById('cp-compress');
+      var rowEl = document.getElementById('cp-size-row');
+      var prevRow = document.getElementById('cp-preview-row');
+      function syncLabel() {
+        labelEl.textContent = (sizeEl.value / 1000).toFixed(1) + 'k tok';
+      }
+      function syncMode() {
+        rowEl.style.display = compressEl.checked ? '' : 'none';
+        // 압축 OFF면 미리보기 불필요 → 바로 생성 가능. ON이면 미리보기 후 활성화.
+        if (!compressEl.checked) {
+          prevRow.classList.add('d-none');
+          cpCreateBtn.disabled = false;
+        } else {
+          cpCreateBtn.disabled = cpPreviewText.value.trim() === '';
+        }
+      }
+      sizeEl.addEventListener('input', syncLabel);
+      compressEl.addEventListener('change', syncMode);
+      cpPreviewText.addEventListener('input', function () {
+        updateCpPreviewTokens();
+        cpCreateBtn.disabled = cpPreviewText.value.trim() === '';
+      });
+      cpPreviewBtn.addEventListener('click', function () {
+        cpPreviewBtn.disabled = true;
+        cpPreviewBtn.querySelector('span').textContent = T('checkpointGenerating', '생성 중…');
+        send({ type: 'chat.checkpoint.preview', size: parseInt(sizeEl.value, 10) });
+      });
+      btn.addEventListener('click', function () {
+        // 열 때마다 초기화: 현재 컨텍스트 표시 + 미리보기 비움.
+        document.getElementById('cp-current').textContent =
+          '~' + lastContextTokens.toLocaleString();
+        cpPreviewText.value = '';
+        prevRow.classList.add('d-none');
+        cpPreviewBtn.disabled = false;
+        cpPreviewBtn.querySelector('span').textContent = T('checkpointPreview', '미리보기 생성');
+        syncLabel(); syncMode();
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      });
+      cpCreateBtn.addEventListener('click', function () {
+        send({
+          type: 'chat.checkpoint.create',
+          compress: compressEl.checked,
+          content: compressEl.checked ? cpPreviewText.value : '',
+        });
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
       });
     })();
 
@@ -856,7 +1074,8 @@
         viewerEl.className = 'p-3 md-rendered';
         viewerEl.innerHTML = window.marked ? marked.parse(viewerRaw) : esc(viewerRaw);
       } else {
-        viewerEl.className = 'p-2';
+        // text/hex: 패딩은 pre 가 가진다(스크롤 컨테이너에는 패딩 없음).
+        viewerEl.className = '';
         const pre = document.createElement('pre');
         pre.textContent = viewerRaw;
         viewerEl.innerHTML = '';
@@ -944,19 +1163,23 @@
         esc(T('fileOpenError', '파일을 열 수 없습니다: ')) + esc(msg.message || '') + '</div>';
     }
 
-    const modeSelect = document.getElementById('viewer-mode');
+    const modeBtn = document.getElementById('viewer-mode-btn');
     const openExternalBtn = document.getElementById('viewer-open-external');
+    const MODE_LABELS = { text: 'Text', hex: 'Hex', md: 'Markdown' };
     function updateModeButtons(mode) {
-      modeSelect.disabled = !currentFilePath;
+      modeBtn.disabled = !currentFilePath;
       openExternalBtn.disabled = !currentFilePath;
-      if (mode) modeSelect.value = mode;
+      if (mode) modeBtn.textContent = MODE_LABELS[mode] || mode;
     }
     // 연결 프로그램(OS 기본 앱)으로 현재 파일 열기.
     openExternalBtn.addEventListener('click', function () {
       if (currentFilePath) send({ type: 'file.openExternal', path: currentFilePath });
     });
-    modeSelect.addEventListener('change', function () {
-      if (currentFilePath) openFile(currentFilePath, modeSelect.value);
+    // 보기 방식(text/hex/md) 선택 → 같은 파일을 그 모드로 다시 연다.
+    document.querySelectorAll('#viewer-section [data-mode]').forEach(function (item) {
+      item.addEventListener('click', function () {
+        if (currentFilePath) openFile(currentFilePath, item.dataset.mode);
+      });
     });
 
     // 뷰어 선택 영역 복사(선택이 없으면 전체).
@@ -1135,31 +1358,144 @@
       }).observe(composerEl);
     }
 
-    function makeUserMessage(id, content) {
+    function makeUserMessage(id, content, images) {
       const wrap = document.createElement('div');
       wrap.className = 'msg user';
       wrap.dataset.id = id;
+      wrap._images = images || [];
       renderUserNormal(wrap, content);
       messagesEl.appendChild(wrap);
       scrollMessages();
     }
 
+    // ===== 시작점(체크포인트) =====
+    function makeCheckpoint(id, content) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg checkpoint';
+      wrap.dataset.id = id;
+      renderCheckpoint(wrap, content);
+      messagesEl.appendChild(wrap);
+      scrollMessages();
+    }
+    function cpDivider() {
+      const d = document.createElement('div');
+      d.className = 'cp-divider';
+      d.innerHTML = '<span class="cp-label"></span>';
+      d.querySelector('.cp-label').textContent = T('checkpointMarker', '새 시작점');
+      return d;
+    }
+    var CP_ICON_EDIT = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zM10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-7.468 7.468A.5.5 0 0 0 3 11.5v.5h.5a.5.5 0 0 0 .5-.5v-.5h-.5a.5.5 0 0 0-.468.175"/></svg>';
+    var CP_ICON_REVERT = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/><path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466"/></svg>';
+    function cpIconBtn(svg, title, onClick, danger) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-sm p-1 cp-icon' + (danger ? ' danger' : '');
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.innerHTML = svg;
+      b.addEventListener('click', onClick);
+      return b;
+    }
+    function renderCheckpoint(wrap, content) {
+      wrap.dataset.content = content;
+      wrap.innerHTML = '';
+      wrap.appendChild(cpDivider());
+      if (content && content.trim()) {
+        const cap = document.createElement('div');
+        cap.className = 'cp-memory-label';
+        cap.textContent = T('checkpointMemory', '지난 기억');
+        wrap.appendChild(cap);
+        const body = document.createElement('div');
+        body.className = 'cp-summary';
+        body.textContent = content;
+        wrap.appendChild(body);
+      }
+      // hover 시 나타나는 아이콘 액션: 편집 / 원복(시작점 삭제)
+      const actions = document.createElement('div');
+      actions.className = 'cp-actions';
+      actions.appendChild(cpIconBtn(CP_ICON_EDIT, T('edit', '편집'),
+          function () { enterCheckpointEdit(wrap); }));
+      actions.appendChild(cpIconBtn(CP_ICON_REVERT, T('checkpointRevert', '원복'),
+          function () {
+            send({ type: 'chat.checkpoint.revert', id: Number(wrap.dataset.id) });
+          }, true));
+      wrap.appendChild(actions);
+    }
+    function enterCheckpointEdit(wrap) {
+      const id = Number(wrap.dataset.id);
+      const content = wrap.dataset.content || '';
+      wrap.innerHTML = '';
+      wrap.appendChild(cpDivider());
+      const ta = document.createElement('textarea');
+      ta.className = 'form-control form-control-sm cp-edit';
+      ta.rows = 6;
+      ta.value = content;
+      wrap.appendChild(ta);
+      const row = document.createElement('div');
+      row.className = 'cp-edit-row d-flex gap-2 justify-content-end';
+      const cancel = document.createElement('button');
+      cancel.className = 'btn btn-sm btn-outline-secondary';
+      cancel.textContent = T('cancel', '취소');
+      cancel.addEventListener('click', function () { renderCheckpoint(wrap, content); });
+      const save = document.createElement('button');
+      save.className = 'btn btn-sm btn-primary';
+      save.textContent = T('save', '저장');
+      save.addEventListener('click', function () {
+        send({ type: 'chat.checkpoint.edit', id: id, content: ta.value });
+      });
+      row.appendChild(cancel); row.appendChild(save);
+      wrap.appendChild(row);
+      ta.focus();
+    }
+
+    // 메시지 도구 아이콘(수정/삭제) — 커서를 올렸을 때만 보인다.
+    var MSG_ICON_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>';
+    function attachMsgTools(wrap, opts) {
+      const id = Number(wrap.dataset.id);
+      if (!id) return;
+      const bar = document.createElement('div');
+      bar.className = 'msg-tools';
+      if (opts && opts.edit) {
+        bar.appendChild(cpIconBtn(CP_ICON_EDIT, T('edit', '수정'),
+            function () { enterEdit(wrap); }));
+      }
+      bar.appendChild(cpIconBtn(MSG_ICON_TRASH, T('delete', '삭제'), function () {
+        send({ type: 'chat.delete', messageId: id });
+      }, true));
+      wrap.appendChild(bar);
+    }
+
     // 일반(읽기) 상태의 사용자 버블.
+    // 첨부 이미지 묶음 DOM(메시지/사용자 말풍선 위).
+    function buildImagesBlock(images) {
+      const box = document.createElement('div');
+      box.className = 'msg-images';
+      images.forEach(function (att) {
+        const img = document.createElement('img');
+        img.src = att.url;
+        img.alt = att.name || '';
+        img.title = att.name || '';
+        // 클릭하면 외부 뷰어로 크게 보기(데이터 URL).
+        img.addEventListener('click', function () {
+          send({ type: 'open.external', url: att.url });
+        });
+        box.appendChild(img);
+      });
+      return box;
+    }
     function renderUserNormal(wrap, content) {
       wrap.dataset.content = content; // 편집/취소용 원본 보관
       wrap.innerHTML = '';
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble';
-      bubble.textContent = content;
-      const actions = document.createElement('div');
-      actions.className = 'actions';
-      const edit = document.createElement('button');
-      edit.className = 'btn btn-link btn-sm';
-      edit.textContent = T('edit', '수정');
-      edit.addEventListener('click', function () { enterEdit(wrap); });
-      actions.appendChild(edit);
-      wrap.appendChild(bubble);
-      wrap.appendChild(actions);
+      const images = wrap._images || [];
+      if (images.length) wrap.appendChild(buildImagesBlock(images));
+      // 이미지만 있고 본문이 빈 메시지는 빈 말풍선을 만들지 않는다.
+      if (content !== '' || images.length === 0) {
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = content;
+        wrap.appendChild(bubble);
+      }
+      attachMsgTools(wrap, { edit: true });
     }
 
     // 이 메시지 박스를 인플레이스 편집 박스로 전환.
@@ -1203,26 +1539,67 @@
       scrollMessages();
     }
 
+    // 리즈닝(추론) 블록: 기본 접힘, 헤더 클릭으로 펼침/접힘.
+    const REASONING_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M2 6a6 6 0 1 1 10.174 4.31c-.203.196-.359.4-.453.619l-.762 1.769A.5.5 0 0 1 10.5 13a.5.5 0 0 1 0 1 .5.5 0 0 1 0 1l-.224.447a1 1 0 0 1-.894.553H6.618a1 1 0 0 1-.894-.553L5.5 15a.5.5 0 0 1 0-1 .5.5 0 0 1 0-1 .5.5 0 0 1-.46-.302l-.761-1.77a2 2 0 0 0-.453-.618A5.98 5.98 0 0 1 2 6m6-5a5 5 0 0 0-3.479 8.592c.263.254.514.564.676.941L5.83 12h4.342l.632-1.467c.162-.377.413-.687.676-.941A5 5 0 0 0 8 1"/></svg>';
+    function buildReasoning(text) {
+      const r = document.createElement('div');
+      r.className = 'reasoning collapsed';
+      const head = document.createElement('div');
+      head.className = 'reasoning-head';
+      const icon = document.createElement('span');
+      icon.className = 'reasoning-icon';
+      icon.innerHTML = REASONING_ICON;
+      const label = document.createElement('span');
+      label.textContent = T('reasoning', '추론 보기');
+      head.appendChild(icon);
+      head.appendChild(label);
+      head.addEventListener('click', function () { r.classList.toggle('collapsed'); });
+      const body = document.createElement('div');
+      body.className = 'reasoning-body';
+      body.textContent = text || '';
+      r.appendChild(head);
+      r.appendChild(body);
+      return r;
+    }
+
     function makeAssistantMessage(id, content, meta) {
       const wrap = document.createElement('div');
       wrap.className = 'msg assistant';
       if (id != null) wrap.dataset.id = id;
       let reasoning = (meta && meta.reasoning) || '';
       if (reasoning) {
-        const r = document.createElement('div');
-        r.className = 'reasoning';
-        r.textContent = reasoning;
-        wrap.appendChild(r);
+        wrap.appendChild(buildReasoning(reasoning));
       }
       const bubble = document.createElement('div');
       bubble.className = 'bubble md-rendered';
       bubble.innerHTML = window.marked ? marked.parse(content || '') : esc(content || '');
       wrap.appendChild(bubble);
+      if (id != null) prependAssistantDelete(wrap, id); // 삭제: 상태줄 앞 인라인
       messagesEl.appendChild(wrap);
       scrollMessages();
     }
 
+    // 어시스턴트 삭제 아이콘을 상태(meta) 줄 맨 앞에 인라인으로 둔다(줄 추가 방지).
+    function assistantDeleteBtn(id) {
+      return cpIconBtn(MSG_ICON_TRASH, T('delete', '삭제'), function () {
+        send({ type: 'chat.delete', messageId: id });
+      }, true);
+    }
+    function prependAssistantDelete(wrap, id) {
+      let meta = wrap.querySelector('.meta-row');
+      if (!meta) {
+        meta = document.createElement('div');
+        meta.className = 'meta-row';
+        wrap.appendChild(meta);
+      }
+      meta.insertBefore(assistantDeleteBtn(id), meta.firstChild);
+    }
+
+    let lastContextTokens = 0;
+    let multimodalEnabled = false;
     function onChatMeta(msg) {
+      lastContextTokens = msg.contextTokens || 0;
+      multimodalEnabled = !!msg.multimodal;
       const el = document.getElementById('chat-meta');
       const model = (msg.model && msg.model.length) ? msg.model : T('modelUnset', '모델 미설정');
       const ctx = (msg.contextTokens || 0).toLocaleString();
@@ -1230,6 +1607,11 @@
       // 서브 LLM 토큰이 포함된 총합이 더 크면 별도로 표기.
       if ((msg.totalTokens || 0) > (msg.contextTokens || 0)) {
         txt += ' · ' + T('totalLabel', '총') + ' ' + msg.totalTokens.toLocaleString() + ' tok';
+      }
+      // 프로젝트 폴더의 마지막 변경 시각(파일 변경 시 실시간 갱신).
+      if (msg.lastUpdated) {
+        txt += ' · ' + T('lastModified', '마지막 변경') + ' ' +
+               new Date(msg.lastUpdated).toLocaleString();
       }
       el.textContent = txt;
     }
@@ -1242,8 +1624,12 @@
       queueItems = []; renderQueueChip(); renderQueueModal(); // 대기 큐 표시 초기화
       const argMap = {};      // tool_call_id → {name, args} (assistant 의 tool_calls 에서)
       list.forEach(function (m) {
+        if (m.pipeline === 'checkpoint') {
+          makeCheckpoint(m.id, m.content || '');
+          return;
+        }
         if (m.role === 'user') {
-          makeUserMessage(m.id, m.content);
+          makeUserMessage(m.id, m.content, m.images);
         } else if (m.role === 'assistant') {
           if (m.toolCalls) {
             try {
@@ -1283,7 +1669,7 @@
     }
 
     function onChatMessage(msg) {
-      if (msg.role === 'user') makeUserMessage(msg.id, msg.content);
+      if (msg.role === 'user') makeUserMessage(msg.id, msg.content, msg.images);
     }
 
     function onChatBegin() {
@@ -1291,10 +1677,14 @@
       streamingText = '';
       streamingEl = document.createElement('div');
       streamingEl.className = 'msg assistant';
-      streamingEl.innerHTML =
-        '<div class="reasoning d-none"></div>' +
-        '<div class="bubble"></div>' +
-        '<div class="meta-row"></div>';
+      const rblock = buildReasoning(''); // 기본 접힘; 리즈닝이 오기 전엔 숨김
+      rblock.classList.add('d-none');
+      streamingEl.appendChild(rblock);
+      const sb = document.createElement('div'); sb.className = 'bubble';
+      streamingEl.appendChild(sb);
+      const sm = document.createElement('div'); sm.className = 'meta-row';
+      sm.innerHTML = '<span class="meta-stats"></span>';
+      streamingEl.appendChild(sm);
       messagesEl.appendChild(streamingEl);
       scrollMessages();
     }
@@ -1308,7 +1698,8 @@
       if (msg.reasoning) {
         const r = streamingEl.querySelector('.reasoning');
         r.classList.remove('d-none');
-        r.textContent = (r.textContent || '') + msg.reasoning;
+        const body = r.querySelector('.reasoning-body');
+        body.textContent = (body.textContent || '') + msg.reasoning;
       }
       scrollMessages();
     }
@@ -1323,9 +1714,12 @@
       let tok = T('tokensLabel', '토큰') + ': ';
       if (sent > 0) tok += '↑' + sent.toLocaleString() + ' ';
       tok += '↓' + exact + Number(msg.tokens).toLocaleString();
-      streamingEl.querySelector('.meta-row').textContent =
-        T('statusLabel', '상태') + ': ' + status + ' · ' +
-        tok + ' · ' + msg.speed + ' tok/s · ' + secs + 's';
+      const stats = streamingEl.querySelector('.meta-stats');
+      if (stats) {
+        stats.textContent =
+          T('statusLabel', '상태') + ': ' + status + ' · ' +
+          tok + ' · ' + msg.speed + ' tok/s · ' + secs + 's';
+      }
     }
 
     function onChatDone(msg) {
@@ -1337,12 +1731,16 @@
         // 빈 응답(도구만 호출 등): 빈 카드 대신 요약 문구로 대체.
         bubble.className = 'summary-bubble';
         bubble.textContent = summaryLabel(msg.elapsedMs);
-        if (meta) meta.remove();
+        const stats = meta && meta.querySelector('.meta-stats');
+        if (stats) stats.textContent = ''; // 통계는 비우되 줄(삭제 아이콘용)은 유지
       } else {
         bubble.classList.add('md-rendered');
         bubble.innerHTML = window.marked ? marked.parse(streamingText) : esc(streamingText);
       }
-      if (msg.id != null) streamingEl.dataset.id = msg.id;
+      if (msg.id != null) {
+        streamingEl.dataset.id = msg.id;
+        prependAssistantDelete(streamingEl, msg.id); // 삭제: 상태줄 앞 인라인
+      }
       streamingEl = null;
     }
 
@@ -1599,15 +1997,58 @@
       updateComposerSpace();
     }
     function updateSendBtn() {
-      // 내용이 없으면 보내기 비활성화.
-      sendBtn.disabled = prompt.value.trim() === '';
+      // 내용도 첨부도 없으면 보내기 비활성화.
+      sendBtn.disabled = prompt.value.trim() === '' && pendingAttachments.length === 0;
     }
+    // 전송 대기 중인 첨부(이미지) 목록.
+    let pendingAttachments = [];
+    const attachmentsEl = document.getElementById('attachments');
+    function renderAttachments() {
+      attachmentsEl.innerHTML = '';
+      if (pendingAttachments.length === 0) {
+        attachmentsEl.classList.add('d-none');
+        updateComposerSpace();
+        return;
+      }
+      attachmentsEl.classList.remove('d-none');
+      pendingAttachments.forEach(function (att, i) {
+        const chip = document.createElement('div');
+        chip.className = 'att-chip';
+        chip.title = att.name || '';
+        const img = document.createElement('img');
+        img.src = att.url;
+        chip.appendChild(img);
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'att-remove';
+        rm.textContent = '×';
+        rm.title = T('delete', '삭제');
+        rm.addEventListener('click', function () {
+          pendingAttachments.splice(i, 1);
+          renderAttachments();
+          updateSendBtn();
+        });
+        chip.appendChild(rm);
+        attachmentsEl.appendChild(chip);
+      });
+      updateComposerSpace();
+    }
+    // 네이티브가 읽어온 이미지를 첨부 목록에 추가.
+    window.collaboAttachImage = function (msg) {
+      if (!msg || !msg.url) return;
+      pendingAttachments.push({ url: msg.url, name: msg.name || '' });
+      renderAttachments();
+      updateSendBtn();
+      prompt.focus();
+    };
     function sendMessage() {
       const text = prompt.value.trim();
-      if (!text) return;
+      if (!text && pendingAttachments.length === 0) return;
       // 생성 중이어도 전송한다. 네이티브가 대기 큐에 넣고 끝나면 순서대로 처리한다.
-      send({ type: 'chat.send', text: text });
+      send({ type: 'chat.send', text: text, attachments: pendingAttachments });
       prompt.value = '';
+      pendingAttachments = [];
+      renderAttachments();
       autoGrow();
       updateSendBtn();
     }
@@ -1632,10 +2073,27 @@
       }
     });
     sendBtn.addEventListener('click', sendMessage);
-    // + : 파일 선택 → 텍스트면 내용 붙여넣기, 아니면 경로 삽입(네이티브 처리).
-    document.getElementById('attach-btn').addEventListener('click', function () {
-      send({ type: 'attach.pick' });
+    // + : 멀티모달이 켜져 있으면 [이미지/파일] 메뉴, 아니면 기존 파일 첨부.
+    const attachBtn = document.getElementById('attach-btn');
+    const attachMenu = document.getElementById('attach-menu');
+    function hideAttachMenu() { attachMenu.classList.add('d-none'); }
+    attachBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!multimodalEnabled) { send({ type: 'attach.pick' }); return; }
+      if (!attachMenu.classList.contains('d-none')) { hideAttachMenu(); return; }
+      // 버튼 위쪽에 메뉴를 띄운다.
+      const r = attachBtn.getBoundingClientRect();
+      attachMenu.classList.remove('d-none');
+      attachMenu.style.left = r.left + 'px';
+      attachMenu.style.top = (r.top - attachMenu.offsetHeight - 6) + 'px';
     });
+    attachMenu.addEventListener('click', function (e) {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      hideAttachMenu();
+      send({ type: btn.dataset.act === 'image' ? 'image.pick' : 'attach.pick' });
+    });
+    document.addEventListener('click', function () { hideAttachMenu(); });
     // 네이티브가 읽어온 파일 내용을 입력창에 삽입.
     window.collaboComposerInsert = function (text) {
       if (text == null) return;

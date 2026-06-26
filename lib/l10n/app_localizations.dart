@@ -134,6 +134,36 @@ abstract class AppLocalizations {
   /// **'Appearance'**
   String get tabAppearance;
 
+  /// No description provided for @tabAbout.
+  ///
+  /// In en, this message translates to:
+  /// **'About'**
+  String get tabAbout;
+
+  /// No description provided for @aboutVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} (build {build})'**
+  String aboutVersion(String version, String build);
+
+  /// No description provided for @openSourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Open source'**
+  String get openSourceTitle;
+
+  /// No description provided for @openSourceIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Built with these open-source components. See the full licenses below.'**
+  String get openSourceIntro;
+
+  /// No description provided for @viewLicenses.
+  ///
+  /// In en, this message translates to:
+  /// **'View all open-source licenses'**
+  String get viewLicenses;
+
   /// No description provided for @systemPromptDesc.
   ///
   /// In en, this message translates to:
@@ -392,11 +422,53 @@ abstract class AppLocalizations {
   /// **'Model'**
   String get modelLabel;
 
+  /// No description provided for @multimodalSupport.
+  ///
+  /// In en, this message translates to:
+  /// **'Multimodal support'**
+  String get multimodalSupport;
+
+  /// No description provided for @multimodalSupportDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable to attach images to messages with the + button. Use only with a vision-capable model.'**
+  String get multimodalSupportDesc;
+
+  /// No description provided for @reasoningEffort.
+  ///
+  /// In en, this message translates to:
+  /// **'Attach reasoning effort option'**
+  String get reasoningEffort;
+
+  /// No description provided for @reasoningEffortDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'\"Don\'t attach\" omits reasoning_effort from the request; none/low/high are sent as-is (none disables reasoning). Use only with models/servers that support it, e.g. llama.cpp.'**
+  String get reasoningEffortDesc;
+
+  /// No description provided for @reasoningEffortOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t attach'**
+  String get reasoningEffortOff;
+
   /// No description provided for @testConnection.
   ///
   /// In en, this message translates to:
   /// **'Test connection'**
   String get testConnection;
+
+  /// No description provided for @showKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Show key'**
+  String get showKey;
+
+  /// No description provided for @hideKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide key'**
+  String get hideKey;
 
   /// No description provided for @toolsDescription.
   ///
