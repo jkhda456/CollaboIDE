@@ -4,6 +4,7 @@ import 'package:collabo_ide/src/data/app_database.dart';
 import 'package:collabo_ide/src/data/sqlite_init.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   late Directory tmp;
@@ -48,5 +49,38 @@ void main() {
     final recent = await appDb.recentProjects();
     expect(recent.first.path, '/proj/a');
     expect(recent, hasLength(2));
+  });
+
+  test('v1 → v2 마이그레이션: 기존 데이터가 보존된다', () async {
+    final dir = await Directory.systemTemp.createTemp('collabo_mig_');
+    final path = p.join(dir.path, 'old.db');
+    // 구버전(v1) 스키마.
+    final v1 = await databaseFactory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: (db, _) async {
+          await db.execute(
+              'CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+          await db.execute('CREATE TABLE recent_projects ('
+              'path TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT \'\', '
+              'last_opened_at INTEGER NOT NULL)');
+        },
+      ),
+    );
+    await v1.insert('recent_projects',
+        {'path': '/proj/old', 'label': 'old', 'last_opened_at': 1});
+    await v1.close();
+
+    // AppDatabase.open 은 v2 로 업그레이드하며 기존 데이터를 보존한다.
+    final migrated = await AppDatabase.open(path: path);
+    expect((await migrated.recentProjects()).map((r) => r.path),
+        contains('/proj/old'));
+    // 업그레이드 후에도 최근 프로젝트를 정상적으로 갱신할 수 있다.
+    await migrated.touchRecentProject('/proj/new');
+    expect((await migrated.recentProjects()).map((r) => r.path),
+        contains('/proj/new'));
+    await migrated.close();
+    await dir.delete(recursive: true);
   });
 }

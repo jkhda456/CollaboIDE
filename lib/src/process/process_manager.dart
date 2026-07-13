@@ -86,7 +86,7 @@ class ProcessManager extends ChangeNotifier {
   /// 일반 권한 실행: stdout/stderr 를 실시간 스트리밍한다.
   Future<void> _runInline(LauncherProcess proc) async {
     final process = await Process.start(
-      env.interpreterPath,
+      env.executablePath,
       [proc.scriptPath, ...proc.args],
       workingDirectory: proc.workingDirectory,
     );
@@ -135,7 +135,7 @@ class ProcessManager extends ChangeNotifier {
     final argLine = proc.args.map(_quote).join(' ');
     await cmd.writeAsString(
       '@echo off\r\n'
-      '"${env.interpreterPath}" "${proc.scriptPath}" $argLine '
+      '"${env.executablePath}" "${proc.scriptPath}" $argLine '
       '> "${outFile.path}" 2> "${errFile.path}"\r\n'
       'echo %ERRORLEVEL% > "${codeFile.path}"\r\n',
     );

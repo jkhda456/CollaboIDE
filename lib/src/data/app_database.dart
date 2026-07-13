@@ -15,7 +15,7 @@ class AppDatabase {
   final Database db;
   final String dbPath;
 
-  static const int _schemaVersion = 1;
+  static const int _schemaVersion = 2;
   static const int maxRecentProjects = 5;
 
   /// 메인 DB 를 연다(없으면 생성). [initSqliteFfi] 가 먼저 호출돼 있어야 한다.
@@ -55,7 +55,9 @@ class AppDatabase {
   }
 
   static Future<void> _upgradeSchema(Database db, int oldV, int newV) async {
-    // 향후 스키마 변경 시 단계별 마이그레이션을 여기에 추가.
+    // v2 는 (이후 제거된) macOS 보안 범위 북마크 컬럼을 위해 도입됐었다.
+    // 샌드박스 폐기 후 그 컬럼은 더 쓰지 않으므로 마이그레이션은 no-op 이다
+    // (스키마 버전 정합만 유지 — 기존 v2 DB 의 사용 안 하는 bookmark 컬럼은 무해).
   }
 
   // --- 설정 (KV, 값은 JSON 문자열) ---

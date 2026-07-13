@@ -1,5 +1,9 @@
-/// LLM 연결 방식. 지금은 OpenAI 호환 API 만. (추후: 자체 런쳐)
-enum LlmConnection { openai }
+/// LLM 연결 방식.
+/// - [openai]: OpenAI 호환 API, **네이티브** function calling(`tools`/`tool_calls`).
+/// - [openaiPrompted]: OpenAI 호환 API 지만 도구를 **프롬프트로 주입**하고 응답
+///   본문(content)에서 도구 호출을 파싱한다. tools 를 무시하거나 본문에 텍스트로
+///   내뱉는 로컬 서버(Ollama/LM Studio/MLX 등)용 폴백.
+enum LlmConnection { openai, openaiPrompted }
 
 LlmConnection _connFromName(String? n) => LlmConnection.values.firstWhere(
       (c) => c.name == n,
@@ -15,6 +19,7 @@ class LlmConfig {
     this.model = '',
     this.multimodal = false,
     this.reasoningEffort = '',
+    this.parseTextToolCalls = false,
   });
 
   /// 연결 방식(OpenAI 호환 등).
@@ -33,8 +38,16 @@ class LlmConfig {
   final bool multimodal;
 
   /// 추론 강도(`reasoning_effort`). 빈 문자열이면 미전송(요청에 포함하지 않음).
-  /// 비어 있지 않으면(예: 'low'|'medium'|'high') 요청 본문에 그대로 전달한다.
+  /// 비어 있지 않으면(예: 'none'|'low'|'high') 요청 본문에 그대로 전달한다.
   final String reasoningEffort;
+
+  /// 네이티브(`openai`) 연결에서, 서버가 `tool_calls` 를 못 채우고 도구 호출을 **본문
+  /// 텍스트 마커**(`<tool_call>…`, `<|tool_call>…` 등)로 흘릴 때 그걸 파싱해 복원할지.
+  ///
+  /// **기본 off.** 표준 OpenAI 호환 서버는 본문을 스캔할 필요가 없으므로, 텍스트로
+  /// 도구 호출을 흘리는 별종 서버(일부 MLX/로컬)를 `openai` 로 쓸 때만 켠다.
+  /// (`openaiPrompted` 연결은 이 파싱이 본질이라 이 플래그와 무관하게 항상 동작.)
+  final bool parseTextToolCalls;
 
   bool get isConfigured => baseUrl.isNotEmpty && model.isNotEmpty;
 
@@ -45,6 +58,7 @@ class LlmConfig {
     String? model,
     bool? multimodal,
     String? reasoningEffort,
+    bool? parseTextToolCalls,
   }) =>
       LlmConfig(
         connection: connection ?? this.connection,
@@ -53,6 +67,7 @@ class LlmConfig {
         model: model ?? this.model,
         multimodal: multimodal ?? this.multimodal,
         reasoningEffort: reasoningEffort ?? this.reasoningEffort,
+        parseTextToolCalls: parseTextToolCalls ?? this.parseTextToolCalls,
       );
 
   Map<String, Object?> toJson() => {
@@ -62,6 +77,7 @@ class LlmConfig {
         'model': model,
         'multimodal': multimodal,
         'reasoningEffort': reasoningEffort,
+        'parseTextToolCalls': parseTextToolCalls,
       };
 
   factory LlmConfig.fromJson(Map<String, Object?> json) => LlmConfig(
@@ -71,5 +87,6 @@ class LlmConfig {
         model: (json['model'] as String?) ?? '',
         multimodal: (json['multimodal'] as bool?) ?? false,
         reasoningEffort: (json['reasoningEffort'] as String?) ?? '',
+        parseTextToolCalls: (json['parseTextToolCalls'] as bool?) ?? false,
       );
 }

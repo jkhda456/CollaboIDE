@@ -22,6 +22,7 @@ class LeftNav extends StatefulWidget {
     this.onOpenRecent,
     this.onRemoveRecent,
     this.runningProcessCount = 0,
+    this.onOpenProcesses,
   });
 
   final VoidCallback onNewProject;
@@ -37,6 +38,9 @@ class LeftNav extends StatefulWidget {
 
   /// 실행 중인 서브프로세스 수 (진행 상태 아이콘 표시용).
   final int runningProcessCount;
+
+  /// 진행 상태 아이콘 클릭 시(프로세스 뷰어 열기). null 이면 클릭 비활성.
+  final VoidCallback? onOpenProcesses;
 
   static const double collapsedWidth = 56;
   static const double expandedWidth = 220;
@@ -106,6 +110,7 @@ class _LeftNavState extends State<LeftNav> {
           _ActivityItem(
             expanded: _expanded,
             runningCount: widget.runningProcessCount,
+            onTap: widget.onOpenProcesses,
           ),
           const Divider(height: 1),
 
@@ -239,10 +244,15 @@ class _ProjectMonogram extends StatelessWidget {
 
 /// 진행 상태(Activity) 아이콘. 실행 중 프로세스가 있으면 활성 표시 + 개수 배지.
 class _ActivityItem extends StatelessWidget {
-  const _ActivityItem({required this.expanded, required this.runningCount});
+  const _ActivityItem({
+    required this.expanded,
+    required this.runningCount,
+    this.onTap,
+  });
 
   final bool expanded;
   final int runningCount;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -291,24 +301,29 @@ class _ActivityItem extends StatelessWidget {
 
     return Tooltip(
       message: tooltipMsg,
-      child: SizedBox(
-        height: 48,
-        child: Row(
-          children: [
-            const SizedBox(width: 16),
-            iconWithBadge,
-            if (expanded) ...[
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  active ? l.activityRunningLabel(runningCount) : l.activityTitle,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            children: [
+              const SizedBox(width: 16),
+              iconWithBadge,
+              if (expanded) ...[
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    active
+                        ? l.activityRunningLabel(runningCount)
+                        : l.activityTitle,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
+                const SizedBox(width: 8),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

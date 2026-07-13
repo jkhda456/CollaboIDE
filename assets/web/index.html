@@ -99,6 +99,12 @@
     .msg .meta-row .cp-icon svg { width: 12px; height: 12px; }
     .msg .actions { font-size: .72rem; margin-top: 2px; }
     .msg .actions button { padding: 0 .25rem; }
+    /* 대화 상단바 메타(컨텍스트/총/마지막 변경): 라벨 대신 아이콘 + 작은 글꼴. */
+    #chat-meta { font-size: .68rem; }
+    #chat-meta .meta-seg { display: inline-flex; align-items: center; gap: 3px; }
+    #chat-meta .meta-seg svg { width: 12px; height: 12px; opacity: .75; }
+    #chat-meta .meta-ico-txt { font-weight: 600; opacity: .8; }
+    #chat-meta .meta-sep { display: inline-block; width: 8px; }
     /* 메시지 수정/삭제 아이콘: 항상 표시(작게). 색은 .cp-icon 규칙을 따름. */
     .msg-tools { display: flex; gap: .15rem; margin-top: 1px; }
     .msg.user > .msg-tools { justify-content: flex-end; }
@@ -198,6 +204,15 @@
                                 background: var(--bs-body-bg); color: var(--bs-body-color);
                                 padding: 1px 9px; }
     .msg.status .status-queue:hover { background: var(--bs-secondary-bg); }
+    /* 진행 중 요청 강제 중지 버튼 */
+    .msg.status .status-stop { flex: none; display: inline-flex; align-items: center; gap: 4px;
+                               font-size: .75rem; cursor: pointer; border-radius: 999px;
+                               border: 1px solid var(--bs-danger); color: var(--bs-danger);
+                               background: var(--bs-body-bg); padding: 1px 10px; }
+    .msg.status .status-stop:hover { background: var(--bs-danger); color: #fff; }
+    .msg.status .status-stop:disabled { opacity: .55; cursor: default;
+                                        background: var(--bs-body-bg); color: var(--bs-danger); }
+    .msg.status .status-stop svg { width: 10px; height: 10px; }
     #queue-list .queue-text { white-space: pre-wrap; font-size: .85rem;
                               max-height: 6.5em; overflow: auto; }
     .msg.status .bubble { display: inline-flex; align-items: center; gap: 7px;
@@ -255,6 +270,15 @@
       <div class="border-bottom px-3 py-2 d-flex align-items-center">
         <span class="panel-title text-secondary" data-i18n="conversation">대화</span>
         <div class="vr mx-2 opacity-50" style="height: 14px; align-self: center;"></div>
+        <!-- 대화 모델 전환(프로젝트별 고정). 프리셋 목록은 chat.meta 로 채운다. -->
+        <div class="dropdown me-2" id="model-switcher">
+          <button id="model-btn"
+                  class="btn btn-sm btn-outline-secondary dropdown-toggle py-0"
+                  type="button" data-bs-toggle="dropdown" data-bs-display="static"
+                  aria-expanded="false" data-i18n-title="conversationModel"
+                  title="대화 모델" style="font-size:.75rem"></button>
+          <ul class="dropdown-menu" id="model-menu"></ul>
+        </div>
         <span id="chat-meta" class="small text-secondary flex-grow-1 text-truncate"></span>
         <button id="checkpoint-btn" class="btn btn-sm p-1 icon-btn me-1"
                 type="button" data-i18n-title="checkpointTitle" title="대화 시작점 만들기">
@@ -579,6 +603,7 @@
         case 'chat.queue': onQueue(msg); break;
         case 'checkpoint.preview': onCheckpointPreview(msg); break;
         case 'chat.error': onChatError(msg); break;
+        case 'chat.stopped': onChatStopped(msg); break;
         case 'composer.insert':
           if (window.collaboComposerInsert) window.collaboComposerInsert(msg.text);
           break;
@@ -616,8 +641,20 @@
         el.innerHTML =
           '<div class="bubble"><span class="status-spin"></span>' +
           '<span class="status-text"></span></div>' +
+          '<button type="button" class="status-stop">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16">' +
+          '<rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>' +
+          '<span class="status-stop-label"></span></button>' +
           '<button type="button" class="status-queue d-none"></button>';
         el.querySelector('.status-queue').addEventListener('click', openQueueModal);
+        var stopBtn = el.querySelector('.status-stop');
+        stopBtn.querySelector('.status-stop-label').textContent = T('stop', '중지');
+        stopBtn.title = T('stopRequest', '요청 중지');
+        stopBtn.addEventListener('click', function () {
+          stopBtn.disabled = true;
+          stopBtn.querySelector('.status-stop-label').textContent = T('stopping', '중지 중…');
+          send({ type: 'chat.stop' });
+        });
       }
       var box = document.getElementById('messages');
       if (box) { box.appendChild(el); box.scrollTop = box.scrollHeight; }
@@ -1450,6 +1487,9 @@
 
     // 메시지 도구 아이콘(수정/삭제) — 커서를 올렸을 때만 보인다.
     var MSG_ICON_TRASH = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>';
+    // 상단바 메타 아이콘: 컨텍스트(창) / 마지막 변경(시계). "총"은 Σ 글리프로 표시.
+    var META_ICON_CONTEXT = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M2.5 4a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1m2-.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0m1 .5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1"/><path d="M2 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zM1 3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v1H1zm0 2h14v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/></svg>';
+    var META_ICON_CLOCK = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71z"/><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0"/></svg>';
     function attachMsgTools(wrap, opts) {
       const id = Number(wrap.dataset.id);
       if (!id) return;
@@ -1595,6 +1635,27 @@
       meta.insertBefore(assistantDeleteBtn(id), meta.firstChild);
     }
 
+    // 언어팩이 스스로 알려주는 로케일(없으면 html lang → en).
+    function metaLocale() {
+      return T('__locale', '') || document.documentElement.getAttribute('lang') || 'en';
+    }
+    // 절대 시각을 로케일별 상대시간("3분 전" / "3 minutes ago")으로.
+    function relTime(ts) {
+      const t = new Date(ts).getTime();
+      if (!t || isNaN(t)) return '';
+      const diff = Math.round((t - Date.now()) / 1000); // 음수 = 과거
+      const abs = Math.abs(diff);
+      let rtf;
+      try { rtf = new Intl.RelativeTimeFormat(metaLocale(), { numeric: 'auto' }); }
+      catch (e) { rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' }); }
+      const units = [['year', 31536000], ['month', 2592000], ['day', 86400],
+                     ['hour', 3600], ['minute', 60]];
+      for (const [unit, secs] of units) {
+        if (abs >= secs) return rtf.format(Math.round(diff / secs), unit);
+      }
+      return rtf.format(diff, 'second'); // 1분 미만: "방금"/"n초 전"
+    }
+
     let lastContextTokens = 0;
     let multimodalEnabled = false;
     function onChatMeta(msg) {
@@ -1602,18 +1663,61 @@
       multimodalEnabled = !!msg.multimodal;
       const el = document.getElementById('chat-meta');
       const model = (msg.model && msg.model.length) ? msg.model : T('modelUnset', '모델 미설정');
-      const ctx = (msg.contextTokens || 0).toLocaleString();
-      let txt = model + ' · ' + T('contextLabel', '컨텍스트') + ' ' + ctx + ' tok';
-      // 서브 LLM 토큰이 포함된 총합이 더 크면 별도로 표기.
+      renderModelSwitcher(msg, model);
+      // 라벨 텍스트가 길어 아이콘으로 대체. 각 항목의 뜻은 title(툴팁)로 노출.
+      function escAttr(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+      function metaSeg(icon, val, title) {
+        return '<span class="meta-seg" title="' + escAttr(title) + '">' + icon +
+          '<span>' + escAttr(val) + '</span></span>';
+      }
+      const segs = [];
+      segs.push(metaSeg(META_ICON_CONTEXT,
+        (msg.contextTokens || 0).toLocaleString() + ' tok',
+        T('contextLabel', '컨텍스트')));
+      // 서브 LLM 토큰이 포함된 총합이 더 크면 별도로 표기(Σ).
       if ((msg.totalTokens || 0) > (msg.contextTokens || 0)) {
-        txt += ' · ' + T('totalLabel', '총') + ' ' + msg.totalTokens.toLocaleString() + ' tok';
+        segs.push(metaSeg('<span class="meta-ico-txt">Σ</span>',
+          msg.totalTokens.toLocaleString() + ' tok', T('totalLabel', '총')));
       }
-      // 프로젝트 폴더의 마지막 변경 시각(파일 변경 시 실시간 갱신).
+      // 프로젝트 폴더의 마지막 변경 시각 — 상대시간으로 표시(툴팁엔 정확한 시각).
       if (msg.lastUpdated) {
-        txt += ' · ' + T('lastModified', '마지막 변경') + ' ' +
-               new Date(msg.lastUpdated).toLocaleString();
+        segs.push(metaSeg(META_ICON_CLOCK, relTime(msg.lastUpdated),
+          T('lastModified', '마지막 변경') + ' · ' +
+          new Date(msg.lastUpdated).toLocaleString()));
       }
-      el.textContent = txt;
+      el.innerHTML = segs.join('<span class="meta-sep"></span>');
+    }
+
+    // 헤더 모델 전환 드롭다운: 프리셋 목록을 채우고 현재 선택을 표시한다.
+    // 항목 선택 시 chat.setModel 로 프로젝트 대화 모델을 바꾼다(네이티브가 저장).
+    function renderModelSwitcher(msg, model) {
+      const btn = document.getElementById('model-btn');
+      const menu = document.getElementById('model-menu');
+      if (!btn || !menu) return;
+      btn.textContent = model;
+      const presets = Array.isArray(msg.presets) ? msg.presets : [];
+      // 선택값: 프로젝트가 고른 프리셋(없으면 기본 프리셋).
+      const active = (msg.selectedPresetId && msg.selectedPresetId.length)
+        ? msg.selectedPresetId : (msg.defaultPresetId || '');
+      menu.innerHTML = '';
+      btn.disabled = presets.length === 0;
+      presets.forEach(function (p) {
+        const li = document.createElement('li');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'dropdown-item small' + (p.id === active ? ' active' : '');
+        const isDefault = p.id === (msg.defaultPresetId || '');
+        b.textContent = (p.name && p.name.length ? p.name : (p.model || p.id)) +
+          (isDefault ? '  ·  ' + T('defaultBadge', '기본') : '');
+        b.addEventListener('click', function () {
+          send({ type: 'chat.setModel', presetId: p.id });
+        });
+        li.appendChild(b);
+        menu.appendChild(li);
+      });
     }
 
     function onChatHistory(list) {
@@ -1726,14 +1830,12 @@
       generating = false;
       if (!streamingEl) return;
       const bubble = streamingEl.querySelector('.bubble');
-      const meta = streamingEl.querySelector('.meta-row');
       if (streamingText.trim() === '') {
-        // 빈 응답(도구만 호출 등): 빈 카드 대신 요약 문구로 대체.
-        bubble.className = 'summary-bubble';
-        bubble.textContent = summaryLabel(msg.elapsedMs);
-        const stats = meta && meta.querySelector('.meta-stats');
-        if (stats) stats.textContent = ''; // 통계는 비우되 줄(삭제 아이콘용)은 유지
+        // 빈 응답(도구만 호출 등): 요약 문구 대신, 대화풍선과 동일한 상태/토큰 줄을
+        // 그대로 남긴다(onChatStats 가 채운 마지막 'done' 통계 유지). 빈 본문만 숨김.
+        bubble.classList.add('d-none');
       } else {
+        bubble.classList.remove('d-none');
         bubble.classList.add('md-rendered');
         bubble.innerHTML = window.marked ? marked.parse(streamingText) : esc(streamingText);
       }
@@ -1949,17 +2051,13 @@
       });
     })();
 
-    // 작업 요약 문구(클로드 코드 스타일).
-    const SUMMARY_VERBS = ['Brewed', 'Cooked', 'Pondered', 'Crafted', 'Noodled',
-                           'Spun', 'Mulled', 'Wrangled', 'Tinkered', 'Forged'];
-    function summaryLabel(elapsedMs) {
-      const verb = SUMMARY_VERBS[Math.floor(Math.random() * SUMMARY_VERBS.length)];
-      return verb + ' for ' + formatDuration(elapsedMs || 0);
-    }
-    function formatDuration(ms) {
-      const sec = Math.round(ms / 1000);
-      if (sec < 60) return sec + 's';
-      return Math.floor(sec / 60) + 'm ' + (sec % 60) + 's';
+    // 사용자가 중지를 누른 뒤: 진행 상태/스트리밍 카드를 정리한다.
+    // (네이티브가 기록을 다시 보내 부분 응답 카드는 제거되고, 빈 status 로 풍선도 사라진다.)
+    function onChatStopped() {
+      generating = false;
+      streamingEl = null;
+      var el = document.getElementById('status-bubble');
+      if (el && queueItems.length === 0) el.remove();
     }
 
     function onChatError(msg) {

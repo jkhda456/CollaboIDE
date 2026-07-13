@@ -33,16 +33,34 @@ class WebBridge {
     this._view,
     this._workspace, {
     FileService? fileService,
-    OpenAiClient? llmClient,
+    LlmProvider? llmClient,
   })  : _fs = fileService ?? FileService(),
-        _llm = llmClient ?? OpenAiClient();
+        _defaultProvider = llmClient ?? OpenAiClient();
 
   final PlatformWebView _view;
   final WorkspaceController _workspace;
   final FileService _fs;
-  final OpenAiClient _llm;
+
+  /// 기본 provider(주입되면 OpenAI 연결에 재사용). 다른 연결 방식은 [_providerFor]
+  /// 가 연결별로 만들어 캐시한다.
+  final LlmProvider _defaultProvider;
+  final Map<LlmConnection, LlmProvider> _providers = {};
+
+  /// 설정([LlmConfig.connection])에 맞는 provider 를 돌려준다. OpenAI 는 기본
+  /// provider(주입 가능)를 쓰고, 그 외 연결은 연결별로 한 번 만들어 캐시한다.
+  LlmProvider _providerFor(LlmConfig cfg) {
+    if (cfg.connection == LlmConnection.openai) return _defaultProvider;
+    return _providers.putIfAbsent(
+        cfg.connection, () => createLlmProvider(cfg.connection));
+  }
 
   bool _generating = false;
+
+  /// 사용자가 "중지"를 눌렀을 때 true. 진행 중인 스트림을 끊고 큐를 비운다.
+  bool _cancelRequested = false;
+
+  /// 현재 살아 있는 LLM 스트림들을 강제로 끊는 콜백 모음(메인 + 서브에이전트).
+  final Set<void Function()> _streamAborters = {};
 
   /// 생성 중 들어온 전송은 큐에 쌓아 두고, 끝나면 순서대로 처리한다.
   /// 각 항목 {id,text}. 웹은 상태 풍선의 큐 칩/모달로 보여주고 취소할 수 있다.
@@ -122,6 +140,9 @@ class WebBridge {
           _parseAttachments(msg['attachments']),
         );
         break;
+      case 'chat.stop':
+        _handleChatStop();
+        break;
       case 'chat.queue.cancel':
         _handleQueueCancel((msg['id'] as num?)?.toInt());
         break;
@@ -151,7 +172,18 @@ class WebBridge {
       case 'chat.edit':
         _handleChatEdit(msg['messageId'] as int?, msg['text'] as String?);
         break;
+      case 'chat.setModel':
+        _handleSetModel(msg['presetId'] as String?);
+        break;
     }
+  }
+
+  /// 현재 프로젝트의 대화 모델 프리셋을 변경한다(빈/누락=기본 프리셋 사용).
+  Future<void> _handleSetModel(String? presetId) async {
+    final pp = _projectPath;
+    if (pp == null) return;
+    await _workspace.setProjectModel(pp, presetId ?? '');
+    await _pushChatMeta();
   }
 
   // --- 대화 (LLM 스트리밍) ---
@@ -214,13 +246,21 @@ class WebBridge {
         lastUpdated = Directory(pp).statSync().modified.millisecondsSinceEpoch;
       } catch (_) {}
     }
+    final convCfg = _workspace.configForConversation();
     _post({
       'type': 'chat.meta',
-      'model': _workspace.llmConfig.model,
+      'model': convCfg.model,
       'contextTokens': context,
       'totalTokens': total,
       'lastUpdated': lastUpdated,
-      'multimodal': _workspace.llmConfig.multimodal,
+      'multimodal': convCfg.multimodal,
+      // 프로젝트 대화 모델 전환용: 프리셋 목록 + 현재 선택(빈 값=기본 프리셋).
+      'presets': [
+        for (final p in _workspace.llmPresets)
+          {'id': p.id, 'name': p.label, 'model': p.config.model},
+      ],
+      'selectedPresetId': _workspace.presetIdForProject(),
+      'defaultPresetId': _workspace.defaultPresetId,
     });
   }
 
@@ -286,6 +326,7 @@ class WebBridge {
   /// 생성이 끝난 뒤 대기 큐를 순서대로 비운다(재시도/수정 경로에서도 호출).
   Future<void> _drainQueue(ConversationStore store, int convId) async {
     while (_queue.isNotEmpty) {
+      if (_cancelRequested) break; // 중지 시 남은 큐 처리하지 않음
       final item = _queue.removeAt(0);
       _emitQueue();
       await _sendOne(store, convId, item['text'] as String,
@@ -310,6 +351,19 @@ class WebBridge {
 
   /// 현재 대기 큐 상태를 웹으로 전달한다(상태 풍선 칩/모달 갱신용).
   void _emitQueue() => _post({'type': 'chat.queue', 'items': _queue});
+
+  /// 진행 중인 생성을 강제로 중지하고, 대기 큐의 모든 요청을 취소한다.
+  void _handleChatStop() {
+    if (!_generating && _queue.isEmpty && _streamAborters.isEmpty) return;
+    _cancelRequested = true;
+    // 대기 중인 요청 모두 취소.
+    _queue.clear();
+    _emitQueue();
+    // 살아 있는 LLM 스트림(메인/서브에이전트)을 즉시 끊는다.
+    for (final abort in _streamAborters.toList()) {
+      abort();
+    }
+  }
 
   /// 큐에서 대기 메시지를 취소(제거)한다.
   void _handleQueueCancel(int? id) {
@@ -417,7 +471,7 @@ class WebBridge {
     }
     final transcript = buf.toString().trim();
     if (transcript.isEmpty) return '';
-    final cfg = _workspace.llmConfig;
+    final cfg = _workspace.configForConversation();
     final sys =
         'You compress a conversation into a concise summary that preserves key '
         'decisions, requirements, file/code changes, and open threads, so the '
@@ -458,11 +512,14 @@ class WebBridge {
   static const int _maxAttempts = 3;
   static const int _maxSubIterations = 8;
 
-  /// 요청 후 첫 응답(첫 토큰)이 이 시간 안에 안 오면 멈춘 것으로 보고 재시작한다.
-  static const Duration _firstResponseTimeout = Duration(seconds: 30);
+  /// 요청 후 첫 응답(첫 토큰/리즈닝)이 이 시간 안에 안 오면 멈춘 것으로 보고 재시작한다.
+  /// 추론(reasoning) 모델은 첫 토큰 전에 서버측에서 한참 생각하느라 무출력일 수 있어
+  /// 넉넉히 둔다(짧으면 정상 동작 중에도 타임아웃됨). 진짜 멈춤은 사용자가 중지로 끊는다.
+  static const Duration _firstResponseTimeout = Duration(seconds: 120);
 
   /// 스트리밍 도중 이벤트 사이 간격이 이 시간을 넘으면 멈춘 것으로 보고 끊는다.
-  static const Duration _llmIdleTimeout = Duration(seconds: 60);
+  /// 리즈닝 토큰도 이 타이머를 재무장하므로, 리즈닝이 흐르는 동안에는 끊기지 않는다.
+  static const Duration _llmIdleTimeout = Duration(seconds: 90);
 
   /// 네이티브로 처리하는 도구(서브 LLM 분기). 파이썬으로 보내지 않는다.
   static const Set<String> _nativeToolNames = {'run_subagent', 'verify_work'};
@@ -539,7 +596,7 @@ class WebBridge {
   /// 기록을 정리하고 최대 [_maxAttempts] 회 재시도한다. 반복 한도 초과(비수렴)는
   /// 이미 수행한 작업을 지우지 않고 그대로 두고 종료한다.
   Future<void> _generate(ConversationStore store, int convId) async {
-    final cfg = _workspace.llmConfig;
+    final cfg = _workspace.configForConversation();
     if (!cfg.isConfigured) {
       _post({
         'type': 'chat.error',
@@ -548,6 +605,7 @@ class WebBridge {
       return;
     }
     _generating = true;
+    _cancelRequested = false; // 새 생성 시작 — 이전 중지 플래그 초기화
     _status('Preparing…');
 
     final registry = await _buildToolRegistry();
@@ -564,6 +622,7 @@ class WebBridge {
 
     try {
       for (var attempt = 0; attempt < _maxAttempts; attempt++) {
+        if (_cancelRequested) return; // 중지 요청됨 — 더 진행하지 않음
         int? firstId; // 이번 시도에 생성한 첫 DB 메시지(오류 정리용)
         try {
           final messages = await _buildContextMessages(store, convId);
@@ -608,6 +667,12 @@ class WebBridge {
           await _pushChatMeta();
           return;
         } catch (e) {
+          // 사용자가 중지를 누른 경우: 재시도하지 않고 이번 시도의 부분 기록만 정리.
+          if (e is _GenerationStopped || _cancelRequested) {
+            await _cleanupAttempt(store, convId, firstId);
+            _post({'type': 'chat.stopped'});
+            return;
+          }
           // 통신/타임아웃 등 오류는 재시도(이미 추가된 이번 시도 기록은 정리).
           await _cleanupAttempt(store, convId, firstId);
           if (attempt == _maxAttempts - 1) {
@@ -695,7 +760,7 @@ class WebBridge {
                 'starting point):\n$summary',
       });
     }
-    final multimodal = _workspace.llmConfig.multimodal;
+    final multimodal = _workspace.configForConversation().multimodal;
     for (final m in all.sublist(startIdx)) {
       if (m.pipeline == 'checkpoint') continue;
       final role = switch (m.role) {
@@ -764,8 +829,10 @@ class WebBridge {
       final verify = c.name == 'verify_work';
       _status(verify ? 'Sub-agent: verifying…' : 'Sub-agent: working…');
       final prompt = (argMap['prompt'] as String?) ?? '';
+      // 도구별로 지정된 모델 프리셋(없으면 기본)으로 서브에이전트를 돌린다.
+      final subCfg = _workspace.configForTool(c.name);
       final text = await _runSubAgent(
-          store, convId, cfg, registry, workspace, prompt, verify, c.name, tid);
+          store, convId, subCfg, registry, workspace, prompt, verify, c.name, tid);
       ok = true;
       resultStr = jsonEncode({'ok': true, 'result': text});
       summary = _snippet(text);
@@ -987,7 +1054,7 @@ class WebBridge {
     var toolCalls = const <ToolCall>[];
     var totalTokens = 0;
     await for (final ev in _withResponseTimeout(
-        _llm.streamChat(cfg: cfg, messages: messages, tools: tools))) {
+        _providerFor(cfg).streamChat(cfg: cfg, messages: messages, tools: tools))) {
       switch (ev) {
         case LlmContent(:final text):
           content.write(text);
@@ -1030,6 +1097,7 @@ class WebBridge {
   Future<void> _retryDelay(int nextAttempt, int maxAttempts, String reason) async {
     final secs = nextAttempt.clamp(2, 5); // 2~5초
     for (var r = secs; r > 0; r--) {
+      if (_cancelRequested) return; // 중지 요청 시 대기 즉시 종료
       _status('$reason — retrying in ${r}s ($nextAttempt/$maxAttempts)');
       await Future.delayed(const Duration(seconds: 1));
     }
@@ -1042,6 +1110,16 @@ class WebBridge {
     late StreamController<T> ctrl;
     StreamSubscription<T>? sub;
     Timer? timer;
+    // "중지" 신호를 받으면 이 스트림을 _GenerationStopped 오류로 끊는다.
+    void abort() {
+      timer?.cancel();
+      if (!ctrl.isClosed) {
+        ctrl.addError(const _GenerationStopped());
+        sub?.cancel();
+        ctrl.close();
+      }
+    }
+
     void arm(Duration d) {
       timer?.cancel();
       timer = Timer(d, () {
@@ -1053,6 +1131,12 @@ class WebBridge {
 
     ctrl = StreamController<T>(
       onListen: () {
+        // 이미 중지 요청이 들어와 있으면 곧바로 끊는다.
+        if (_cancelRequested) {
+          abort();
+          return;
+        }
+        _streamAborters.add(abort);
         arm(_firstResponseTimeout);
         sub = source.listen(
           (e) {
@@ -1069,8 +1153,10 @@ class WebBridge {
           },
         );
       },
+      // done/error/break/외부중지 등 모든 종료 경로에서 여기로 와 정리된다.
       onCancel: () {
         timer?.cancel();
+        _streamAborters.remove(abort);
         return sub?.cancel();
       },
     );
@@ -1088,6 +1174,8 @@ class WebBridge {
       try {
         return await op();
       } catch (e) {
+        // 중지 요청이면 재시도하지 않고 즉시 전파한다.
+        if (e is _GenerationStopped || _cancelRequested) rethrow;
         if (attempt >= maxAttempts) rethrow;
         await _retryDelay(attempt + 1, maxAttempts, '$reason: ${_briefErr(e)}');
       }
@@ -1122,10 +1210,15 @@ class WebBridge {
     final reasoning = StringBuffer();
     LlmUsage? usage;
     var toolCalls = const <ToolCall>[];
+    // 현재 단계(connecting → reasoning/streaming → done). 매초 ticker 가 이 값으로
+    // 통계를 갱신해, 전송 대기·리즈닝처럼 이벤트가 뜸한 동안에도 진행이 살아 보이게 한다.
+    var phase = 'connecting';
 
     void emitStats(String status) {
       final ms = DateTime.now().difference(start).inMilliseconds;
-      final approxTokens = usage?.completion ?? (content.length / 4).round();
+      // 본문이 없고 리즈닝만 진행 중일 때도 토큰이 움직이도록 둘을 합쳐 추정한다.
+      final approxTokens =
+          usage?.completion ?? ((content.length + reasoning.length) / 4).round();
       final speed = ms > 0 ? approxTokens / (ms / 1000) : 0;
       _post({
         'type': 'chat.stats',
@@ -1138,7 +1231,7 @@ class WebBridge {
       });
     }
 
-    emitStats('connecting');
+    emitStats(phase);
     // 요청을 보내고 첫 데이터가 오기 전까지는 대기, 데이터가 오기 시작하면 수신 중.
     _status('Waiting for response…');
     var receiving = false;
@@ -1148,23 +1241,33 @@ class WebBridge {
       _status('Receiving response…');
     }
 
-    await for (final ev in _withResponseTimeout(
-        _llm.streamChat(cfg: cfg, messages: messages, tools: tools))) {
-      switch (ev) {
-        case LlmContent(:final text):
-          content.write(text);
-          markReceiving();
-          _post({'type': 'chat.delta', 'content': text});
-          emitStats('streaming');
-        case LlmReasoning(:final text):
-          reasoning.write(text);
-          markReceiving();
-          _post({'type': 'chat.delta', 'reasoning': text});
-        case LlmUsage():
-          usage = ev;
-        case LlmToolCalls(:final calls):
-          toolCalls = calls;
+    // 이벤트가 없는 동안에도 경과 시간/토큰이 살아 움직이도록 매초 통계를 보낸다.
+    final ticker =
+        Timer.periodic(const Duration(seconds: 1), (_) => emitStats(phase));
+    try {
+      await for (final ev in _withResponseTimeout(_providerFor(cfg)
+          .streamChat(cfg: cfg, messages: messages, tools: tools))) {
+        switch (ev) {
+          case LlmContent(:final text):
+            content.write(text);
+            markReceiving();
+            phase = 'streaming';
+            _post({'type': 'chat.delta', 'content': text});
+            emitStats(phase);
+          case LlmReasoning(:final text):
+            reasoning.write(text);
+            markReceiving();
+            phase = 'reasoning';
+            _post({'type': 'chat.delta', 'reasoning': text});
+            emitStats(phase);
+          case LlmUsage():
+            usage = ev;
+          case LlmToolCalls(:final calls):
+            toolCalls = calls;
+        }
       }
+    } finally {
+      ticker.cancel();
     }
 
     final meta = jsonEncode({
@@ -1210,7 +1313,9 @@ class WebBridge {
 
   /// Python/기본 모듈이 준비됐으면 도구 레지스트리를 구성한다(아니면 null).
   Future<ToolRegistry?> _buildToolRegistry() async {
-    final interp = _workspace.pythonInterpreter;
+    // 실효 파이썬(venv 준비 시 venv)으로 도구를 실행해야, venv 에 설치한 패키지
+    // (mcp 등)를 도구가 실제로 임포트할 수 있다(base 로 돌면 못 찾는다).
+    final interp = _workspace.effectivePython;
     final baseScript = _workspace.baseToolModulePath;
     final adaptersDir = _workspace.toolAdaptersDir;
     if (!_workspace.pythonInstalled ||
@@ -1464,6 +1569,17 @@ class WebBridge {
     await _msgSub?.cancel();
     await _watchSub?.cancel();
     _flushTimer?.cancel();
-    _llm.dispose();
+    _defaultProvider.dispose();
+    for (final p in _providers.values) {
+      p.dispose();
+    }
   }
+}
+
+/// 사용자가 "중지"를 눌러 생성을 강제로 끊을 때 스트림에 실어 보내는 신호.
+/// (재시도 대상 오류와 구분하기 위한 내부 전용 예외)
+class _GenerationStopped implements Exception {
+  const _GenerationStopped();
+  @override
+  String toString() => 'Generation stopped by user';
 }

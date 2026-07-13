@@ -4,52 +4,15 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'llm_config.dart';
+import 'llm_provider.dart';
+import 'tool_call_parser.dart';
 
-/// 연결 상태 확인 결과.
-class LlmTestResult {
-  const LlmTestResult(this.ok, this.message);
-  final bool ok;
-  final String message;
-}
-
-/// 모델이 요청한 도구 호출 하나.
-class ToolCall {
-  const ToolCall({required this.id, required this.name, required this.arguments});
-  final String id;
-  final String name;
-
-  /// JSON 문자열(부분 스트림을 합친 것).
-  final String arguments;
-}
-
-/// 스트리밍 이벤트.
-sealed class LlmEvent {}
-
-class LlmContent extends LlmEvent {
-  LlmContent(this.text);
-  final String text;
-}
-
-class LlmReasoning extends LlmEvent {
-  LlmReasoning(this.text);
-  final String text;
-}
-
-class LlmUsage extends LlmEvent {
-  LlmUsage({required this.prompt, required this.completion, required this.total});
-  final int prompt;
-  final int completion;
-  final int total;
-}
-
-/// 스트림 종료 시, 모델이 도구 호출을 요청했으면 방출된다.
-class LlmToolCalls extends LlmEvent {
-  LlmToolCalls(this.calls);
-  final List<ToolCall> calls;
-}
+// 중립 타입(LlmEvent/ToolCall/LlmTestResult/LlmProvider)은 llm_provider.dart 에
+// 정의돼 있다. 기존 import 경로 호환을 위해 여기서 다시 내보낸다.
+export 'llm_provider.dart';
 
 /// OpenAI 호환 Chat Completions 클라이언트(스트리밍 + function calling).
-class OpenAiClient {
+class OpenAiClient implements LlmProvider {
   OpenAiClient({http.Client? client})
       : _injected = client,
         _client = client ?? http.Client();
@@ -68,6 +31,7 @@ class OpenAiClient {
       : cfg.baseUrl;
 
   /// 연결 상태 확인: `GET {baseUrl}/models`.
+  @override
   Future<LlmTestResult> test(LlmConfig cfg) async {
     if (cfg.baseUrl.isEmpty) return const LlmTestResult(false, 'URL is empty.');
     try {
@@ -83,6 +47,7 @@ class OpenAiClient {
 
   /// Chat Completions 스트리밍. [messages] 는 OpenAI 메시지 객체 리스트(raw),
   /// [tools] 는 function-calling tool 스키마 리스트(없으면 미전송).
+  @override
   Stream<LlmEvent> streamChat({
     required LlmConfig cfg,
     required List<Map<String, Object?>> messages,
@@ -121,6 +86,15 @@ class OpenAiClient {
       // 도구 호출은 index 별로 조각이 스트리밍되므로 누적해 합친다.
       final toolAcc = <int, Map<String, Object?>>{};
 
+      // 폴백(옵션, 기본 off): OpenAI 호환이라며 tool_calls 를 못 채우고 도구 호출을
+      // 본문 텍스트로 흘리는 별종 서버(일부 MLX/로컬) 대비. 설정에서 켜고
+      // tools(→ 알려진 이름)가 있을 때만 본문을 파서에 통과시켜 마커를 가려낸다.
+      // 표준 서버는 스캔 오버헤드가 없도록 기본적으로 비활성. 네이티브 tool_calls 우선.
+      final knownNames = knownToolNames(tools);
+      final parser = (cfg.parseTextToolCalls && knownNames != null)
+          ? PromptedToolParser(knownNames: knownNames)
+          : null;
+
       final lines =
           resp.stream.transform(utf8.decoder).transform(const LineSplitter());
       await for (final line in lines) {
@@ -141,7 +115,15 @@ class OpenAiClient {
           final delta = (choices.first as Map)['delta'] as Map?;
           if (delta != null) {
             final content = delta['content'];
-            if (content is String && content.isNotEmpty) yield LlmContent(content);
+            if (content is String && content.isNotEmpty) {
+              if (parser != null) {
+                // 도구 호출 마커는 가리고, 그 밖의 텍스트만 흘린다.
+                final visible = parser.add(content);
+                if (visible.isNotEmpty) yield LlmContent(visible);
+              } else {
+                yield LlmContent(content);
+              }
+            }
             final reasoning = delta['reasoning_content'] ?? delta['reasoning'];
             if (reasoning is String && reasoning.isNotEmpty) {
               yield LlmReasoning(reasoning);
@@ -160,7 +142,14 @@ class OpenAiClient {
         }
       }
 
+      // 파서를 썼다면 버퍼에 남은 텍스트를 반드시 흘린다(홀드백 유실 방지).
+      if (parser != null) {
+        final tail = parser.finish();
+        if (tail.isNotEmpty) yield LlmContent(tail);
+      }
+
       if (toolAcc.isNotEmpty) {
+        // 네이티브 tool_calls 우선.
         final indices = toolAcc.keys.toList()..sort();
         yield LlmToolCalls([
           for (final i in indices)
@@ -170,6 +159,15 @@ class OpenAiClient {
               arguments: (toolAcc[i]!['args'] as StringBuffer).toString(),
             ),
         ]);
+        // 파서가 (오탐으로) 가린 게 있으면 텍스트로 되돌린다.
+        final unparsed = parser?.unparsedAsText() ?? '';
+        if (unparsed.isNotEmpty) yield LlmContent(unparsed);
+      } else if (parser != null) {
+        // 네이티브로 안 왔지만 본문 텍스트로 샌 도구 호출을 폴백으로 복원.
+        final calls = parser.toolCalls();
+        if (calls.isNotEmpty) yield LlmToolCalls(calls);
+        final unparsed = parser.unparsedAsText();
+        if (unparsed.isNotEmpty) yield LlmContent(unparsed);
       }
     } finally {
       if (_injected == null) client.close();
@@ -199,5 +197,6 @@ class OpenAiClient {
   static String _short(String s) =>
       s.length > 200 ? '${s.substring(0, 200)}…' : s;
 
+  @override
   void dispose() => _client.close();
 }

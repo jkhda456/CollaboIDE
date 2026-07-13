@@ -7,6 +7,7 @@ import '../app/workspace_controller.dart';
 import '../webview/web_view_panel.dart';
 import 'left_nav.dart';
 import 'new_project_dialog.dart';
+import 'process_monitor_dialog.dart';
 import 'settings_dialog.dart';
 
 /// 최상위 레이아웃: 좌측 네이티브 메뉴 + 웹뷰 영역.
@@ -53,10 +54,9 @@ class _AppLayoutState extends State<AppLayout> {
   Future<void> _onNewProject() async {
     final path = await showNewProjectDialog(context,
         initialDir: _workspace.lastWorkspaceDir);
-    if (path != null) {
-      await _workspace.setLastWorkspaceDir(p.dirname(path));
-      await _workspace.openProject(path);
-    }
+    if (path == null) return;
+    await _workspace.setLastWorkspaceDir(p.dirname(path));
+    await _workspace.openProject(path);
   }
 
   Future<void> _onOpenProject() async {
@@ -90,7 +90,8 @@ class _AppLayoutState extends State<AppLayout> {
                 onOpenRecent: _workspace.openProject,
                 onRemoveRecent: _workspace.removeRecentProject,
                 runningProcessCount:
-                    _workspace.processManager?.runningCount ?? 0,
+                    _workspace.backgroundProcesses.runningCount,
+                onOpenProcesses: () => showProcessMonitor(context, _workspace),
               ),
               const VerticalDivider(width: 1, thickness: 1),
               Expanded(

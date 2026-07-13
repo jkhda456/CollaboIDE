@@ -332,6 +332,72 @@ abstract class AppLocalizations {
   /// **'No running processes'**
   String get activityIdleTooltip;
 
+  /// No description provided for @procTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Processes'**
+  String get procTitle;
+
+  /// No description provided for @procEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No background processes.'**
+  String get procEmpty;
+
+  /// No description provided for @procSelectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a process to view its output.'**
+  String get procSelectHint;
+
+  /// No description provided for @procStatusRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get procStatusRunning;
+
+  /// No description provided for @procStatusExited.
+  ///
+  /// In en, this message translates to:
+  /// **'Exited ({code})'**
+  String procStatusExited(int code);
+
+  /// No description provided for @procStatusKilled.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get procStatusKilled;
+
+  /// No description provided for @procStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get procStop;
+
+  /// No description provided for @procInputHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Send input to stdin…'**
+  String get procInputHint;
+
+  /// No description provided for @procSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get procSend;
+
+  /// No description provided for @procStdout.
+  ///
+  /// In en, this message translates to:
+  /// **'stdout'**
+  String get procStdout;
+
+  /// No description provided for @procStderr.
+  ///
+  /// In en, this message translates to:
+  /// **'stderr'**
+  String get procStderr;
+
   /// No description provided for @newProjectTitle.
   ///
   /// In en, this message translates to:
@@ -404,6 +470,66 @@ abstract class AppLocalizations {
   /// **'Reserved names cannot be used.'**
   String get nameReserved;
 
+  /// No description provided for @presetLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Preset'**
+  String get presetLabel;
+
+  /// No description provided for @presetNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Preset name'**
+  String get presetNameLabel;
+
+  /// No description provided for @addPreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Add preset'**
+  String get addPreset;
+
+  /// No description provided for @deletePreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete preset'**
+  String get deletePreset;
+
+  /// No description provided for @newPresetName.
+  ///
+  /// In en, this message translates to:
+  /// **'New preset'**
+  String get newPresetName;
+
+  /// No description provided for @defaultBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'default'**
+  String get defaultBadge;
+
+  /// No description provided for @setAsDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Set as default'**
+  String get setAsDefault;
+
+  /// No description provided for @isDefaultPreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Default preset'**
+  String get isDefaultPreset;
+
+  /// No description provided for @renamePreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename preset'**
+  String get renamePreset;
+
+  /// No description provided for @selectPreset.
+  ///
+  /// In en, this message translates to:
+  /// **'Select preset'**
+  String get selectPreset;
+
   /// No description provided for @connectionMethod.
   ///
   /// In en, this message translates to:
@@ -415,6 +541,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'OpenAI-compatible API'**
   String get openaiCompatible;
+
+  /// No description provided for @openaiPrompted.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI-compatible (forced prompt)'**
+  String get openaiPrompted;
 
   /// No description provided for @modelLabel.
   ///
@@ -433,6 +565,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Enable to attach images to messages with the + button. Use only with a vision-capable model.'**
   String get multimodalSupportDesc;
+
+  /// No description provided for @parseTextToolCalls.
+  ///
+  /// In en, this message translates to:
+  /// **'Parse tool calls from text'**
+  String get parseTextToolCalls;
+
+  /// No description provided for @parseTextToolCallsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'For non-standard servers that leak tool calls as body text (e.g. some MLX/local backends) instead of the tool_calls field. Off by default; standard OpenAI-compatible servers don\'t need it.'**
+  String get parseTextToolCallsDesc;
 
   /// No description provided for @reasoningEffort.
   ///
@@ -469,6 +613,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide key'**
   String get hideKey;
+
+  /// No description provided for @toolModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Per-tool model'**
+  String get toolModelTitle;
+
+  /// No description provided for @toolModelDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the default preset.'**
+  String get toolModelDesc;
+
+  /// No description provided for @useDefaultModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Use default model'**
+  String get useDefaultModel;
+
+  /// No description provided for @toolSubagentLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Sub-agent (run_subagent)'**
+  String get toolSubagentLabel;
+
+  /// No description provided for @toolVerifyLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify (verify_work)'**
+  String get toolVerifyLabel;
 
   /// No description provided for @toolsDescription.
   ///
@@ -667,6 +841,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'All files'**
   String get allFiles;
+
+  /// No description provided for @usePerProjectVenv.
+  ///
+  /// In en, this message translates to:
+  /// **'Use per-project virtual environment (venv)'**
+  String get usePerProjectVenv;
+
+  /// No description provided for @usePerProjectVenvDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Creates a dedicated venv under the project\'s .collabo/venv from the selected interpreter, and runs pip/tools inside it. Recommended on macOS/Linux, where installing into the system Python is often blocked (PEP 668) or needs root.'**
+  String get usePerProjectVenvDesc;
+
+  /// No description provided for @venvNoProject.
+  ///
+  /// In en, this message translates to:
+  /// **'A dedicated venv is created automatically when you open a project.'**
+  String get venvNoProject;
+
+  /// No description provided for @venvCreating.
+  ///
+  /// In en, this message translates to:
+  /// **'Creating virtual environment…'**
+  String get venvCreating;
+
+  /// No description provided for @venvReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Virtual environment ready.'**
+  String get venvReady;
+
+  /// No description provided for @venvNotCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'Not created yet.'**
+  String get venvNotCreated;
+
+  /// No description provided for @venvFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to create the virtual environment.'**
+  String get venvFailed;
+
+  /// No description provided for @venvCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create'**
+  String get venvCreate;
+
+  /// No description provided for @venvRecreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Recreate'**
+  String get venvRecreate;
 
   /// No description provided for @console.
   ///

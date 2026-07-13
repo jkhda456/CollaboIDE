@@ -134,6 +134,41 @@ class AppLocalizationsKo extends AppLocalizations {
   String get activityIdleTooltip => '실행 중 프로세스 없음';
 
   @override
+  String get procTitle => '프로세스';
+
+  @override
+  String get procEmpty => '백그라운드 프로세스가 없습니다.';
+
+  @override
+  String get procSelectHint => '출력을 보려면 프로세스를 선택하세요.';
+
+  @override
+  String get procStatusRunning => '실행 중';
+
+  @override
+  String procStatusExited(int code) {
+    return '종료됨 ($code)';
+  }
+
+  @override
+  String get procStatusKilled => '중지됨';
+
+  @override
+  String get procStop => '종료';
+
+  @override
+  String get procInputHint => '표준 입력 보내기…';
+
+  @override
+  String get procSend => '보내기';
+
+  @override
+  String get procStdout => 'stdout';
+
+  @override
+  String get procStderr => 'stderr';
+
+  @override
   String get newProjectTitle => '새 프로젝트';
 
   @override
@@ -174,10 +209,43 @@ class AppLocalizationsKo extends AppLocalizations {
   String get nameReserved => '예약된 이름은 사용할 수 없습니다.';
 
   @override
+  String get presetLabel => '프리셋';
+
+  @override
+  String get presetNameLabel => '프리셋 이름';
+
+  @override
+  String get addPreset => '프리셋 추가';
+
+  @override
+  String get deletePreset => '프리셋 삭제';
+
+  @override
+  String get newPresetName => '새 프리셋';
+
+  @override
+  String get defaultBadge => '기본';
+
+  @override
+  String get setAsDefault => '기본으로 지정';
+
+  @override
+  String get isDefaultPreset => '기본 프리셋';
+
+  @override
+  String get renamePreset => '프리셋 이름 변경';
+
+  @override
+  String get selectPreset => '프리셋 선택';
+
+  @override
   String get connectionMethod => '연결 방식';
 
   @override
   String get openaiCompatible => 'OpenAI 호환 API';
+
+  @override
+  String get openaiPrompted => 'OpenAI 호환 (강제 프롬프트)';
 
   @override
   String get modelLabel => '모델';
@@ -188,6 +256,13 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get multimodalSupportDesc =>
       '켜면 대화에서 + 버튼으로 이미지를 첨부해 보낼 수 있습니다. 비전(이미지 입력) 지원 모델에서만 사용하세요.';
+
+  @override
+  String get parseTextToolCalls => '본문 텍스트에서 도구 호출 파싱';
+
+  @override
+  String get parseTextToolCallsDesc =>
+      '도구 호출을 tool_calls 필드가 아니라 본문 텍스트로 흘리는 비표준 서버(일부 MLX/로컬 백엔드)용 폴백입니다. 기본은 꺼짐이며, 표준 OpenAI 호환 서버에는 필요 없습니다.';
 
   @override
   String get reasoningEffort => '추론강도 옵션 붙이기';
@@ -207,6 +282,22 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get hideKey => '키 숨기기';
+
+  @override
+  String get toolModelTitle => '도구별 모델';
+
+  @override
+  String get toolModelDesc =>
+      '서브에이전트·검증 도구가 사용할 프리셋을 선택합니다. \'기본 모델 사용\'은 기본 프리셋을 따릅니다.';
+
+  @override
+  String get useDefaultModel => '기본 모델 사용';
+
+  @override
+  String get toolSubagentLabel => '서브에이전트 (run_subagent)';
+
+  @override
+  String get toolVerifyLabel => '검증 (verify_work)';
 
   @override
   String get toolsDescription =>
@@ -310,6 +401,34 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get allFiles => '모든 파일';
+
+  @override
+  String get usePerProjectVenv => '프로젝트별 가상환경(venv) 사용';
+
+  @override
+  String get usePerProjectVenvDesc =>
+      '선택한 인터프리터로 프로젝트의 .collabo/venv 에 전용 venv 를 만들고, pip·도구 실행을 그 안에서 합니다. 시스템 파이썬에 설치가 막히거나(PEP 668) root 가 필요한 macOS/Linux 에서 권장합니다.';
+
+  @override
+  String get venvNoProject => '프로젝트를 열면 전용 venv 가 자동으로 생성됩니다.';
+
+  @override
+  String get venvCreating => '가상환경 생성 중…';
+
+  @override
+  String get venvReady => '가상환경 준비됨.';
+
+  @override
+  String get venvNotCreated => '아직 생성되지 않음.';
+
+  @override
+  String get venvFailed => '가상환경 생성에 실패했습니다.';
+
+  @override
+  String get venvCreate => '생성';
+
+  @override
+  String get venvRecreate => '재생성';
 
   @override
   String get console => '콘솔';

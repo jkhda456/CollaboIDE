@@ -135,6 +135,41 @@ class AppLocalizationsEn extends AppLocalizations {
   String get activityIdleTooltip => 'No running processes';
 
   @override
+  String get procTitle => 'Processes';
+
+  @override
+  String get procEmpty => 'No background processes.';
+
+  @override
+  String get procSelectHint => 'Select a process to view its output.';
+
+  @override
+  String get procStatusRunning => 'Running';
+
+  @override
+  String procStatusExited(int code) {
+    return 'Exited ($code)';
+  }
+
+  @override
+  String get procStatusKilled => 'Stopped';
+
+  @override
+  String get procStop => 'Stop';
+
+  @override
+  String get procInputHint => 'Send input to stdin…';
+
+  @override
+  String get procSend => 'Send';
+
+  @override
+  String get procStdout => 'stdout';
+
+  @override
+  String get procStderr => 'stderr';
+
+  @override
   String get newProjectTitle => 'New Project';
 
   @override
@@ -177,10 +212,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nameReserved => 'Reserved names cannot be used.';
 
   @override
+  String get presetLabel => 'Preset';
+
+  @override
+  String get presetNameLabel => 'Preset name';
+
+  @override
+  String get addPreset => 'Add preset';
+
+  @override
+  String get deletePreset => 'Delete preset';
+
+  @override
+  String get newPresetName => 'New preset';
+
+  @override
+  String get defaultBadge => 'default';
+
+  @override
+  String get setAsDefault => 'Set as default';
+
+  @override
+  String get isDefaultPreset => 'Default preset';
+
+  @override
+  String get renamePreset => 'Rename preset';
+
+  @override
+  String get selectPreset => 'Select preset';
+
+  @override
   String get connectionMethod => 'Connection';
 
   @override
   String get openaiCompatible => 'OpenAI-compatible API';
+
+  @override
+  String get openaiPrompted => 'OpenAI-compatible (forced prompt)';
 
   @override
   String get modelLabel => 'Model';
@@ -191,6 +259,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get multimodalSupportDesc =>
       'Enable to attach images to messages with the + button. Use only with a vision-capable model.';
+
+  @override
+  String get parseTextToolCalls => 'Parse tool calls from text';
+
+  @override
+  String get parseTextToolCallsDesc =>
+      'For non-standard servers that leak tool calls as body text (e.g. some MLX/local backends) instead of the tool_calls field. Off by default; standard OpenAI-compatible servers don\'t need it.';
 
   @override
   String get reasoningEffort => 'Attach reasoning effort option';
@@ -210,6 +285,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get hideKey => 'Hide key';
+
+  @override
+  String get toolModelTitle => 'Per-tool model';
+
+  @override
+  String get toolModelDesc =>
+      'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the default preset.';
+
+  @override
+  String get useDefaultModel => 'Use default model';
+
+  @override
+  String get toolSubagentLabel => 'Sub-agent (run_subagent)';
+
+  @override
+  String get toolVerifyLabel => 'Verify (verify_work)';
 
   @override
   String get toolsDescription =>
@@ -315,6 +406,35 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get allFiles => 'All files';
+
+  @override
+  String get usePerProjectVenv => 'Use per-project virtual environment (venv)';
+
+  @override
+  String get usePerProjectVenvDesc =>
+      'Creates a dedicated venv under the project\'s .collabo/venv from the selected interpreter, and runs pip/tools inside it. Recommended on macOS/Linux, where installing into the system Python is often blocked (PEP 668) or needs root.';
+
+  @override
+  String get venvNoProject =>
+      'A dedicated venv is created automatically when you open a project.';
+
+  @override
+  String get venvCreating => 'Creating virtual environment…';
+
+  @override
+  String get venvReady => 'Virtual environment ready.';
+
+  @override
+  String get venvNotCreated => 'Not created yet.';
+
+  @override
+  String get venvFailed => 'Failed to create the virtual environment.';
+
+  @override
+  String get venvCreate => 'Create';
+
+  @override
+  String get venvRecreate => 'Recreate';
 
   @override
   String get console => 'Console';

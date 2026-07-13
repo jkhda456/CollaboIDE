@@ -31,14 +31,24 @@ import os
 import re
 import subprocess
 import sys
+import time
+import uuid
 
 MODULE_NAME = "collabo_base"
 MODULE_VERSION = "0.1.0"
 
 MAX_READ_BYTES = 1 << 20  # 1MB
+PROC_TAIL_BYTES = 32 << 10  # 32KB of stdout/stderr returned to the LLM
 
 WORKSPACE = os.environ.get("COLLABO_WORKSPACE") or ""
 IS_ELEVATED = os.environ.get("COLLABO_ELEVATED") == "1"
+
+# Detached background-command runner (same directory as this module).
+PROC_RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proc_runner.py")
+
+# Windows process creation flags (used only on Windows).
+_DETACHED_PROCESS = 0x00000008
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 
 class ToolError(Exception):
@@ -132,6 +142,52 @@ def _str_arg(args, key, required=True, default=""):
     if v is not None and not isinstance(v, str):
         raise ToolError("'%s' must be a string." % key)
     return v
+
+
+# --- background command registry (.collabo/proc) ---
+
+def _proc_root():
+    """`<workspace>/.collabo/proc` — the file registry for background commands."""
+    if not WORKSPACE:
+        raise ToolError("No workspace is set; cannot run commands.")
+    return os.path.join(os.path.abspath(WORKSPACE), ".collabo", "proc")
+
+
+def _read_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _tail_text(path, max_bytes=PROC_TAIL_BYTES):
+    """Return the last `max_bytes` of a log file as text (with a marker if cut)."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            data = f.read()
+    except OSError:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    return ("…(truncated)\n" + text) if size > max_bytes else text
+
+
+def _spawn_detached(cmd_argv, cwd):
+    """Spawn a fully detached process that survives this process exiting."""
+    kwargs = {
+        "cwd": cwd,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    else:
+        kwargs["creationflags"] = _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(cmd_argv, **kwargs)
 
 
 # --- tools ---
@@ -356,15 +412,25 @@ def move_path(args):
 
 @tool(
     "run_command",
-    "Run a shell command and return stdout/stderr/exit code. If elevated is "
-    "true, administrator privileges are required (elevation is requested if "
-    "not available).",
+    "Run a shell command in the background and return its output. The command "
+    "keeps running even if it does not finish within the wait window: it is "
+    "registered as a background process (with an id) whose stdout/stderr are "
+    "logged. If it finishes within `timeout` seconds you get the full output "
+    "and exit code; otherwise you get the output so far plus running=true and "
+    "an id — use check_command with that id later, or the process viewer to "
+    "stop/inspect it. If elevated is true, administrator privileges are "
+    "required (requested if not available).",
     {
         "type": "object",
         "properties": {
             "command": {"type": "string"},
             "cwd": {"type": "string", "description": "Working directory (default: workspace)"},
-            "timeout": {"type": "integer", "description": "Seconds (default 120)"},
+            "timeout": {
+                "type": "integer",
+                "description": "Seconds to wait for completion before returning "
+                "as still-running (default 60). The process is NOT killed on "
+                "timeout.",
+            },
             "elevated": {"type": "boolean", "description": "Whether admin privileges are required"},
         },
         "required": ["command"],
@@ -377,23 +443,99 @@ def run_command(args):
     cwd = args.get("cwd") or WORKSPACE or None
     if cwd:
         cwd = _resolve(cwd)
-    timeout = int(args.get("timeout") or 120)
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise ToolError("Command did not finish within %d seconds." % timeout)
-    return {
+    timeout = int(args.get("timeout") or 60)
+
+    proc_id = uuid.uuid4().hex[:12]
+    proc_dir = os.path.join(_proc_root(), proc_id)
+    os.makedirs(proc_dir, exist_ok=True)
+    # Pre-create logs so status/query works even before the runner writes.
+    for fn in ("stdout.log", "stderr.log"):
+        open(os.path.join(proc_dir, fn), "wb").close()
+    with open(os.path.join(proc_dir, "spec.json"), "w", encoding="utf-8") as f:
+        json.dump({"id": proc_id, "command": command, "cwd": cwd or ""}, f,
+                  ensure_ascii=False)
+
+    # Launch the detached wrapper; it outlives this tool-call process.
+    _spawn_detached([sys.executable, "-u", PROC_RUNNER, proc_dir], cwd=proc_dir)
+
+    # Wait up to `timeout` for completion (the process is never killed here).
+    meta_path = os.path.join(proc_dir, "meta.json")
+    deadline = time.time() + max(1, timeout)
+    meta = {}
+    while time.time() < deadline:
+        meta = _read_json(meta_path)
+        if meta.get("status", "running") != "running":
+            break
+        time.sleep(0.2)
+
+    status = meta.get("status") or "running"
+    running = status == "running"
+    result = {
+        "id": proc_id,
+        "pid": meta.get("pid"),
+        "status": status,
+        "running": running,
         "command": command,
-        "exit_code": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
+        "cwd": cwd or "",
+        "stdout": _tail_text(os.path.join(proc_dir, "stdout.log")),
+        "stderr": _tail_text(os.path.join(proc_dir, "stderr.log")),
+    }
+    if running:
+        result["note"] = (
+            "Still running in the background after %ds. Call check_command with "
+            "id '%s' to get its current status/output, or use the process viewer "
+            "to stop it." % (timeout, proc_id)
+        )
+    else:
+        result["exit_code"] = meta.get("exit_code")
+    return result
+
+
+@tool(
+    "check_command",
+    "Check the current status and output of a background command previously "
+    "started by run_command, by its id (preferred) or pid. Returns status "
+    "(running/exited/killed), exit code when finished, and the tail of "
+    "stdout/stderr.",
+    {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "description": "Command id returned by run_command"},
+            "pid": {"type": "integer", "description": "Process id (alternative to id)"},
+        },
+    },
+)
+def check_command(args):
+    proc_id = args.get("id")
+    pid = args.get("pid")
+    root = _proc_root()
+    proc_dir = None
+    if proc_id:
+        cand = os.path.join(root, str(proc_id))
+        if os.path.isdir(cand):
+            proc_dir = cand
+    if proc_dir is None and pid is not None:
+        try:
+            for name in os.listdir(root):
+                d = os.path.join(root, name)
+                if _read_json(os.path.join(d, "meta.json")).get("pid") == int(pid):
+                    proc_dir = d
+                    break
+        except OSError:
+            pass
+    if proc_dir is None:
+        raise ToolError("No such background command (id/pid not found).")
+    meta = _read_json(os.path.join(proc_dir, "meta.json"))
+    status = meta.get("status") or "running"
+    return {
+        "id": meta.get("id") or os.path.basename(proc_dir),
+        "pid": meta.get("pid"),
+        "status": status,
+        "running": status == "running",
+        "exit_code": meta.get("exit_code"),
+        "command": meta.get("command"),
+        "stdout": _tail_text(os.path.join(proc_dir, "stdout.log")),
+        "stderr": _tail_text(os.path.join(proc_dir, "stderr.log")),
     }
 
 
