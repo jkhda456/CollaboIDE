@@ -15,6 +15,9 @@ import '../process/python_environment.dart';
 import '../tools/tool_assets.dart';
 import '../tools/tool_source.dart';
 import '../ui/app_theme.dart';
+import '../viewers/viewer_assets.dart';
+import '../viewers/viewer_rule.dart';
+import '../viewers/viewer_source.dart';
 
 /// 프로젝트별 venv 준비 상태.
 enum VenvStatus { idle, creating, ready, error }
@@ -32,9 +35,9 @@ class WorkspaceController extends ChangeNotifier {
 
   String? _projectPath;
 
-  /// 프로젝트별 venv 사용 여부(전역 정책, 기본 켜짐). venv 인스턴스는 각 프로젝트의
-  /// `<project>/.collabo/venv` 에 자동 생성된다.
-  bool _useVenv = true;
+  /// 프로젝트별 venv 사용 여부(전역 정책, 기본 꺼짐). 켜면 각 프로젝트의
+  /// `<project>/.collabo/venv` 에 venv 를 자동 생성해 그걸로 실행한다.
+  bool _useVenv = false;
   VenvStatus _venvStatus = VenvStatus.idle;
   String _venvError = '';
   ConversationStore? _conversation;
@@ -58,11 +61,33 @@ class WorkspaceController extends ChangeNotifier {
   /// 프로젝트별 대화 모델 매핑(프로젝트 경로 → 프리셋 id). 없으면 기본 프리셋.
   Map<String, String> _projectModels = const {};
 
-  /// 고정 기본 도구 모듈(Python) 스크립트 경로. init 에서 추출.
-  String? _baseToolModulePath;
+  /// 고정 기본 도구 모듈(Python) 스크립트 경로들. init 에서 추출.
+  /// 첫 번째가 대표(어댑터 디렉토리·준비 상태 판정 기준).
+  List<String> _baseToolModulePaths = const [];
 
   /// 사용자가 추가한 도구 소스(일반 CLI / MCP). (설정에 저장, tools 로 확장)
   List<ToolSource> _toolSources = const [];
+
+  /// 사용자가 추가한 파일 뷰어(JS 익스텐션). (설정에 저장, 웹뷰가 로드)
+  List<ViewerSource> _viewerSources = const [];
+
+  /// 뷰어별 사용자 설정(뷰어 id → 확장자/사용 여부 덮어쓰기). 메인 DB 에 저장.
+  /// 여기 없는 뷰어는 플러그인이 선언한 기본값을 쓴다.
+  Map<String, ViewerRule> _viewerRules = const {};
+
+  /// 웹이 보고한 등록된 뷰어 목록(번들 + 사용자).
+  ///
+  /// 뷰어의 정체와 기본값은 웹에만 있어서 이 보고가 유일한 출처다. 그런데 **웹뷰는
+  /// 프로젝트가 열려 있을 때만 존재**하므로(`AppLayout`), 프로젝트 없이 설정을 열면
+  /// 보고해 줄 웹이 없다. 그래서 마지막 보고를 메인 DB 에 캐시해 두고 그걸 쓴다.
+  List<ViewerInfo> _registeredViewers = const [];
+
+  /// 사용자가 정한 뷰어 우선순위(앞이 이긴다). 같은 확장자를 여러 뷰어가 담당할
+  /// 때 누가 자동 선택될지를 결정한다. 비어 있으면 등록 순서를 따른다.
+  List<String> _viewerOrder = const [];
+
+  /// 앱에 담겨 오는 예제 뷰어(기본으로 붙지 않는다). init 에서 에셋 목록을 읽는다.
+  List<ViewerExample> _viewerExamples = const [];
 
   /// 사용자가 선택한 Python 인터프리터 경로.
   String _pythonInterpreterPath = '';
@@ -80,6 +105,11 @@ class WorkspaceController extends ChangeNotifier {
   /// 평가해 메인 컨텍스트에 넣는다. 기본 켜짐. (설정 → 프롬프트에서 토글)
   bool _preAssessment = true;
 
+  /// 프로젝트 상태 요약(폴더 구조 + 최근 파일 변경 이력)을 에이전트 컨텍스트에
+  /// 주입할지. 이미 해 놓은 작업을 다시 시도하느라 낭비하는 걸 줄인다. 기본 켜짐.
+  /// (설정 → 프롬프트에서 토글)
+  bool _projectState = true;
+
   /// 초기 설정 마법사 완료(또는 건너뜀) 여부. 메인 DB 에 영구 저장.
   bool _setupDone = false;
 
@@ -93,16 +123,24 @@ class WorkspaceController extends ChangeNotifier {
   static const String _toolModelsKey = 'llm_tool_models';
   static const String _projectModelsKey = 'llm_project_models';
   static const String _toolModulesKey = 'tool_modules';
+  static const String _viewerSourcesKey = 'viewer_sources';
+  static const String _viewerRulesKey = 'viewer_rules';
+  static const String _viewerOrderKey = 'viewer_order';
+  /// 웹이 마지막으로 보고한 뷰어 목록(캐시 — 원본은 웹 레지스트리).
+  static const String _viewerRegistryKey = 'viewer_registry';
   static const String _pythonKey = 'python_interpreter';
   static const String _useVenvKey = 'python_use_venv';
 
   /// 프로젝트 폴더 안에서 venv 를 두는 상대 경로.
   static const List<String> _venvSubdir = ['.collabo', 'venv'];
+  /// 마지막 창 크기 설정 키(main.dart 가 부팅 시 직접 읽어 복원한다).
+  static const String windowSizeKey = 'window_size';
   static const String _localeKey = 'locale';
   static const String _systemPromptKey = 'system_prompt';
   static const String _setupDoneKey = 'setup_done';
   static const String _workspaceDirKey = 'workspace_dir';
   static const String _preAssessmentKey = 'pre_assessment';
+  static const String _projectStateKey = 'project_state';
 
   String? get projectPath => _projectPath;
   bool get hasProject => _projectPath != null;
@@ -152,14 +190,21 @@ class WorkspaceController extends ChangeNotifier {
   }
 
   /// 도구(run_subagent/verify_work)에 쓸 연결 설정.
-  /// 도구에 지정된 프리셋이 있으면 그것을, 없으면 기본 프리셋을 쓴다.
-  LlmConfig configForTool(String toolName) {
+  ///
+  /// 해석 순서: **도구별 지정 프리셋 → 프로젝트 대화 모델(헤더 드롭다운) → 기본 프리셋**.
+  /// 즉 도구에 따로 지정하지 않았으면 그 프로젝트에서 **지금 대화 중인 모델**을 그대로
+  /// 쓴다. 헤더에서 모델을 바꾸면 서브에이전트/검증도 같이 따라오게 하기 위함이다
+  /// (예전에는 전역 기본 프리셋으로 떨어져, 사전 평가·압축은 대화 모델을 쓰는데
+  ///  정작 실제 작업만 다른 모델로 도는 불일치가 있었다).
+  ///
+  /// [projectPath] 를 주면 그 프로젝트 기준으로 해석한다(기본은 현재 프로젝트).
+  LlmConfig configForTool(String toolName, [String? projectPath]) {
     final id = _toolModels[toolName];
     if (id != null && id.isNotEmpty) {
       final p = _presetById(id);
       if (p != null) return p.config;
     }
-    return defaultPreset.config;
+    return configForConversation(projectPath);
   }
 
   /// 도구에 지정된 프리셋 id('' = 기본 사용).
@@ -179,8 +224,44 @@ class WorkspaceController extends ChangeNotifier {
   /// 사용자가 저장한 원본(편집 화면 표시용; 비어 있으면 기본값을 보여준다).
   String get systemPromptRaw =>
       _systemPrompt.isEmpty ? kDefaultSystemPrompt : _systemPrompt;
-  String? get baseToolModulePath => _baseToolModulePath;
+  /// 대표 기본 모듈 경로(없으면 null).
+  String? get baseToolModulePath =>
+      _baseToolModulePaths.isEmpty ? null : _baseToolModulePaths.first;
+
+  /// 고정 기본 모듈 전체(파일 작업 + 문서 편집 …).
+  List<String> get baseToolModulePaths => List.unmodifiable(_baseToolModulePaths);
   List<ToolSource> get toolSources => _toolSources;
+
+  /// 사용자가 추가한 파일 뷰어 목록(설정 → 뷰어).
+  List<ViewerSource> get viewerSources => _viewerSources;
+
+  /// 뷰어별 사용자 설정(없는 뷰어는 기본값).
+  Map<String, ViewerRule> get viewerRules => Map.unmodifiable(_viewerRules);
+
+  /// 뷰어 하나의 설정(미설정이면 기본값 규칙).
+  ViewerRule viewerRuleFor(String viewerId) =>
+      _viewerRules[viewerId] ?? const ViewerRule();
+
+  /// 웹이 보고한 등록된 뷰어 목록(보고된 순서 그대로).
+  List<ViewerInfo> get registeredViewers => _registeredViewers;
+
+  /// 사용자가 정한 뷰어 우선순위(앞이 이긴다). 비어 있으면 등록 순서를 따른다.
+  List<String> get viewerOrder => List.unmodifiable(_viewerOrder);
+
+  /// 앱에 담긴 예제 뷰어 중 **아직 추가하지 않은** 것(설정에서 "추가" 로 얹는다).
+  List<ViewerExample> get availableViewerExamples => [
+        for (final e in _viewerExamples)
+          if (!_viewerSources
+              .any((s) => p.basename(s.path) == e.fileName)) e,
+      ];
+
+  /// 우선순위가 적용된 뷰어 목록(설정 화면의 표시 순서 = 실제 선택 순서).
+  List<ViewerInfo> get orderedViewers =>
+      sortViewersByOrder(_registeredViewers, _viewerOrder);
+
+  /// 뷰어에 실제로 적용되는 확장자(override 가 있으면 그것, 없으면 선언값).
+  List<String> effectiveExtensionsFor(ViewerInfo info) =>
+      _viewerRules[info.id]?.extensions ?? info.defaultExtensions;
 
   /// 첫 실행(데이터가 전혀 준비되지 않음) 여부 → 초기 설정 마법사 표시 조건.
   /// 초기화 완료 후, 설정 미완료 + LLM 미설정 + Python 미선택 + 최근 프로젝트 없음.
@@ -192,8 +273,10 @@ class WorkspaceController extends ChangeNotifier {
       _recentProjects.isEmpty;
 
   /// 추출된 도구 모듈/어댑터 디렉토리(cli_adapter.py, mcp_adapter.py 위치).
-  String? get toolAdaptersDir =>
-      _baseToolModulePath != null ? p.dirname(_baseToolModulePath!) : null;
+  String? get toolAdaptersDir {
+    final base = baseToolModulePath;
+    return base != null ? p.dirname(base) : null;
+  }
 
   /// 선택된 base Python 인터프리터 경로(미설정이면 null).
   String? get pythonInterpreter =>
@@ -210,6 +293,18 @@ class WorkspaceController extends ChangeNotifier {
 
   bool get pythonInstalled => _pythonEnv?.isInstalled ?? false;
   PythonEnvironment? get pythonEnv => _pythonEnv;
+
+  /// 에이전트가 Python 도구를 실제로 실행할 수 있는 상태인지.
+  /// (인터프리터 선택 + 그 파일이 존재 + 기본 모듈/어댑터 추출 완료)
+  ///
+  /// **`WebBridge._buildToolRegistry` 의 전제조건과 같아야 한다.** false 면 도구가
+  /// 하나도 없는 채로 대화만 돌아가므로(서브에이전트가 아무 작업도 못 한다),
+  /// 대화 헤더에 설정 안내 버튼을 띄우는 근거로도 쓴다.
+  bool get toolsReady =>
+      pythonInstalled &&
+      effectivePython != null &&
+      _baseToolModulePaths.isNotEmpty &&
+      toolAdaptersDir != null;
 
   /// 프로젝트별 venv 사용 여부(전역 정책).
   bool get useVenv => _useVenv;
@@ -327,9 +422,17 @@ class WorkspaceController extends ChangeNotifier {
     if (pmModels is Map) _projectModels = _strMap(pmModels);
     final tm = await _appDb!.getSetting(_toolModulesKey);
     if (tm is List) _toolSources = _parseSources(tm);
+    final vs = await _appDb!.getSetting(_viewerSourcesKey);
+    if (vs is List) _viewerSources = _parseViewerSources(vs);
+    final vr = await _appDb!.getSetting(_viewerRulesKey);
+    if (vr is Map) _viewerRules = _parseViewerRules(vr);
+    final vo = await _appDb!.getSetting(_viewerOrderKey);
+    if (vo is List) _viewerOrder = vo.whereType<String>().toList();
+    final vg = await _appDb!.getSetting(_viewerRegistryKey);
+    if (vg is List) _registeredViewers = _parseViewerInfos(vg);
     _pythonInterpreterPath =
         (await _appDb!.getSetting(_pythonKey) as String?) ?? '';
-    _useVenv = (await _appDb!.getSetting(_useVenvKey) as bool?) ?? true;
+    _useVenv = (await _appDb!.getSetting(_useVenvKey) as bool?) ?? false;
     _localeCode = (await _appDb!.getSetting(_localeKey) as String?) ?? 'system';
     _systemPrompt = (await _appDb!.getSetting(_systemPromptKey) as String?) ?? '';
     _setupDone = (await _appDb!.getSetting(_setupDoneKey) as bool?) ?? false;
@@ -337,11 +440,14 @@ class WorkspaceController extends ChangeNotifier {
         (await _appDb!.getSetting(_workspaceDirKey) as String?) ?? '';
     _preAssessment =
         (await _appDb!.getSetting(_preAssessmentKey) as bool?) ?? true;
+    _projectState =
+        (await _appDb!.getSetting(_projectStateKey) as bool?) ?? true;
 
     final env = PythonEnvironment(_pythonInterpreterPath);
     _pythonEnv = env;
     _processManager = ProcessManager(env);
-    _baseToolModulePath = await ToolAssets.extractBaseModule();
+    _baseToolModulePaths = await ToolAssets.extractBaseModules();
+    _viewerExamples = await ViewerAssets.examples();
     _initialized = true;
     notifyListeners();
   }
@@ -355,6 +461,17 @@ class WorkspaceController extends ChangeNotifier {
     if (dir.isEmpty || dir == _lastWorkspaceDir) return;
     _lastWorkspaceDir = dir;
     await _appDb?.setSetting(_workspaceDirKey, dir);
+  }
+
+  /// 프로젝트 상태 요약 주입 여부.
+  bool get projectState => _projectState;
+
+  /// 프로젝트 상태 요약 주입 여부를 변경/저장한다(설정 → 프롬프트 토글).
+  Future<void> setProjectState(bool value) async {
+    if (value == _projectState) return;
+    _projectState = value;
+    notifyListeners();
+    await _appDb?.setSetting(_projectStateKey, value);
   }
 
   /// 사전 평가(트리아지) 사용 여부.
@@ -381,6 +498,11 @@ class WorkspaceController extends ChangeNotifier {
     _systemPrompt = prompt;
     notifyListeners();
     await _appDb?.setSetting(_systemPromptKey, prompt);
+  }
+
+  /// 마지막 창 크기를 저장한다(다음 실행에서 복원; 위치는 저장하지 않음).
+  Future<void> saveWindowSize(double width, double height) async {
+    await _appDb?.setSetting(windowSizeKey, {'w': width, 'h': height});
   }
 
   /// 언어를 변경/저장한다('system'|'ko'|'en').
@@ -432,6 +554,136 @@ class WorkspaceController extends ChangeNotifier {
     _toolSources = _toolSources.where((s) => s.id != source.id).toList();
     notifyListeners();
     await _saveSources();
+  }
+
+  static List<ViewerSource> _parseViewerSources(List<Object?> raw) {
+    final out = <ViewerSource>[];
+    for (final e in raw) {
+      if (e is String) {
+        out.add(ViewerSource.legacy(e)); // 경로 문자열만 저장된 형태
+      } else if (e is Map) {
+        final v = ViewerSource.fromJson(e.cast<String, Object?>());
+        if (v.path.isNotEmpty) out.add(v);
+      }
+    }
+    return out;
+  }
+
+  Future<void> _saveViewerSources() async {
+    await _appDb?.setSetting(
+      _viewerSourcesKey,
+      _viewerSources.map((s) => s.toJson()).toList(),
+    );
+  }
+
+  /// 파일 뷰어(JS)를 추가/제거하고 메인 DB 에 저장한다.
+  ///
+  /// 실제 로드/해제는 [WebBridge] 가 이 알림을 받아 웹으로 반영한다(앱 재시작
+  /// 없이 드롭다운에 나타나거나 사라진다).
+  Future<void> addViewerSource(ViewerSource source) async {
+    if (source.path.isEmpty) return;
+    if (_viewerSources.any((s) => s.id == source.id)) return;
+    _viewerSources = [..._viewerSources, source];
+    notifyListeners();
+    await _saveViewerSources();
+  }
+
+  /// 앱에 담긴 예제 뷰어를 추가한다: 파일을 웹 루트로 꺼낸 뒤 사용자 뷰어로 등록.
+  /// (사용자가 직접 고른 .js 와 이후 취급이 완전히 같다.)
+  Future<void> addViewerExample(ViewerExample example) async {
+    final path = await ViewerAssets.materialize(example);
+    await addViewerSource(ViewerSource(path: path));
+  }
+
+  Future<void> removeViewerSource(ViewerSource source) async {
+    _viewerSources = _viewerSources.where((s) => s.id != source.id).toList();
+    notifyListeners();
+    await _saveViewerSources();
+  }
+
+  static Map<String, ViewerRule> _parseViewerRules(Map raw) => {
+        for (final e in raw.entries)
+          if (e.value is Map)
+            e.key.toString():
+                ViewerRule.fromJson((e.value as Map).cast<String, Object?>()),
+      };
+
+  Future<void> _saveViewerRules() async {
+    await _appDb?.setSetting(
+      _viewerRulesKey,
+      {for (final e in _viewerRules.entries) e.key: e.value.toJson()},
+    );
+  }
+
+  /// 뷰어의 확장자/사용 여부를 바꾼다. 전부 기본값이 되면 항목 자체를 지운다
+  /// (플러그인이 나중에 기본 확장자를 바꿔도 그 값을 따라가도록).
+  Future<void> setViewerRule(String viewerId, ViewerRule rule) async {
+    if (viewerId.isEmpty) return;
+    final next = Map<String, ViewerRule>.from(_viewerRules);
+    if (rule.isDefault) {
+      if (!next.containsKey(viewerId)) return;
+      next.remove(viewerId);
+    } else {
+      next[viewerId] = rule;
+    }
+    _viewerRules = next;
+    notifyListeners();
+    await _saveViewerRules();
+  }
+
+  /// 뷰어 설정을 기본값으로 되돌린다.
+  Future<void> resetViewerRule(String viewerId) =>
+      setViewerRule(viewerId, const ViewerRule());
+
+  /// 뷰어 우선순위를 저장한다(설정 화면에서 끌어 옮긴 결과 = 전체 순서).
+  Future<void> setViewerOrder(List<String> ids) async {
+    if (_viewerOrder.length == ids.length &&
+        _viewerOrder.join(',') == ids.join(',')) {
+      return;
+    }
+    _viewerOrder = List.unmodifiable(ids);
+    notifyListeners();
+    await _appDb?.setSetting(_viewerOrderKey, ids);
+  }
+
+  /// 순서를 기본(등록 순서)으로 되돌린다.
+  Future<void> resetViewerOrder() => setViewerOrder(const []);
+
+  static List<ViewerInfo> _parseViewerInfos(List<Object?> raw) => [
+        for (final e in raw)
+          if (e is Map) ViewerInfo.fromJson(e.cast<String, Object?>()),
+      ];
+
+  /// 웹이 보고한 등록 뷰어 목록을 갱신하고 캐시에 남긴다([WebBridge] 가 호출).
+  ///
+  /// 내용이 같으면 알리지도, 저장하지도 않는다 — 이 알림으로 설정 화면이 다시
+  /// 그려지는데, 웹은 뷰어가 바뀔 때마다 보고하므로 같은 목록이 반복해 들어온다.
+  ///
+  /// **빈 목록은 무시한다.** 뷰어 스크립트가 로드되기 전(기동 직후)에도 보고가 한 번
+  /// 오는데, 그걸로 캐시를 날리면 프로젝트 없이 설정을 열었을 때 목록이 사라진다.
+  void setRegisteredViewers(List<ViewerInfo> viewers) {
+    if (viewers.isEmpty || _sameViewerList(_registeredViewers, viewers)) return;
+    _registeredViewers = List.unmodifiable(viewers);
+    notifyListeners();
+    final db = _appDb;
+    if (db != null) {
+      unawaited(db.setSetting(
+          _viewerRegistryKey, [for (final v in viewers) v.toJson()]));
+    }
+  }
+
+  static bool _sameViewerList(List<ViewerInfo> a, List<ViewerInfo> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].label != b[i].label ||
+          a[i].dataMode != b[i].dataMode ||
+          a[i].user != b[i].user ||
+          a[i].defaultExtensions.join(',') != b[i].defaultExtensions.join(',')) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// 테마 모드를 변경하고 메인 DB 에 저장한다(설정 창에서 호출).
@@ -497,6 +749,26 @@ class WorkspaceController extends ChangeNotifier {
     if (tm is Map) _toolModels = _strMap(tm);
     final pm = await db.getSetting(_projectModelsKey);
     if (pm is Map) _projectModels = _strMap(pm);
+  }
+
+  /// 테스트 전용: 예제 뷰어 목록을 심는다(실제로는 init 이 에셋에서 읽는다).
+  @visibleForTesting
+  void setViewerExamplesForTest(List<ViewerExample> examples) {
+    _viewerExamples = examples;
+  }
+
+  /// 테스트 전용: 주어진 메인 DB 에서 뷰어 목록/설정만 로드한다(마이그레이션 포함).
+  @visibleForTesting
+  Future<void> loadViewersForTest(AppDatabase db) async {
+    _appDb = db;
+    final vs = await db.getSetting(_viewerSourcesKey);
+    if (vs is List) _viewerSources = _parseViewerSources(vs);
+    final vr = await db.getSetting(_viewerRulesKey);
+    if (vr is Map) _viewerRules = _parseViewerRules(vr);
+    final vo = await db.getSetting(_viewerOrderKey);
+    if (vo is List) _viewerOrder = vo.whereType<String>().toList();
+    final vg = await db.getSetting(_viewerRegistryKey);
+    if (vg is List) _registeredViewers = _parseViewerInfos(vg);
   }
 
   /// 프리셋을 추가한다(반환: 추가된 프리셋). 첫 프리셋이면 기본으로 지정.

@@ -10,13 +10,22 @@ import 'package:url_launcher/url_launcher.dart';
 import '../app/workspace_controller.dart';
 import '../conversation/conversation_store.dart';
 import '../conversation/models.dart';
+import '../fs/entry_name.dart';
 import '../fs/file_service.dart';
 import '../llm/llm_config.dart';
+import '../llm/message_shape.dart';
 import '../llm/openai_client.dart';
+import '../llm/system_prompt.dart';
+import '../platform/mac_file_picker.dart';
+import '../tools/tool_call_log.dart';
 import '../tools/tool_module.dart';
 import '../tools/tool_registry.dart';
 import '../tools/tool_runner.dart';
+import '../viewers/viewer_assets.dart';
+import '../viewers/viewer_rule.dart';
+import '../viewers/viewer_source.dart';
 import 'platform_web_view.dart';
+import 'web_assets.dart';
 
 /// Flutter(네이티브) ↔ WebView(웹) 메시지 브리지.
 ///
@@ -28,18 +37,41 @@ import 'platform_web_view.dart';
 ///              `clipboard.write{text}`
 ///  Dart → Web: `project.changed{path}`, `dir.children{path,entries}`,
 ///              `file.content{...}`, `fs.change{paths:[...]}`
+///
+/// JSON 메시지가 아닌 예외가 둘 있다(웹의 전역 함수를 직접 호출):
+/// 테마 주입(`collaboSetTheme`)과 사용자 뷰어 반영(`collaboSyncUserViewers`).
 class WebBridge {
   WebBridge(
     this._view,
     this._workspace, {
     FileService? fileService,
     LlmProvider? llmClient,
+    Future<List<String>> Function(List<ViewerSource>)? viewerStager,
+    this.onOpenSettings,
+    this.onOpenActivity,
   })  : _fs = fileService ?? FileService(),
-        _defaultProvider = llmClient ?? OpenAiClient();
+        _defaultProvider = llmClient ?? OpenAiClient(),
+        _stageViewers = viewerStager ?? ViewerAssets.sync;
+
+  /// 웹의 설정 안내 버튼 → 네이티브 설정 창 열기. 인자는 열 섹션
+  /// ('model'|'tools' 등, 빈 문자열이면 기본 탭). 웹뷰는 BuildContext 가 없어
+  /// 다이얼로그를 직접 못 띄우므로 패널이 콜백으로 내려 준다.
+  final void Function(String section)? onOpenSettings;
+
+  /// 웹의 "호출 내역" 링크 → 네이티브 도구 호출 내역 창 열기.
+  /// [id] 를 주면 그 호출을 선택한 상태로 연다(빈 문자열이면 최신).
+  final void Function(String id)? onOpenActivity;
+
+  /// 이번 세션의 도구 호출 기록(인자 + 결과 원문). 네이티브 창이 이걸 보여 준다.
+  final ToolCallLog toolCalls = ToolCallLog();
 
   final PlatformWebView _view;
   final WorkspaceController _workspace;
   final FileService _fs;
+
+  /// 사용자 뷰어 JS 를 웹 루트로 복사하고 상대 URL 목록을 돌려주는 함수.
+  /// 기본은 [ViewerAssets.sync](path_provider 필요) — 테스트에서 갈아끼운다.
+  final Future<List<String>> Function(List<ViewerSource>) _stageViewers;
 
   /// 기본 provider(주입되면 OpenAI 연결에 재사용). 다른 연결 방식은 [_providerFor]
   /// 가 연결별로 만들어 캐시한다.
@@ -62,6 +94,12 @@ class WebBridge {
   /// 현재 살아 있는 LLM 스트림들을 강제로 끊는 콜백 모음(메인 + 서브에이전트).
   final Set<void Function()> _streamAborters = {};
 
+  /// 지금 돌고 있는 도구 프로세스들. 중지를 누르면 이것도 함께 끊는다.
+  ///
+  /// 도구에는 기본 타임아웃이 없다(길게 기다리는 게 정상인 도구가 있다) — 그래서
+  /// 이 목록이 없으면 "중지" 가 실행 중인 도구가 끝날 때까지 기다리게 된다.
+  final Set<Process> _toolProcesses = {};
+
   /// 생성 중 들어온 전송은 큐에 쌓아 두고, 끝나면 순서대로 처리한다.
   /// 각 항목 {id,text}. 웹은 상태 풍선의 큐 칩/모달로 보여주고 취소할 수 있다.
   final List<Map<String, Object?>> _queue = [];
@@ -78,7 +116,206 @@ class WebBridge {
   /// 웹 메시지 수신을 시작한다(컨트롤러 초기화 후 1회).
   void start() {
     _msgSub = _view.messages.listen(_onMessage);
+    // 설정 창에서 프리셋을 바꾸면(추가/이름 변경/모델 변경/삭제/기본 지정) 대화
+    // 헤더가 바로 따라오도록 컨트롤러 변경을 구독한다. 구독 시점의 상태를 지문으로
+    // 잡아 두어, 첫 알림에서 불필요한 재전송이 나가지 않게 한다.
+    _metaSignature = _headerMetaSignature();
+    _viewerSignature = _viewerSourcesSignature();
+    _viewerRuleSignature = _viewerRulesSignature();
+    _workspace.addListener(_onWorkspaceChanged);
   }
+
+  /// 헤더 메타(`chat.meta`)에 실리는 LLM 설정의 지문. 이 값이 달라질 때만 다시 보낸다.
+  String _metaSignature = '';
+
+  /// 사용자 뷰어 목록의 지문. 이 값이 달라질 때만 웹에 다시 얹는다.
+  String _viewerSignature = '';
+
+  /// 뷰어별 확장자/사용 여부 설정의 지문.
+  String _viewerRuleSignature = '';
+
+  /// 컨트롤러 알림을 받아, 실제로 달라진 것만 웹에 반영한다.
+  ///
+  /// [WorkspaceController] 의 알림은 백그라운드 프로세스 레지스트리에서도 포워드되어
+  /// 자주 온다. 알림마다 [_pushChatMeta] 를 부르면 토큰 합산용 DB 조회(메인 + 하위
+  /// 대화 전체)가, [_syncUserViewers] 를 부르면 파일 복사가 반복되므로, 각각
+  /// 지문이 바뀐 경우에만 보낸다.
+  void _onWorkspaceChanged() {
+    final sig = _headerMetaSignature();
+    if (sig != _metaSignature) {
+      _metaSignature = sig;
+      unawaited(_pushChatMeta());
+    }
+    final vsig = _viewerSourcesSignature();
+    if (vsig != _viewerSignature) {
+      _viewerSignature = vsig;
+      unawaited(_syncUserViewers());
+    }
+    final rsig = _viewerRulesSignature();
+    if (rsig != _viewerRuleSignature) {
+      _viewerRuleSignature = rsig;
+      unawaited(_pushViewerRules());
+    }
+  }
+
+  /// 설정에 등록된 사용자 뷰어의 지문(경로 목록).
+  String _viewerSourcesSignature() =>
+      jsonEncode([for (final v in _workspace.viewerSources) v.id]);
+
+  /// 뷰어 설정(확장자·사용 여부 + 우선순위)의 지문.
+  ///
+  /// 뷰어 **목록 보고**(`viewers.list` → `setRegisteredViewers`)도 컨트롤러 알림을
+  /// 일으키므로, 지문에 그 목록을 넣으면 보고 → 재전송 → 보고의 순환이 된다.
+  /// **여기엔 사용자 설정만 넣는다.**
+  String _viewerRulesSignature() => jsonEncode(_viewerRulesJson());
+
+  Map<String, Object?> _viewerRulesJson() => {
+        'rules': {
+          for (final e in _workspace.viewerRules.entries) e.key: e.value.toJson(),
+        },
+        // 뷰어 우선순위(앞이 이긴다). 여기 없는 뷰어는 웹이 선언 priority 로 뒤에 붙인다.
+        'order': _workspace.viewerOrder,
+      };
+
+  /// 뷰어 설정을 웹 레지스트리에 적용한다(확장자 override / 끄기 / 우선순위).
+  Future<void> _pushViewerRules() async {
+    try {
+      await _view.executeScript('window.collaboSetViewerRules && '
+          'window.collaboSetViewerRules(${jsonEncode(_viewerRulesJson())})');
+    } catch (_) {
+      // 웹이 아직 준비 전 — `ready` 에서 다시 보낸다.
+    }
+  }
+
+  /// 웹이 보고한 등록 뷰어 목록을 컨트롤러에 넣는다(설정 화면이 이걸로 줄을 그린다).
+  void _handleViewersList(Object? raw) {
+    if (raw is! List) return;
+    _workspace.setRegisteredViewers([
+      for (final e in raw)
+        if (e is Map) ViewerInfo.fromJson(e.cast<String, Object?>()),
+    ]);
+  }
+
+  /// 압축 파일 안의 항목 하나를 읽어 준다(압축 뷰어의 미리보기).
+  ///
+  /// 목록(`file.open{mode:'archive'}`)과 달리 뷰어를 바꾸지 않으므로 전용 메시지를
+  /// 쓴다. 해독은 [ArchiveService] 가 아이솔레이트에서 하고, 실패도 결과에 담아 준다
+  /// (뷰어가 그 자리에 이유를 보여 준다).
+  Future<void> _handleArchiveEntry(String? path, String? name) async {
+    if (path == null || name == null || path.isEmpty || name.isEmpty) return;
+    final data = await _fs.archives.readEntry(path, name);
+    _post({
+      'type': 'archive.entryData',
+      'path': path,
+      ...data.toJson(),
+    });
+  }
+
+  /// 뷰어 플러그인이 자기 폴더의 파일(주로 `.wasm`)을 읽어 달라고 요청한 것.
+  ///
+  /// **웹은 `file://` 에서 fetch/XHR 을 쓸 수 없다**(Chromium 차단, WKWebView 읽기
+  /// 범위 제한). 그래서 `WebAssembly.instantiateStreaming(fetch(...))` 같은 흔한
+  /// 방법이 통하지 않는다 → 네이티브가 바이트를 읽어 base64 로 넘겨주고, 웹이
+  /// `WebAssembly.instantiate(bytes)` 로 쓴다.
+  ///
+  /// [from] 은 요청한 스크립트의 URL(`document.currentScript.src`)이다. 그 파일이
+  /// 놓인 폴더를 기준으로 [name] 을 찾으므로, 플러그인은 자기 폴더 안만 볼 수 있다
+  /// — 실제로 **스테이징 폴더(`<web>/viewers/`) 밖이면 거부**한다.
+  Future<void> _handleViewerAsset(String? from, String? name) async {
+    if (from == null || name == null || from.isEmpty || name.isEmpty) return;
+    void fail(String message) => _post({
+          'type': 'viewer.assetData',
+          'from': from,
+          'name': name,
+          'error': message,
+        });
+    try {
+      final uri = Uri.parse(from);
+      if (uri.scheme != 'file') {
+        fail('Not a local viewer.');
+        return;
+      }
+      // 로드 시 캐시 무효화용 ?v=… 가 붙어 있어도 경로만 쓴다.
+      final scriptPath = uri.toFilePath();
+      final target = File(p.normalize(p.join(p.dirname(scriptPath), name)));
+      final root = p.join((await WebAssets.webRoot()).path, 'viewers');
+      if (!p.isWithin(root, target.path)) {
+        fail('Outside the viewer folder.');
+        return;
+      }
+      if (!await target.exists()) {
+        fail('No such file: $name');
+        return;
+      }
+      final length = await target.length();
+      if (length > _maxViewerAssetBytes) {
+        fail('Asset is too large (${length >> 20}MB > '
+            '${_maxViewerAssetBytes >> 20}MB).');
+        return;
+      }
+      final bytes = await target.readAsBytes();
+      _post({
+        'type': 'viewer.assetData',
+        'from': from,
+        'name': name,
+        'b64': base64.encode(bytes),
+      });
+    } catch (e) {
+      fail('$e');
+    }
+  }
+
+  /// 뷰어 에셋(wasm 등) 1건의 상한. base64 로 부풀려 브리지를 타므로 넉넉하지만
+  /// 무한하지는 않게 둔다.
+  static const int _maxViewerAssetBytes = 32 << 20;
+
+  /// 사용자 뷰어(JS)를 웹뷰에 반영한다.
+  ///
+  /// 파일을 웹 루트로 복사한 뒤, **현재 목록 전체**를 웹에 넘긴다. 무엇을 새로
+  /// 얹고 무엇을 내릴지는 웹이 판단한다(`collaboSyncUserViewers`) — 어떤 스크립트가
+  /// 이미 로드돼 있는지는 웹만 알기 때문이다.
+  Future<void> _syncUserViewers() async {
+    List<String> urls;
+    try {
+      urls = await _stageViewers(_workspace.viewerSources);
+    } catch (_) {
+      return; // 스테이징 실패(권한 등) — 기본 뷰어로 계속 동작한다.
+    }
+    try {
+      await _view.executeScript(
+          'window.collaboSyncUserViewers && '
+          'window.collaboSyncUserViewers(${jsonEncode(urls)})');
+    } catch (_) {
+      // 웹이 아직 준비 전이거나 이미 내려갔다 — `ready` 에서 다시 얹힌다.
+    }
+  }
+
+  /// [_pushChatMeta] 가 웹으로 보내는 설정 관련 필드를 모은 지문.
+  /// (프리셋 목록 = 드롭다운 항목, 기본/선택 프리셋 = 활성 표시, 모델명·멀티모달 =
+  ///  헤더 라벨과 첨부 버튼, setup = 설정 안내 버튼.)
+  /// 여기 없는 값이 헤더에 추가되면 이 지문에도 더해야 한다.
+  String _headerMetaSignature() {
+    final cfg = _workspace.configForConversation();
+    return jsonEncode([
+      [
+        for (final p in _workspace.llmPresets) [p.id, p.label, p.config.model],
+      ],
+      _workspace.defaultPresetId,
+      _workspace.presetIdForProject(),
+      cfg.model,
+      cfg.multimodal,
+      _missingSetup(),
+    ]);
+  }
+
+  /// 에이전트가 제대로 돌기 위해 아직 빠져 있는 설정(웹 헤더 안내 버튼용).
+  /// **순서 = 안내 우선순위** — 웹은 첫 항목에 해당하는 설정 탭을 연다.
+  List<String> _missingSetup() => [
+        // 대화 자체가 불가능한 쪽을 먼저.
+        if (!_workspace.configForConversation().isConfigured) 'llm',
+        // 도구가 없으면 대화는 되지만 서브에이전트가 아무 작업도 못 한다.
+        if (!_workspace.toolsReady) 'python',
+      ];
 
   /// 현재 프로젝트를 바꾼다: 웹에 알리고, 감시자를 재시작하고, 대화 기록을 보낸다.
   Future<void> setProject(String? path) async {
@@ -102,12 +339,36 @@ class WebBridge {
         // 웹 준비 완료 → 현재 프로젝트/대화 기록 재통지.
         _post({'type': 'project.changed', 'path': _projectPath ?? ''});
         _pushHistory();
+        // 페이지가 (다시) 로드되면 등록된 뷰어는 사라진 상태다 → 다시 얹는다.
+        // 규칙을 먼저 보낸다 — 파일을 열기 전에 확장자 연결이 적용돼 있어야 한다.
+        unawaited(_pushViewerRules());
+        unawaited(_syncUserViewers());
+        break;
+      case 'viewers.list':
+        _handleViewersList(msg['viewers']);
+        break;
+      case 'viewer.asset':
+        _handleViewerAsset(msg['from'] as String?, msg['name'] as String?);
+        break;
+      case 'archive.entry':
+        _handleArchiveEntry(msg['path'] as String?, msg['name'] as String?);
         break;
       case 'dir.list':
         _handleDirList(msg['path'] as String?);
         break;
       case 'file.open':
         _handleFileOpen(msg['path'] as String?, msg['mode'] as String?);
+        break;
+      case 'file.window':
+        _handleFileWindow(
+          msg['path'] as String?,
+          msg['mode'] as String?,
+          (msg['from'] as num?)?.toInt() ?? 0,
+          (msg['count'] as num?)?.toInt() ?? 0,
+        );
+        break;
+      case 'file.save':
+        _handleFileSave(msg['path'] as String?, msg['content'] as String?);
         break;
       case 'file.search':
         _handleFileSearch(msg['query'] as String?);
@@ -120,6 +381,19 @@ class WebBridge {
         break;
       case 'fs.copy':
         _handleFsMove(msg['src'] as String?, msg['dst'] as String?, move: false);
+        break;
+      case 'fs.create':
+        _handleFsCreate(
+          msg['parent'] as String?,
+          msg['name'] as String?,
+          msg['dir'] == true,
+        );
+        break;
+      case 'fs.rename':
+        _handleFsRename(msg['path'] as String?, msg['name'] as String?);
+        break;
+      case 'fs.delete':
+        _handleFsDelete(msg['path'] as String?);
         break;
       case 'clipboard.write':
         final text = msg['text'] as String?;
@@ -175,6 +449,16 @@ class WebBridge {
       case 'chat.setModel':
         _handleSetModel(msg['presetId'] as String?);
         break;
+      case 'settings.open':
+        onOpenSettings?.call((msg['section'] as String?) ?? '');
+        break;
+      case 'activity.open':
+        // 결과 원문은 네이티브가 들고 있다 — 웹은 열어 달라고만 한다.
+        onOpenActivity?.call((msg['id'] as String?) ?? '');
+        break;
+      case 'chat.summary.skip':
+        _handleSummarySkip();
+        break;
     }
   }
 
@@ -201,12 +485,15 @@ class WebBridge {
           .map((m) => {
                 'id': m.id,
                 'role': m.role.name,
-                'content': m.content,
+                // 예전 기록에 남은 <turn_summary> 마커는 표시 전에 걷어낸다.
+                'content': stripTurnSummary(m.content),
                 'model': m.model,
                 'pipeline': m.pipeline,
                 'toolCalls': m.toolCalls,
                 'toolName': m.toolName,
                 'toolCallId': m.toolCallId,
+                if (m.role == MessageRole.assistant)
+                  'summary': _summaryFromMeta(m.metadata),
                 if (m.role == MessageRole.user)
                   'images': _imagesFromMeta(m.metadata),
               })
@@ -215,25 +502,72 @@ class WebBridge {
     await _pushChatMeta();
   }
 
-  /// 메시지 metadata(JSON)에서 첨부 이미지 목록을 꺼낸다(없으면 빈 리스트).
-  List<Map<String, Object?>> _imagesFromMeta(String? metadata) {
+  /// 어시스턴트 메시지 metadata(JSON)에서 이 턴의 요약을 꺼낸다(없으면 '').
+  String _summaryFromMeta(String? metadata) {
+    if (metadata == null || metadata.isEmpty) return '';
+    try {
+      final m = jsonDecode(metadata);
+      if (m is Map && m['summary'] is String) return m['summary'] as String;
+    } catch (_) {}
+    return '';
+  }
+
+  /// 메시지 metadata 에 기록된 위임을 **컨텍스트용 마커 줄**로 만든다.
+  ///
+  /// 형식은 시스템 프롬프트에 명시돼 있다([kDelegationMarkerNote]) — 모델이 이 줄을
+  /// 보고 "그 단계는 다른 에이전트가 했고, 상세는 이 컨텍스트에 없다" 를 알아야 한다.
+  List<String> _delegationsFromMeta(String? metadata) {
     if (metadata == null || metadata.isEmpty) return const [];
     try {
       final m = jsonDecode(metadata);
-      if (m is Map) return _parseAttachments(m['images']);
+      if (m is! Map) return const [];
+      final list = m['delegated'];
+      if (list is! List) return const [];
+      return [
+        for (final e in list)
+          if (e is Map)
+            '$kDelegationMarker ${e['tool'] ?? 'run_subagent'} — '
+                '${e['task'] ?? ''}',
+      ];
     } catch (_) {}
     return const [];
   }
 
-  /// 헤더용 메타: 모델명 + 컨텍스트(메인 누적) + 총합(메인 + 서브 LLM 누적).
+  /// 메시지 metadata(JSON)에서 첨부 목록 전체를 꺼낸다(없으면 빈 리스트).
+  /// 신규 키 'attachments' 와 레거시 키 'images' 를 모두 읽는다.
+  List<Map<String, Object?>> _attachmentsFromMeta(String? metadata) {
+    if (metadata == null || metadata.isEmpty) return const [];
+    try {
+      final m = jsonDecode(metadata);
+      if (m is Map) return _parseAttachments(m['attachments'] ?? m['images']);
+    } catch (_) {}
+    return const [];
+  }
+
+  /// 첨부 중 인라인 표시/멀티모달 전송이 가능한 이미지(url 보유)만 꺼낸다.
+  List<Map<String, Object?>> _imagesFromMeta(String? metadata) => [
+        for (final a in _attachmentsFromMeta(metadata))
+          if (a['url'] is String &&
+              (a['url'] as String).startsWith('data:image'))
+            a,
+      ];
+
+  /// 헤더용 메타: 모델명 + 현재 컨텍스트 점유량 + 누적 총 사용량(메인 + 서브 LLM).
+  ///
+  /// **컨텍스트**는 이제 가장 최근 메인 턴이 실제로 처리한 창 크기
+  /// (prompt+completion)다. 예전엔 여기에 모든 메시지의 usage.total 을 합산했는데,
+  /// 에이전트 루프는 도구 반복마다 assistant 턴을 저장하고 각 호출의 prompt 에
+  /// 직전 히스토리가 다시 포함되므로, 합산하면 같은 컨텍스트를 중복 카운트해
+  /// 실제 창 크기보다 크게 부풀려졌다(그 합산값은 '점유량'이 아니라 '누적 사용량').
   Future<void> _pushChatMeta() async {
     final store = _store, convId = _convId;
     var context = 0;
     var total = 0;
     if (store != null && convId != null) {
-      context = _sumUsageTotal(await store.messages(convId));
-      total = context;
-      // 하위 대화(서브에이전트/검증)의 토큰도 총합에 더한다.
+      final mainMsgs = await store.messages(convId);
+      context = _currentContextTokens(mainMsgs);
+      total = _sumUsageTotal(mainMsgs);
+      // 하위 대화(서브에이전트/검증)의 토큰도 누적 총합에 더한다.
       for (final sub in await store.subConversations(convId)) {
         total += _sumUsageTotal(await store.messages(sub.id));
       }
@@ -261,10 +595,33 @@ class WebBridge {
       ],
       'selectedPresetId': _workspace.presetIdForProject(),
       'defaultPresetId': _workspace.defaultPresetId,
+      // 빠진 설정이 있으면 헤더에 안내 버튼을 띄운다(비어 있으면 숨김).
+      'setup': _missingSetup(),
     });
   }
 
-  /// 메시지들의 metadata.usage.total 합.
+  /// 현재 컨텍스트 점유량(토큰): 가장 최근 **메인** 모델 턴이 실제로 처리한
+  /// prompt+completion. 다음 턴에 실릴 컨텍스트 창 크기에 가장 가깝다.
+  /// (한 요청의 마지막 메인 턴이라, 그 요청 중간의 도구 결과까지 포함된 값 —
+  ///  다음 턴엔 도구 메시지가 제거돼 실제 전송량은 이보다 다소 작을 수 있다.)
+  int _currentContextTokens(List<Message> msgs) {
+    for (final m in msgs.reversed) {
+      if (m.role != MessageRole.assistant || m.pipeline != 'main') continue;
+      if (m.metadata == null) continue;
+      try {
+        final usage = (jsonDecode(m.metadata!) as Map)['usage'];
+        if (usage is Map) {
+          final prompt = usage['prompt'] is int ? usage['prompt'] as int : 0;
+          final completion =
+              usage['completion'] is int ? usage['completion'] as int : 0;
+          if (prompt > 0 || completion > 0) return prompt + completion;
+        }
+      } catch (_) {}
+    }
+    return 0;
+  }
+
+  /// 메시지들의 metadata.usage.total 합(누적 사용량).
   int _sumUsageTotal(List<Message> msgs) {
     var sum = 0;
     for (final m in msgs) {
@@ -303,10 +660,11 @@ class WebBridge {
 
   Future<void> _sendOne(ConversationStore store, int convId, String text,
       List<Map<String, Object?>> attachments) async {
-    // 이미지 첨부는 메시지 metadata 에 JSON 으로 보관(본문은 텍스트 그대로).
+    // 첨부는 메시지 metadata 에 확장 가능한 레코드로 보관(본문은 텍스트 그대로).
+    // (과거 기록은 'images' 키 — 읽기는 양쪽 다 지원한다.)
     final meta = attachments.isEmpty
         ? null
-        : jsonEncode({'images': attachments});
+        : jsonEncode({'attachments': attachments});
     final userId = await store.addMessage(
       conversationId: convId,
       role: MessageRole.user,
@@ -318,7 +676,14 @@ class WebBridge {
       'id': userId,
       'role': 'user',
       'content': text,
-      if (attachments.isNotEmpty) 'images': attachments,
+      // 표시용은 인라인 이미지(url 보유)만 — 그 외 종류는 경로 기반(도구 접근).
+      if (attachments.isNotEmpty)
+        'images': [
+          for (final a in attachments)
+            if (a['url'] is String &&
+                (a['url'] as String).startsWith('data:image'))
+              a,
+        ],
     });
     await _generate(store, convId);
   }
@@ -334,15 +699,26 @@ class WebBridge {
     }
   }
 
-  /// 웹에서 받은 첨부 목록을 {url,name} 맵 리스트로 정규화한다.
+  /// 웹에서 받은 첨부 목록을 정규화한다. 확장 가능한 레코드 형태:
+  /// {kind, name, url?, path?, mime?} — kind 는 image/file 등(향후 종류 추가),
+  /// url 은 인라인 표시/멀티모달용(data URL), path 는 `.collabo/attach` 사본 경로.
   List<Map<String, Object?>> _parseAttachments(Object? raw) {
     if (raw is! List) return const [];
     final out = <Map<String, Object?>>[];
     for (final e in raw) {
       if (e is Map) {
-        final url = e['url'];
-        if (url is String && url.isNotEmpty) {
-          out.add({'url': url, 'name': (e['name'] as String?) ?? ''});
+        final url = e['url'], path = e['path'];
+        final hasUrl = url is String && url.isNotEmpty;
+        final hasPath = path is String && path.isNotEmpty;
+        if (hasUrl || hasPath) {
+          out.add({
+            'kind': (e['kind'] as String?) ?? 'image',
+            'name': (e['name'] as String?) ?? '',
+            if (hasUrl) 'url': url,
+            if (hasPath) 'path': path,
+            if (e['mime'] is String && (e['mime'] as String).isNotEmpty)
+              'mime': e['mime'],
+          });
         }
       }
     }
@@ -352,9 +728,32 @@ class WebBridge {
   /// 현재 대기 큐 상태를 웹으로 전달한다(상태 풍선 칩/모달 갱신용).
   void _emitQueue() => _post({'type': 'chat.queue', 'items': _queue});
 
+  /// 중지 완료를 웹에 **정확히 한 번** 알린다.
+  ///
+  /// 웹은 중지를 누른 순간 버튼을 "중지 중…" 으로 바꾸고 비활성화한다 — 이 통지가
+  /// 안 가면 그 상태로 영영 멈춘다. 중지 경로가 여러 갈래(스트림 abort, 루프 조기
+  /// 반환, 중지할 게 없는 경우)라 여기 한 곳으로 모은다.
+  void _postStopped() {
+    if (_stoppedPosted) return;
+    _stoppedPosted = true;
+    _post({'type': 'chat.stopped'});
+    _clearStatus();
+  }
+
+  /// 이번 중지 사이클에서 `chat.stopped` 를 이미 보냈는지(새 생성 시작 시 초기화).
+  bool _stoppedPosted = false;
+
   /// 진행 중인 생성을 강제로 중지하고, 대기 큐의 모든 요청을 취소한다.
   void _handleChatStop() {
-    if (!_generating && _queue.isEmpty && _streamAborters.isEmpty) return;
+    // 누를 때마다 한 번은 응답한다 — 두 번째 누름이 중복 가드에 막히면 그때부터
+    // 다시 "중지 중…" 에 갇힌다. (한 번의 누름 안에서만 중복을 막는다.)
+    _stoppedPosted = false;
+    // 중지할 게 없어도 **응답은 반드시 보낸다.** 오류로 이미 끝난 뒤에 누르면
+    // 예전에는 여기서 조용히 반환해, 웹의 "중지 중…" 이 영원히 남았다.
+    if (!_generating && _queue.isEmpty && _streamAborters.isEmpty) {
+      _postStopped();
+      return;
+    }
     _cancelRequested = true;
     // 대기 중인 요청 모두 취소.
     _queue.clear();
@@ -363,6 +762,13 @@ class WebBridge {
     for (final abort in _streamAborters.toList()) {
       abort();
     }
+    // 실행 중인 도구도 함께 끊는다. 이게 없으면 도구가 끝날 때까지 중지가 지연된다
+    // (예: `run_wait` 의 30초 대기). 백그라운드 명령 자체는 detached 라 살아 있고,
+    // 사용자가 프로세스 뷰어에서 따로 관리한다.
+    for (final proc in _toolProcesses.toList()) {
+      proc.kill();
+    }
+    _toolProcesses.clear();
   }
 
   /// 큐에서 대기 메시지를 취소(제거)한다.
@@ -386,13 +792,14 @@ class WebBridge {
     _post({'type': 'chat.truncated', 'messageId': messageId});
   }
 
-  /// 메시지 한 건 삭제(그 메시지만 제거, 앞뒤는 유지).
+  /// 메시지 삭제: 그 메시지가 속한 턴 구간(도구 호출/결과, 중간 assistant 행,
+  /// 서브에이전트 기록 포함)을 함께 지운다. 앞뒤 다른 턴은 유지.
   Future<void> _handleDeleteMessage(int? messageId) async {
     final store = _store, convId = _convId;
     if (messageId == null || store == null || convId == null || _generating) {
       return;
     }
-    await store.deleteMessage(messageId);
+    await store.deleteTurn(convId, messageId);
     await _pushHistory();
   }
 
@@ -512,14 +919,24 @@ class WebBridge {
   static const int _maxAttempts = 3;
   static const int _maxSubIterations = 8;
 
-  /// 요청 후 첫 응답(첫 토큰/리즈닝)이 이 시간 안에 안 오면 멈춘 것으로 보고 재시작한다.
-  /// 추론(reasoning) 모델은 첫 토큰 전에 서버측에서 한참 생각하느라 무출력일 수 있어
-  /// 넉넉히 둔다(짧으면 정상 동작 중에도 타임아웃됨). 진짜 멈춤은 사용자가 중지로 끊는다.
-  static const Duration _firstResponseTimeout = Duration(seconds: 120);
+  // 요청 후 **첫 응답**(첫 토큰/리즈닝/도구호출)까지의 대기 시간은 **연결(프리셋)별
+  // 설정**이다 — `LlmConfig.firstResponseTimeout`(설정 → 모델, 0 이면 제한 없음).
+  //
+  // 아직 아무것도 오지 않은 상태만 대상으로 한다 — 연결이 죽었는지 앱이 알 방법이
+  // 이것뿐이기 때문이다. 다만 로컬 모델은 컨텍스트가 크면 첫 토큰 전 **프리필**에만
+  // 수십 분이 걸릴 수 있고, 그동안 서버는 멀쩡히 일하는 중인데도 소켓에는 아무것도
+  // 오지 않는다 — 그래서 고정값을 두지 않고 서버에 맞춰 늘리거나 끄게 했다.
+  // 이 대기 중에도 사용자는 언제든 중지할 수 있다.
 
-  /// 스트리밍 도중 이벤트 사이 간격이 이 시간을 넘으면 멈춘 것으로 보고 끊는다.
-  /// 리즈닝 토큰도 이 타이머를 재무장하므로, 리즈닝이 흐르는 동안에는 끊기지 않는다.
-  static const Duration _llmIdleTimeout = Duration(seconds: 90);
+  // 스트리밍 **도중**에는 타임아웃을 걸지 않는다.
+  //
+  // 예전에는 이벤트 간격 90초를 넘기면 끊었다(모델이 같은 문자를 무한히 뱉는 상태를
+  // 빨리 벗어나려는 장치였다). 그런데 정상적으로 오래 걸리는 작업 — 큰 컨텍스트의
+  // 프리필, 긴 추론, 느린 로컬 모델 — 까지 같이 끊겨 **진행 중인 작업을 죽이는 쪽이
+  // 훨씬 큰 피해**였다. 토큰이 오고 있다면 그건 살아 있다는 뜻이므로 앱은 기다린다.
+  //
+  // 반복 출력에 빠진 경우는 **사용자가 직접 보고 판단**한다: 상태 풍선의 "토큰 보기"
+  // 로 지금 들어오는 스트림을 그대로 볼 수 있고, 중지 버튼은 항상 열려 있다.
 
   /// 네이티브로 처리하는 도구(서브 LLM 분기). 파이썬으로 보내지 않는다.
   static const Set<String> _nativeToolNames = {'run_subagent', 'verify_work'};
@@ -569,15 +986,44 @@ class WebBridge {
     },
   ];
 
-  static const String _subAgentSystem =
-      'You are a focused sub-agent in Collabo IDE. Complete the given task using '
-      'the available tools (file read/search/edit, commands). Work only within '
-      'the project. Return a concise result of what you did or found.';
+  // 서브에이전트는 **사용자 편집 시스템 프롬프트를 받지 않는다**(자기 컨텍스트로
+  // 분기하며 아래 문구만 system 으로 받는다). 실제 파일 작업은 여기서 일어나므로,
+  // 임시 스크립트 규칙도 반드시 이 문구에 있어야 한다.
+  /// 서브에이전트에게 "네가 가진 도구" 를 **실제 목록으로** 알려 주는 문장.
+  ///
+  /// 예전에는 `(file read/search/edit, commands)` 라고 손으로 요약해 뒀는데,
+  /// 그게 사실상 능력 화이트리스트처럼 읽혀 **모듈을 더 붙여도 모델이 모르는** 문제가
+  /// 있었다(문서 도구를 두고도 파이썬 스크립트를 짜는 원인). 레지스트리에서 그대로
+  /// 뽑아 쓰면 도구가 늘거나 사용자가 추가해도 문구가 저절로 따라온다.
+  static String _toolInventory(ToolRegistry? registry) {
+    final names = registry?.toolNames ?? const <String>[];
+    if (names.isEmpty) {
+      return 'You have NO tools available right now — say so instead of '
+          'pretending to act.';
+    }
+    return 'These are ALL the tools you have: ${names.join(', ')}. '
+        'Read that list before deciding how to do something — if one of them '
+        'covers the job, use it instead of writing your own script.';
+  }
 
-  static const String _verifySystem =
-      'You are a verification sub-agent in Collabo IDE. Using the available '
-      'read/search tools, inspect the project and verify whether the described '
-      'work was completed correctly. Be concise. End with a clear verdict: '
+  static String _subAgentSystemFor(ToolRegistry? registry) =>
+      'You are a focused sub-agent in Collabo IDE. Complete the given task using '
+      'your tools. Work only within the project. '
+      '${_toolInventory(registry)} '
+      'A purpose-built tool understands the format and its pitfalls, while a '
+      'hand-written script silently corrupts what it does not know about. '
+      'If no tool fits and you must write a throwaway helper script, create it '
+      'under `$kAgentScratchDir` and run it from there — never scatter temporary '
+      'scripts in the project root. Files that belong to the user\'s project '
+      '(real source, tests, config they asked for) still go in their normal '
+      'place. Return a concise result of what you did or found.';
+
+  static String _verifySystemFor(ToolRegistry? registry) =>
+      'You are a verification sub-agent in Collabo IDE. Inspect the project and '
+      'verify whether the described work was completed correctly. '
+      '${_toolInventory(registry)} '
+      'If no tool fits and you need a throwaway check script, put it under '
+      '`$kAgentScratchDir`. Be concise. End with a clear verdict: '
       'PASS or FAIL, with brief reasons.';
 
   /// 트리아지(사전 평가) 서브에이전트: 사용자의 마지막 요청만 보고, 서브에이전트가
@@ -606,6 +1052,10 @@ class WebBridge {
     }
     _generating = true;
     _cancelRequested = false; // 새 생성 시작 — 이전 중지 플래그 초기화
+    _stoppedPosted = false;
+    // 직전 턴의 백그라운드 요약이 아직 돌고 있으면 여기서만 기다린다
+    // (요약은 아래 _buildContextMessages 에서 처음 쓰인다).
+    await _awaitTurnSummaries();
     _status('Preparing…');
 
     final registry = await _buildToolRegistry();
@@ -619,30 +1069,51 @@ class WebBridge {
     // 사전 평가: 서브에이전트가 마지막 요청을 보고 "자기 차례가 있는지" 한 줄 피드백.
     // 이 한 줄을 메인 컨텍스트에 넣어 메인 에이전트가 그걸 참고해 답을 쓰게 한다.
     final triage = await _triageRequest(store, convId, cfg);
+    // 턴 요약에 "무엇을 요청받았는지"를 함께 넘기려고 한 번만 읽어 둔다.
+    final userRequest = _clip(await _lastUserRequest(store, convId), 600);
+
+    // 이 생성이 시작되기 **전** 마지막 메시지(보통 방금 저장한 사용자 메시지).
+    // 재시도/중지 정리는 이 경계 뒤를 지운다 — 시도 중 어디서 실패하든(첫 호출이
+    // 곧바로 던져도) 이번 요청이 만든 기록만 정확히 걷힌다.
+    // 목록은 created_at 순이라 마지막 항목이 곧 최대 id 라는 보장이 없다(시계 역전).
+    // 삭제 기준은 id 이므로 최대 id 를 직접 고른다.
+    var maxId = 0;
+    for (final m in await store.messages(convId)) {
+      if (m.id > maxId) maxId = m.id;
+    }
+    final baselineId = maxId == 0 ? null : maxId;
 
     try {
       for (var attempt = 0; attempt < _maxAttempts; attempt++) {
         if (_cancelRequested) return; // 중지 요청됨 — 더 진행하지 않음
-        int? firstId; // 이번 시도에 생성한 첫 DB 메시지(오류 정리용)
         try {
-          final messages = await _buildContextMessages(store, convId);
-          if (triage != null) {
-            messages.add({
-              'role': 'system',
-              'content': 'Sub-agent pre-assessment of the latest request: '
-                  '$triage\nUse this when deciding whether to delegate via '
-                  '`run_subagent`.',
+          final messages = await _buildContextMessages(store, convId,
+              preAssessment: triage);
+          // 보낼 사용자 메시지가 하나도 없으면 부르지 않는다. 시작점을 만든 직후
+          // "다시 시도" 를 누르면 이 상태가 된다(시작점 이후가 비어 있다) — 지시만
+          // 있고 대화가 없는 요청이라, 로컬 서버는 템플릿 단계에서 그대로 실패한다.
+          if (!messages.any((m) => m['role'] == 'user')) {
+            _post({
+              'type': 'chat.notice',
+              'text': 'Nothing to send yet — write a message first.',
             });
+            return;
           }
           var converged = false;
+          // 이 턴에서 쓴 도구 이름 — 요약 호출에 함께 넘긴다(무엇을 했는지 근거).
+          final toolsUsed = <String>[];
           for (var iter = 0; iter < _maxToolIterations; iter++) {
+            if (_cancelRequested) throw const _GenerationStopped();
             // 실제 대기/수신 상태는 _runModelTurn 이 직접 풍선에 표시한다.
             final turn = await _runModelTurn(store, convId, cfg, messages, tools);
-            firstId ??= turn.id;
             if (turn.toolCalls.isEmpty) {
               converged = true;
+              // 답변은 이미 확정됐다 — 요약은 기다리지 않고 뒤에서 만든다.
+              _scheduleTurnSummary(
+                  store, turn.id, turn.content, toolsUsed, userRequest);
               break;
             }
+            toolsUsed.addAll(turn.toolCalls.map((c) => c.name));
             messages.add({
               'role': 'assistant',
               'content': turn.content.isEmpty ? null : turn.content,
@@ -656,8 +1127,10 @@ class WebBridge {
               ],
             });
             for (final c in turn.toolCalls) {
-              await _runToolCall(store, convId, cfg, registry, workspace,
-                  messages, attempt, iter, c);
+              // 중지를 눌렀으면 남은 도구 호출은 시작하지 않는다(빠른 중지).
+              if (_cancelRequested) throw const _GenerationStopped();
+              await _runToolCall(store, convId, registry, workspace, messages,
+                  attempt, iter, c, turn.id);
             }
           }
           // 비수렴(반복 한도 초과)이어도 수행한 작업은 그대로 두고 종료한다.
@@ -669,12 +1142,12 @@ class WebBridge {
         } catch (e) {
           // 사용자가 중지를 누른 경우: 재시도하지 않고 이번 시도의 부분 기록만 정리.
           if (e is _GenerationStopped || _cancelRequested) {
-            await _cleanupAttempt(store, convId, firstId);
-            _post({'type': 'chat.stopped'});
+            await _cleanupAttempt(store, convId, baselineId);
+            _postStopped();
             return;
           }
           // 통신/타임아웃 등 오류는 재시도(이미 추가된 이번 시도 기록은 정리).
-          await _cleanupAttempt(store, convId, firstId);
+          await _cleanupAttempt(store, convId, baselineId);
           if (attempt == _maxAttempts - 1) {
             _post({'type': 'chat.error', 'message': '$e'});
             return;
@@ -685,7 +1158,14 @@ class WebBridge {
       }
     } finally {
       _generating = false;
-      _clearStatus();
+      // 중지로 끝났다면 어느 경로로 빠져나왔든 여기서 통지가 보장된다.
+      // (예: 시도 루프 맨 위의 `if (_cancelRequested) return;` — 예전에는 이 길로
+      //  나가면 `chat.stopped` 가 없어 웹이 "중지 중…" 에 갇혔다.)
+      if (_cancelRequested) {
+        _postStopped();
+      } else {
+        _clearStatus();
+      }
     }
   }
 
@@ -734,12 +1214,13 @@ class WebBridge {
   ///
   /// **시작점(체크포인트)** 이 있으면, 마지막 체크포인트 **이후** 메시지만 LLM 에
   /// 넣고, 그 이전 내용은 체크포인트에 저장된 **압축 요약**(있으면)으로 대체한다.
+  /// 요약은 시스템 지시가 아니라 **지난 대화의 내용**이므로 `assistant` 메시지로
+  /// 넣는다. 압축본이 없는 시작점이면 아무것도 더하지 않는다 — 시작점 이후만
+  /// 남는 것이 곧 그 의미다.
   Future<List<Map<String, Object?>>> _buildContextMessages(
-      ConversationStore store, int convId) async {
-    final messages = <Map<String, Object?>>[];
+      ConversationStore store, int convId,
+      {String? preAssessment}) async {
     final prompt = _workspace.systemPrompt.trim();
-    if (prompt.isNotEmpty) messages.add({'role': 'system', 'content': prompt});
-
     final all = await store.messages(convId);
     // 마지막 시작점(체크포인트)을 찾는다.
     var startIdx = 0;
@@ -752,21 +1233,62 @@ class WebBridge {
         break;
       }
     }
-    if (summary != null) {
-      messages.add({
-        'role': 'system',
-        'content':
-            'Summary of the earlier conversation (context before the current '
-                'starting point):\n$summary',
-      });
-    }
+    // 프로젝트 상태(폴더 구조 + 이미 바꾼 파일) — 매 턴 새로 만들어 최신을 유지한다.
+    final state = await _projectStateContext();
+
+    final slice = all.sublist(startIdx);
+    // 대화 **중간**에 있는 system 기록은 머리로 끌어올린다. 우리가 만드는 건
+    // 시작점(위에서 걸러짐)뿐이지만, **가져오기(import)** 로 들어온 대화에는 다른
+    // 도구가 남긴 system 이 섞여 있을 수 있다 — 중간에 두면 로컬 템플릿이 거부한다.
+    final strays = [
+      for (final m in slice)
+        if (m.role == MessageRole.system && m.pipeline != 'checkpoint')
+          m.content.trim(),
+    ];
+
+    final messages = <Map<String, Object?>>[
+      ...systemHead([
+        prompt,
+        // 마커 설명은 **항상** 들어가야 한다. 기본 프롬프트에도 들어 있지만, 사용자가
+        // 프롬프트를 편집해 저장하면 그 문단이 통째로 사라질 수 있다 — 그러면
+        // 컨텍스트에 남은 `[delegated]` 줄이 정체불명의 텍스트가 된다.
+        if (!prompt.contains(kDelegationMarker)) kDelegationMarkerNote,
+        state,
+        // 사전 평가(트리아지)도 여기 합친다. 예전에는 **맨 뒤**에 system 으로 붙였는데,
+        // 그러면 배열이 system 으로 끝나 대부분의 템플릿이 생성 프롬프트를 못 붙인다.
+        if (preAssessment != null)
+          'Sub-agent pre-assessment of the latest request: $preAssessment\n'
+              'Use this when deciding whether to delegate via `run_subagent`.',
+        ...strays,
+      ]),
+      // 압축본은 **지난 대화의 요약**이다 — 지시가 아니므로 assistant 로 넣는다.
+      // (압축 없이 만든 시작점은 summary 가 비어 있어 아무것도 들어가지 않는다.)
+      if (summary != null)
+        {
+          'role': 'assistant',
+          'content': 'Summary of our earlier conversation (before the current '
+              'starting point):\n$summary',
+        },
+    ];
+
     final multimodal = _workspace.configForConversation().multimodal;
-    for (final m in all.sublist(startIdx)) {
+    // 직전 1턴(가장 최근 어시스턴트 메시지)은 원문 그대로 두어 바로 앞 대화의
+    // 정확성을 지키고, 그보다 이전의 어시스턴트 턴만 요약으로 대체한다.
+    var lastAssistantIdx = -1;
+    for (var i = slice.length - 1; i >= 0; i--) {
+      if (slice[i].role == MessageRole.assistant) {
+        lastAssistantIdx = i;
+        break;
+      }
+    }
+    for (var idx = 0; idx < slice.length; idx++) {
+      final m = slice[idx];
       if (m.pipeline == 'checkpoint') continue;
       final role = switch (m.role) {
         MessageRole.user => 'user',
         MessageRole.assistant => 'assistant',
-        MessageRole.system => 'system',
+        // system 은 위(strays)에서 머리로 올렸다 — 대화 중간에 다시 넣지 않는다.
+        MessageRole.system => null,
         _ => null,
       };
       if (role == null) continue;
@@ -784,8 +1306,24 @@ class WebBridge {
             },
         ];
         messages.add({'role': role, 'content': parts});
-      } else if (m.content.isNotEmpty) {
-        messages.add({'role': role, 'content': m.content});
+      } else {
+        // 어시스턴트가 이 턴 요약을 달아 뒀으면, 컨텍스트에는 사용자용 본문 대신
+        // 요약을 넣어 재전송량을 줄인다(요약엔 이어가기에 필요한 핵심만 담김).
+        // 단, 직전 1턴(가장 최근 어시스턴트 메시지)은 원문을 그대로 유지한다.
+        final useSummary =
+            m.role == MessageRole.assistant && idx != lastAssistantIdx;
+        final turnSummary = useSummary ? _summaryFromMeta(m.metadata) : '';
+        var ctx =
+            turnSummary.isNotEmpty ? turnSummary : stripTurnSummary(m.content);
+        // 위임한 턴은 본문이 비어 컨텍스트에서 사라진다 — **위임했다는 사실**을
+        // 마커로 대신 남긴다(결과 원문은 넣지 않는다. 내용은 요약이 전달한다).
+        // 마커 형식은 시스템 프롬프트(kDelegationMarkerNote)에 설명돼 있다.
+        final delegations = _delegationsFromMeta(m.metadata);
+        if (delegations.isNotEmpty) {
+          final lines = delegations.join('\n');
+          ctx = ctx.isEmpty ? lines : '$ctx\n$lines';
+        }
+        if (ctx.isNotEmpty) messages.add({'role': role, 'content': ctx});
       }
     }
     return messages;
@@ -796,13 +1334,13 @@ class WebBridge {
   Future<void> _runToolCall(
     ConversationStore store,
     int convId,
-    LlmConfig cfg,
     ToolRegistry? registry,
     String? workspace,
     List<Map<String, Object?>> messages,
     int attempt,
     int iter,
     ToolCall c,
+    int? assistantMessageId,
   ) async {
     final tid = '${convId}_${attempt}_${iter}_${c.id}';
     _post({
@@ -825,23 +1363,47 @@ class WebBridge {
     String summary;
     String? diff;
     String? path;
+    // 호출 내역(네이티브 창)에 남길 기록. 결과 원문은 아래에서 채운다.
+    final logRec = toolCalls.start(
+      id: tid,
+      scope: _nativeToolNames.contains(c.name) ? 'delegate' : 'main',
+      name: c.name,
+      args: c.arguments,
+    );
     if (_nativeToolNames.contains(c.name)) {
       final verify = c.name == 'verify_work';
       _status(verify ? 'Sub-agent: verifying…' : 'Sub-agent: working…');
       final prompt = (argMap['prompt'] as String?) ?? '';
-      // 도구별로 지정된 모델 프리셋(없으면 기본)으로 서브에이전트를 돌린다.
+      // 도구별 지정 프리셋 → (없으면) 지금 이 프로젝트의 대화 모델 → 기본 프리셋.
       final subCfg = _workspace.configForTool(c.name);
-      final text = await _runSubAgent(
-          store, convId, subCfg, registry, workspace, prompt, verify, c.name, tid);
+      final text = await _runSubAgent(store, convId, subCfg, registry,
+          workspace, prompt, verify, c.name, tid, assistantMessageId);
       ok = true;
-      resultStr = jsonEncode({'ok': true, 'result': text});
+      // **위임 결과임을 표시한다.** 다른 도구 결과와 모양이 같으면 작은 모델이
+      // "내가 직접 한 작업" 으로 오해하기 쉽다. 시스템 프롬프트가 이 키를 설명한다.
+      resultStr = jsonEncode({
+        'ok': true,
+        'delegated_to': verify ? 'verification sub-agent' : 'sub-agent',
+        'result': text,
+      });
       summary = _snippet(text);
+      // 다음 턴을 위해 **위임했다는 사실만** 남긴다(결과 원문은 넣지 않는다 —
+      // 길어서 컨텍스트를 갉아먹는다. 내용은 턴 요약이 전달한다).
+      if (assistantMessageId != null) {
+        await store.addMessageDelegation(
+          assistantMessageId,
+          tool: c.name,
+          task: _clip(prompt, 160),
+        );
+      }
     } else {
       _status('Tool: ${c.name}…');
       final res = registry == null
           ? const ToolCallResult(ok: false, error: 'No tools available')
           : await registry.call(c.name, argMap,
               workspace: workspace, workingDirectory: workspace);
+      // 파일을 바꾼 도구면 이력에 남긴다(다음 턴 상태 요약의 재료).
+      await _recordFileChange(c.name, argMap, res);
       ok = res.ok;
       resultStr = _toolResultString(res);
       summary = _toolSummary(res);
@@ -853,6 +1415,7 @@ class WebBridge {
       }
     }
 
+    toolCalls.finish(logRec, ok: ok, result: resultStr, summary: summary);
     await store.addMessage(
       conversationId: convId,
       role: MessageRole.tool,
@@ -887,14 +1450,47 @@ class WebBridge {
     bool verify,
     String toolName,
     String tid,
+    int? parentMessageId,
   ) async {
     if (prompt.trim().isEmpty) return '(empty prompt)';
     // 부모 도구 버블(tid)을 클릭하면 볼 수 있는 실시간 전사(transcript)용 식별자.
     final parentTid = tid;
     final subTools = registry?.openAiTools;
+    final procCtx = _runningProcessContext();
+    // 서브에이전트는 매번 빈 컨텍스트로 시작한다 — 이미 만들어 둔 파일을 다시
+    // 만들거나 같은 조사를 반복하지 않도록 프로젝트 상태를 함께 넣어 준다.
+    final stateCtx = await _projectStateContext();
+    // 최근 사용자 메시지의 첨부를 서브 컨텍스트에 동반한다:
+    // 경로 목록(모든 종류 — 도구로 읽기 가능) + 멀티모달이면 이미지 인라인.
+    final atts = await _latestUserAttachments(store, parentConvId);
+    final attCtx = _attachmentContext(atts);
+    final imageParts = <Map<String, Object?>>[
+      if (cfg.multimodal)
+        for (final a in atts)
+          if (a['url'] is String && (a['url'] as String).startsWith('data:image'))
+            {
+              'type': 'image_url',
+              'image_url': {'url': a['url']},
+            },
+    ];
     final subMessages = <Map<String, Object?>>[
-      {'role': 'system', 'content': verify ? _verifySystem : _subAgentSystem},
-      {'role': 'user', 'content': prompt},
+      // 여기도 system 을 여러 개 쌓지 않는다(§systemHead — 로컬 템플릿이 거부한다).
+      ...systemHead([
+        verify ? _verifySystemFor(registry) : _subAgentSystemFor(registry),
+        stateCtx,
+        procCtx,
+        attCtx,
+      ]),
+      if (imageParts.isEmpty)
+        {'role': 'user', 'content': prompt}
+      else
+        {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': prompt},
+            ...imageParts,
+          ],
+        },
     ];
 
     var finalText = '';
@@ -935,6 +1531,7 @@ class WebBridge {
 
     try {
       for (var iter = 0; iter < _maxSubIterations; iter++) {
+        if (_cancelRequested) throw const _GenerationStopped();
         if (iter > 0) {
           _post({'type': 'chat.sub', 'tid': parentTid, 'turn': true});
         }
@@ -964,7 +1561,17 @@ class WebBridge {
           ],
         });
         for (final c in turn.toolCalls) {
+          // 중지를 눌렀으면 남은 도구 호출은 시작하지 않는다(빠른 중지).
+          if (_cancelRequested) throw const _GenerationStopped();
           final tid = 'sub_${parentConvId}_${sub++}_${c.id}';
+          // 호출 내역(네이티브 창)에도 남긴다. 실제 파일 작업 대부분이 여기라
+          // 결과 원문을 볼 수 있어야 하는 곳도 사실상 여기다.
+          final logRec = toolCalls.start(
+            id: tid,
+            scope: verify ? 'verify' : 'subagent',
+            name: c.name,
+            args: c.arguments,
+          );
           _post({
             'type': 'chat.activity',
             'tid': tid,
@@ -983,10 +1590,15 @@ class WebBridge {
               ? const ToolCallResult(ok: false, error: 'No tools available')
               : await registry.call(c.name, argMap,
                   workspace: workspace, workingDirectory: workspace);
+          // 실제 파일 작업은 대부분 여기(서브에이전트)서 일어난다 — 반드시 기록.
+          await _recordFileChange(c.name, argMap, res);
+          final subResultStr = _toolResultString(res);
+          toolCalls.finish(logRec,
+              ok: res.ok, result: subResultStr, summary: _toolSummary(res));
           subMessages.add({
             'role': 'tool',
             'tool_call_id': c.id,
-            'content': _toolResultString(res),
+            'content': subResultStr,
           });
           _post({
             'type': 'chat.activity',
@@ -1007,16 +1619,23 @@ class WebBridge {
           });
         }
       }
+    } on _GenerationStopped {
+      // 중지는 "서브에이전트 실패" 가 아니다. 여기서 문자열로 바꿔 돌려주면 부모
+      // 루프가 정상 결과로 알고 **남은 도구 호출을 계속 실행**한다 → 중지가 늦어진다.
+      heartbeat.cancel();
+      rethrow;
     } catch (e) {
       return 'sub-agent error: $e';
     } finally {
       heartbeat.cancel();
     }
 
-    // 하위 컨텍스트로 기록(메인 대화에는 미표시).
+    // 하위 컨텍스트로 기록(메인 대화에는 미표시). 분기 원점 메시지(parent_message_id)
+    // 를 같이 남겨, 그 메시지가 삭제되면 이 기록도 함께 정리되게 한다.
     try {
       final subConvId = await store.createSubConversation(
         parentConversationId: parentConvId,
+        parentMessageId: parentMessageId,
         title: verify ? 'verify' : 'subagent',
       );
       await store.addMessage(
@@ -1038,6 +1657,294 @@ class WebBridge {
     return finalText.isEmpty ? '(no result)' : finalText;
   }
 
+  // ===== 턴 요약 (답변 확정 후 백그라운드 별도 호출) =====
+
+  static const String _turnSummarySystem =
+      'You compress ONE turn of an AI coding session into a compact note that a '
+      'later turn will use INSTEAD of the full reply. Keep only what is needed '
+      'to continue: key decisions, files/commands changed, important results, '
+      'and open threads. Output ONLY the note — no preamble, no headings, a few '
+      'sentences at most.';
+
+  /// 요약을 만들 만한 턴인지. 도구를 쓰지 않았고 답변도 짧으면 원문이 이미
+  /// 충분히 작으므로 호출을 아낀다.
+  static const int _summarizeMinChars = 400;
+
+  /// 진행 중인 백그라운드 턴 요약. 다음 턴 컨텍스트를 만들기 전에 기다린다.
+  final List<Future<void>> _pendingSummaries = [];
+
+  /// 사용자가 "건너뛰기" 를 누르면 완료되어 대기를 끊는다.
+  Completer<void>? _summarySkip;
+
+  /// 답변을 확정한 뒤 턴 요약을 **백그라운드로** 만든다(사용자 대기 없음).
+  ///
+  /// 요약은 이 턴이 아니라 **다음 턴 컨텍스트**에서 처음 쓰이므로 늦어도 된다.
+  /// 응답 스트림에 섞지 않으니 본문이 오염될 수 없다(예전 `<turn_summary>` 마커
+  /// 방식의 근본 문제였다).
+  void _scheduleTurnSummary(ConversationStore store, int messageId,
+      String answer, List<String> toolsUsed, String userRequest) {
+    if (toolsUsed.isEmpty && answer.length < _summarizeMinChars) return;
+    if (answer.trim().isEmpty && toolsUsed.isEmpty) return;
+    // Completer 로 등록해 두고 작업이 끝나면 스스로 빠진다(자기 Future 를 참조하는
+    // late 변수보다 초기화 순서가 안전하다).
+    final done = Completer<void>();
+    _pendingSummaries.add(done.future);
+    unawaited(() async {
+      try {
+        final buf = StringBuffer();
+        if (userRequest.isNotEmpty) buf.writeln('[request] $userRequest');
+        if (toolsUsed.isNotEmpty) {
+          buf.writeln('[tools used] ${toolsUsed.join(', ')}');
+        }
+        buf.writeln('[reply]\n$answer');
+        final turn = await _runSubModelTurn(
+          _workspace.configForConversation(),
+          [
+            {'role': 'system', 'content': _turnSummarySystem},
+            {'role': 'user', 'content': buf.toString()},
+          ],
+          null,
+        );
+        final text = turn.content.trim();
+        // 메시지가 이미 지워졌으면(사용자가 그 위를 수정) store 가 무시한다.
+        if (text.isNotEmpty) await store.updateMessageSummary(messageId, text);
+      } catch (_) {
+        // 요약 실패는 무시한다 — 다음 턴은 원문을 컨텍스트로 쓰면 된다.
+      } finally {
+        _pendingSummaries.remove(done.future);
+        if (!done.isCompleted) done.complete();
+      }
+    }());
+  }
+
+  /// 진행 중인 턴 요약이 있으면 끝날 때까지 기다린다.
+  ///
+  /// 답변 직후 사용자가 바로 다음 요청을 보내면(특히 위 메시지를 고쳐 다시 진행)
+  /// 요약이 아직 안 끝났을 수 있다. 그때만 상태 풍선에 "요약 중"을 띄우고,
+  /// 사용자가 **건너뛰기**로 대기를 끊을 수 있게 한다(요약 자체는 계속 돌아
+  /// 다음다음 턴에서 쓰인다).
+  Future<void> _awaitTurnSummaries() async {
+    if (_pendingSummaries.isEmpty) return;
+    final skip = Completer<void>();
+    _summarySkip = skip;
+    _status('Summarizing previous turn…', skippable: true);
+    try {
+      await Future.any([
+        Future.wait(List<Future<void>>.from(_pendingSummaries)),
+        skip.future,
+      ]);
+    } catch (_) {
+      // 개별 요약 실패는 이미 내부에서 삼킨다.
+    } finally {
+      _summarySkip = null;
+    }
+  }
+
+  /// 웹의 "건너뛰기" — 요약 대기를 즉시 끝낸다.
+  void _handleSummarySkip() {
+    final skip = _summarySkip;
+    if (skip != null && !skip.isCompleted) skip.complete();
+  }
+
+  /// 가장 최근 사용자 메시지 본문(없으면 '').
+  Future<String> _lastUserRequest(ConversationStore store, int convId) async {
+    for (final m in (await store.messages(convId)).reversed) {
+      if (m.role == MessageRole.user && m.content.trim().isNotEmpty) {
+        return m.content;
+      }
+    }
+    return '';
+  }
+
+  /// 앞에서 [max] 자까지만 남긴다(요약 프롬프트 입력 길이 제한).
+  static String _clip(String s, int max) =>
+      s.length <= max ? s : '${s.substring(0, max)}…';
+
+  // ===== 프로젝트 상태 요약 (폴더 구조 + 파일 변경 이력) =====
+
+  /// 파일을 바꾸는 기본 도구 → 이력에 남길 동작 이름.
+  /// 여기 없는 도구(읽기/검색/명령)는 기록하지 않는다.
+  static const Map<String, String> _mutatingTools = {
+    'create_file': 'created',
+    'create_directory': 'created',
+    'write_file': 'modified',
+    'edit_file': 'modified',
+    'replace_lines': 'modified',
+    'delete_path': 'deleted',
+    'move_path': 'moved',
+  };
+
+  /// 상태 요약 전체 길이 상한(문자). 넘으면 잘라서 붙인다.
+  static const int _maxStateChars = 1800;
+
+  /// 상태 요약에 넣을 최근 변경 파일 수.
+  static const int _maxStateChanges = 25;
+
+  /// 폴더 구조 스캔 캐시 TTL. 변경 이력은 DB 에서 매번 새로 읽고(싸다),
+  /// 디스크를 걷는 구조 스캔만 잠깐 재사용한다(한 턴에 서브에이전트가 여러 번
+  /// 호출돼도 같은 스캔을 반복하지 않게).
+  static const Duration _outlineTtl = Duration(seconds: 20);
+
+  List<String>? _outlineCache;
+  DateTime? _outlineAt;
+
+  /// 도구 실행 결과에서 바뀐 경로를 뽑아 대화 DB 에 기록한다.
+  ///
+  /// 도구를 거쳐야만 파일이 바뀌므로(시스템 프롬프트 규칙) 이 지점이 가장 정확하다.
+  /// 기록 실패가 대화를 막지 않도록 예외는 삼킨다.
+  Future<void> _recordFileChange(
+      String toolName, Map<String, Object?> args, ToolCallResult res) async {
+    final action = _mutatingTools[toolName];
+    if (action == null || !res.ok) return;
+    final store = _store;
+    if (store == null) return;
+    final r = res.result is Map
+        ? (res.result as Map).cast<String, Object?>()
+        : const <String, Object?>{};
+    // move_path 는 dst/src, 나머지는 path. 결과에 없으면 인자에서 찾는다.
+    final raw = (r['dst'] ?? r['path'] ?? args['dst'] ?? args['path']);
+    if (raw is! String || raw.isEmpty) return;
+    try {
+      await store.recordFileChange(
+          path: _relPath(raw), action: action, tool: toolName);
+      if (toolName == 'move_path') {
+        // 원본 경로는 사라졌다는 사실도 남긴다.
+        final src = (r['src'] ?? args['src']);
+        if (src is String && src.isNotEmpty) {
+          await store.recordFileChange(
+              path: _relPath(src), action: 'moved', tool: toolName);
+        }
+      }
+    } catch (_) {
+      // 이력은 부가 정보다 — 실패해도 작업 자체는 계속한다.
+    }
+  }
+
+  /// 프로젝트 루트 기준 상대 경로(밖이거나 실패하면 원래 경로).
+  String _relPath(String path) {
+    final root = _workspace.projectPath;
+    if (root == null || root.isEmpty) return path;
+    try {
+      if (!p.isWithin(root, path)) return path;
+      // 윈도우 구분자는 '/' 로 통일 — 같은 파일이 두 행으로 갈리지 않게.
+      return p.relative(path, from: root).replaceAll('\\', '/');
+    } catch (_) {
+      return path;
+    }
+  }
+
+  /// 에이전트에 주입할 프로젝트 상태 요약(끔/프로젝트 없음이면 null).
+  ///
+  /// 이미 만들어 둔 파일을 다시 만들거나 같은 조사를 반복하지 않도록,
+  /// **현재 폴더 구조 + 이 프로젝트에서 도구가 바꾼 파일 목록**을 알려 준다.
+  /// 길이는 [_maxStateChars] 로 제한한다.
+  Future<String?> _projectStateContext() async {
+    if (!_workspace.projectState) return null;
+    final root = _workspace.projectPath;
+    if (root == null || root.isEmpty) return null;
+
+    final buf = StringBuffer(
+      'Current project state (auto-generated; use it to avoid redoing work '
+      'that is already done).\n',
+    );
+
+    // 1) 폴더 구조 — 디스크를 직접 보므로 IDE 밖 변경도 반영된다(짧은 TTL 캐시).
+    final now = DateTime.now();
+    if (_outlineCache == null ||
+        _outlineAt == null ||
+        now.difference(_outlineAt!) > _outlineTtl) {
+      try {
+        _outlineCache = await _fs.outline(root);
+        _outlineAt = now;
+      } catch (_) {
+        _outlineCache = const [];
+        _outlineAt = now;
+      }
+    }
+    final outline = _outlineCache ?? const <String>[];
+    if (outline.isNotEmpty) {
+      buf.writeln('\n[Folders]');
+      for (final line in outline) {
+        buf.writeln(line);
+      }
+    }
+
+    // 2) 이 프로젝트에서 도구가 바꾼 파일(대화 DB 기록 — 정확).
+    final store = _store;
+    if (store != null) {
+      List<FileChange> changes = const [];
+      try {
+        changes = await store.recentFileChanges(limit: _maxStateChanges);
+      } catch (_) {}
+      if (changes.isNotEmpty) {
+        buf.writeln('\n[Files already changed by tools in this project]');
+        for (final c in changes) {
+          final n = c.edits > 1 ? ' x${c.edits}' : '';
+          buf.writeln('${c.action}: ${c.path}$n');
+        }
+        buf.writeln(
+          'Do NOT recreate or re-investigate these from scratch — read the '
+          'current file if you need its contents.',
+        );
+      }
+    }
+
+    var text = buf.toString().trimRight();
+    if (text.length > _maxStateChars) {
+      text = '${text.substring(0, _maxStateChars)}\n… (state truncated)';
+    }
+    return text;
+  }
+
+  /// 부모 대화에서 **가장 최근 사용자 메시지**의 첨부 목록을 꺼낸다.
+  /// (현재 작업의 근거가 되는 첨부만 동반 — 과거 턴의 첨부는 제외.)
+  Future<List<Map<String, Object?>>> _latestUserAttachments(
+      ConversationStore store, int convId) async {
+    for (final m in (await store.messages(convId)).reversed) {
+      if (m.role != MessageRole.user) continue;
+      return _attachmentsFromMeta(m.metadata);
+    }
+    return const [];
+  }
+
+  /// 첨부 목록을 서브에이전트용 컨텍스트 문구로 만든다(없으면 null).
+  /// 종류(kind)에 무관하게 경로를 알려 도구로 읽게 한다 — 이미지 외 형식도
+  /// 같은 레코드로 확장된다.
+  String? _attachmentContext(List<Map<String, Object?>> atts) {
+    if (atts.isEmpty) return null;
+    final lines = atts.map((a) {
+      final kind = (a['kind'] as String?) ?? 'file';
+      final name = (a['name'] as String?) ?? '';
+      final path = (a['path'] as String?) ?? '';
+      return '- [$kind] $name${path.isEmpty ? ' (inline only)' : ' — $path'}';
+    }).join('\n');
+    return 'The user attached the following file(s) for this task. Saved '
+        'copies live inside the workspace (under .collabo/attach), so you can '
+        'read them with the file tools:\n$lines';
+  }
+
+  /// 현재 실행 중인 백그라운드 명령 목록을 서브에이전트에게 줄 컨텍스트
+  /// 문구로 만든다(없으면 null). 중복 실행을 막고, 기존 명령을 run_wait/
+  /// check_command 로 이어받을 수 있게 한다.
+  String? _runningProcessContext() {
+    final reg = _workspace.backgroundProcesses..refresh();
+    final running = reg.processes.where((e) => e.isRunning).toList();
+    if (running.isEmpty) return null;
+    final now = DateTime.now();
+    final lines = running.map((e) {
+      final dur = e.startedAt == null
+          ? ''
+          : ' (running ${now.difference(e.startedAt!).inSeconds}s)';
+      var cmd = e.command.replaceAll('\n', ' ');
+      if (cmd.length > 200) cmd = '${cmd.substring(0, 200)}…';
+      return '- id=${e.id}$dur: $cmd';
+    }).join('\n');
+    return 'Background commands currently RUNNING in this workspace:\n$lines\n'
+        'Use check_command or run_wait with an id to inspect/wait on one, and '
+        'stop_command only if you decide it must be terminated. Do NOT start a '
+        'duplicate command if a running one already covers the same task.';
+  }
+
   /// 서브 LLM 한 턴(조용히 스트리밍, 화면 표시 없음).
   /// 내용 + 도구 호출 + 이 호출의 총 토큰(usage)을 반환.
   Future<({String content, List<ToolCall> toolCalls, int totalTokens})>
@@ -1049,12 +1956,17 @@ class WebBridge {
     void Function(String text)? onDelta,
     void Function(String text)? onReasoning,
   }) async {
+    // 보내는 모양은 **가장 엄격한 템플릿 기준**을 지킨다(§message_shape.dart).
+    // 릴리스에서는 제거되므로, 규칙을 어기는 조합은 개발/테스트에서 잡힌다.
+    assert(chatShapeProblem(messages) == null,
+        'bad chat shape: ${chatShapeProblem(messages)}');
     final content = StringBuffer();
     var reasoningLen = 0;
     var toolCalls = const <ToolCall>[];
     var totalTokens = 0;
     await for (final ev in _withResponseTimeout(
-        _providerFor(cfg).streamChat(cfg: cfg, messages: messages, tools: tools))) {
+        _providerFor(cfg).streamChat(cfg: cfg, messages: messages, tools: tools),
+        cfg.firstResponseTimeout)) {
       switch (ev) {
         case LlmContent(:final text):
           content.write(text);
@@ -1077,7 +1989,9 @@ class WebBridge {
   // ===== 상태 풍선 / 재시도 (타임아웃·백오프) =====
 
   /// 진행 상태를 대화창 풍선으로 표시한다(빈 문자열이면 제거). 작업이 끝나면 지운다.
-  void _status(String text) => _post({'type': 'status', 'text': text});
+  /// [skippable] 이면 풍선에 "건너뛰기" 버튼이 붙는다(턴 요약 대기 전용).
+  void _status(String text, {bool skippable = false}) =>
+      _post({'type': 'status', 'text': text, 'skippable': skippable});
 
   /// 상태 풍선을 지운다. 단, 처리할 큐가 남아 있으면(곧 이어서 생성) 유지한다.
   void _clearStatus() {
@@ -1103,10 +2017,15 @@ class WebBridge {
     }
   }
 
-  /// LLM 스트림을 응답 타임아웃으로 감싼다. **첫 이벤트**는 [_firstResponseTimeout]
-  /// 안에, 이후 각 이벤트는 [_llmIdleTimeout] 안에 와야 한다. 초과하면
-  /// TimeoutException 을 던져(=재시작 신호) 멈춤을 빨리 감지한다.
-  Stream<T> _withResponseTimeout<T>(Stream<T> source) {
+  /// LLM 스트림을 **첫 응답 타임아웃**으로만 감싼다.
+  ///
+  /// [firstResponse] 안에 첫 이벤트가 오지 않으면 TimeoutException(=재시작 신호)을
+  /// 던진다. **일단 이벤트가 하나라도 오면 타이머를 아예 해제**하고, 그 뒤로는
+  /// 얼마나 오래 걸리든 기다린다 — 끝내는 건 서버의 스트림 종료나 사용자의 중지다.
+  ///
+  /// [firstResponse] 가 null 이면 **첫 응답도 시간으로 끊지 않는다**(프리셋 설정
+  /// 0초 = 제한 없음). 그때도 중지(abort) 등록은 그대로라 사용자는 끊을 수 있다.
+  Stream<T> _withResponseTimeout<T>(Stream<T> source, Duration? firstResponse) {
     late StreamController<T> ctrl;
     StreamSubscription<T>? sub;
     Timer? timer;
@@ -1129,6 +2048,12 @@ class WebBridge {
       });
     }
 
+    /// 첫 이벤트가 오면 타이머를 놓아 준다(이후로는 시간 제한 없음).
+    void disarm() {
+      timer?.cancel();
+      timer = null;
+    }
+
     ctrl = StreamController<T>(
       onListen: () {
         // 이미 중지 요청이 들어와 있으면 곧바로 끊는다.
@@ -1137,10 +2062,10 @@ class WebBridge {
           return;
         }
         _streamAborters.add(abort);
-        arm(_firstResponseTimeout);
+        if (firstResponse != null) arm(firstResponse);
         sub = source.listen(
           (e) {
-            arm(_llmIdleTimeout); // 첫 이벤트 후엔 idle 기준으로 전환/리셋
+            disarm(); // 응답이 시작됐다 — 이후에는 시간으로 끊지 않는다
             ctrl.add(e);
           },
           onError: (Object e, StackTrace st) {
@@ -1188,9 +2113,20 @@ class WebBridge {
   }
 
   /// 실패한 시도에서 추가된 메시지를 지우고 화면을 다시 동기화한다.
+  /// 실패/중지한 시도가 남긴 기록을 걷어낸다.
+  ///
+  /// [baselineId] 는 **생성이 시작되기 전** 마지막 메시지(보통 사용자 메시지)다.
+  /// 그 뒤에 생긴 것(어시스턴트 턴, 도구 결과, 하위 대화)이 이번 요청의 산물이므로
+  /// 통째로 지운다.
+  ///
+  /// 예전에는 "이번 시도에서 만든 첫 assistant 메시지" 를 기준으로 지웠는데,
+  /// **첫 모델 호출이 곧바로 실패하면 그 기준이 정해지지 않아**(null) 아무것도
+  /// 지우지 못했다. 경계를 시도 밖에서 한 번 잡아 두면 어디서 실패하든 정확히 걷힌다.
   Future<void> _cleanupAttempt(
-      ConversationStore store, int convId, int? firstId) async {
-    if (firstId != null) await store.deleteMessagesFrom(convId, firstId);
+      ConversationStore store, int convId, int? baselineId) async {
+    if (baselineId != null) {
+      await store.deleteMessagesAfter(convId, baselineId);
+    }
     // 스트리밍 중이던 부분 카드도 지우도록 항상 기록을 다시 보낸다.
     await _pushHistory();
   }
@@ -1204,6 +2140,9 @@ class WebBridge {
     List<Map<String, Object?>> messages,
     List<Map<String, Object?>>? tools,
   ) async {
+    // 보내는 모양은 **가장 엄격한 템플릿 기준**을 지킨다(§message_shape.dart).
+    assert(chatShapeProblem(messages) == null,
+        'bad chat shape: ${chatShapeProblem(messages)}');
     _post({'type': 'chat.begin'});
     final start = DateTime.now();
     final content = StringBuffer();
@@ -1245,13 +2184,16 @@ class WebBridge {
     final ticker =
         Timer.periodic(const Duration(seconds: 1), (_) => emitStats(phase));
     try {
-      await for (final ev in _withResponseTimeout(_providerFor(cfg)
-          .streamChat(cfg: cfg, messages: messages, tools: tools))) {
+      await for (final ev in _withResponseTimeout(
+          _providerFor(cfg).streamChat(cfg: cfg, messages: messages, tools: tools),
+          cfg.firstResponseTimeout)) {
         switch (ev) {
           case LlmContent(:final text):
             content.write(text);
             markReceiving();
             phase = 'streaming';
+            // 본문은 그대로 흘린다. 턴 요약은 응답에 섞지 않고 답변 확정 뒤
+            // 별도 호출로 만든다(_scheduleTurnSummary) — 홀드백/마커 파싱 없음.
             _post({'type': 'chat.delta', 'content': text});
             emitStats(phase);
           case LlmReasoning(:final text):
@@ -1270,8 +2212,13 @@ class WebBridge {
       ticker.cancel();
     }
 
+    // 응답 본문 = 사용자에게 보이는 답변 그대로. 턴 요약(metadata.summary)은
+    // 여기서 만들지 않고, 답변을 확정한 뒤 백그라운드 호출이 채워 넣는다.
+    final body = content.toString();
     final meta = jsonEncode({
-      if (reasoning.isNotEmpty) 'reasoning': reasoning.toString(),
+      // 공백만 있는 추론(일부 서버가 흘리는 빈 reasoning)은 저장하지 않는다.
+      if (reasoning.toString().trim().isNotEmpty)
+        'reasoning': reasoning.toString(),
       if (usage != null)
         'usage': {
           'prompt': usage.prompt,
@@ -1282,7 +2229,7 @@ class WebBridge {
     final id = await store.addMessage(
       conversationId: convId,
       role: MessageRole.assistant,
-      content: content.toString(),
+      content: body,
       model: cfg.model,
       provider: cfg.connection.name,
       api: 'chat/completions',
@@ -1301,10 +2248,10 @@ class WebBridge {
       'type': 'chat.done',
       'id': id,
       'elapsedMs': elapsedMs,
-      'empty': content.isEmpty,
+      'empty': body.isEmpty,
     });
     return (
-      content: content.toString(),
+      content: body,
       toolCalls: toolCalls,
       id: id,
       elapsedMs: elapsedMs,
@@ -1315,19 +2262,20 @@ class WebBridge {
   Future<ToolRegistry?> _buildToolRegistry() async {
     // 실효 파이썬(venv 준비 시 venv)으로 도구를 실행해야, venv 에 설치한 패키지
     // (mcp 등)를 도구가 실제로 임포트할 수 있다(base 로 돌면 못 찾는다).
-    final interp = _workspace.effectivePython;
-    final baseScript = _workspace.baseToolModulePath;
-    final adaptersDir = _workspace.toolAdaptersDir;
-    if (!_workspace.pythonInstalled ||
-        interp == null ||
-        baseScript == null ||
-        adaptersDir == null) {
-      return null;
-    }
+    // 전제조건은 WorkspaceController.toolsReady 한 곳에서 판단한다(헤더의 설정
+    // 안내 버튼도 같은 값을 쓰므로, 안내와 실제 동작이 어긋나지 않는다).
+    if (!_workspace.toolsReady) return null;
     final registry = ToolRegistry(
-      runner: ToolRunner(interp),
-      baseScript: baseScript,
-      adaptersDir: adaptersDir,
+      runner: ToolRunner(
+        _workspace.effectivePython!,
+        // 중지를 눌렀을 때 곧바로 끊을 수 있도록 실행 중인 도구를 추적한다.
+        onProcessStart: (proc) {
+          _toolProcesses.add(proc);
+          proc.exitCode.whenComplete(() => _toolProcesses.remove(proc));
+        },
+      ),
+      baseScripts: _workspace.baseToolModulePaths,
+      adaptersDir: _workspace.toolAdaptersDir!,
     );
     try {
       await registry.load(_workspace.toolSources,
@@ -1354,14 +2302,50 @@ class WebBridge {
     return res.error ?? 'error';
   }
 
+  /// 첨부 사본 저장 상한(일반 파일). 이미지는 [_maxImageBytes] 가 따로 있다.
+  static const int _maxAttachBytes = 64 * 1024 * 1024; // 64MB
+
+  /// 첨부 파일 사본을 프로젝트의 `.collabo/attach/` 에 저장하고 절대 경로를
+  /// 돌려준다. 워크스페이스 안이라 도구(read_file 등)가 읽을 수 있고, 서브
+  /// 컨텍스트에 경로로 동반된다. 프로젝트가 없거나 실패하면 null(첨부 자체는
+  /// 동작하되 보존/도구 접근만 생략).
+  Future<String?> _persistAttachment(List<int> bytes, String name) async {
+    final root = _projectPath;
+    if (root == null || root.isEmpty) return null;
+    try {
+      final dir = Directory(p.join(root, '.collabo', 'attach'));
+      await dir.create(recursive: true);
+      // 이름 충돌 방지: 타임스탬프 접두 + 파일명 정리(경로 문자 제거).
+      final safe = p.basename(name).replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final stamp = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
+      final path = p.join(dir.path, '${stamp}_$safe');
+      await File(path).writeAsBytes(bytes, flush: true);
+      return path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// + 첨부: 파일 선택 → 텍스트면 내용을, 아니면 경로를 입력창에 삽입.
+  /// macOS 는 file_selector 패널이 뜨지 않는 문제가 있어, 설정에서 이미 쓰는
+  /// 자체 네이티브 패널(collabo/macos_files)로 통일한다.
   Future<void> _handleAttachPick() async {
-    final file = await openFile();
-    if (file == null) return;
-    final path = file.path;
+    final path = MacFilePicker.supported
+        ? await MacFilePicker.pickFile()
+        : (await openFile())?.path;
+    if (path == null) return;
     if (_fs.defaultModeFor(path) == FileViewMode.hex) {
-      // 비텍스트(바이너리): 경로만 삽입(도구가 참조해 읽을 수 있게).
-      _post({'type': 'composer.insert', 'text': path});
+      // 비텍스트(바이너리): `.collabo/attach` 로 복사해 그 경로를 삽입한다 —
+      // 워크스페이스 안이라 도구가 읽을 수 있다(원본이 밖에 있어도 접근 가능).
+      // 복사 불가(프로젝트 없음/대용량)면 원래 경로를 그대로 삽입.
+      var insert = path;
+      try {
+        final f = File(path);
+        if (await f.length() <= _maxAttachBytes) {
+          insert = await _persistAttachment(await f.readAsBytes(), path) ?? path;
+        }
+      } catch (_) {}
+      _post({'type': 'composer.insert', 'text': insert});
       return;
     }
     try {
@@ -1377,25 +2361,37 @@ class WebBridge {
   static const int _maxImageBytes = 12 * 1024 * 1024; // 12MB 가드
 
   Future<void> _handleImagePick() async {
-    const group = XTypeGroup(
-      label: 'Image',
-      extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
-      mimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
-    );
-    final file = await openFile(acceptedTypeGroups: [group]);
-    if (file == null) return;
+    const exts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+    String? path;
+    if (MacFilePicker.supported) {
+      // macOS: 자체 네이티브 패널(위 _handleAttachPick 참고) + 확장자 필터.
+      path = await MacFilePicker.pickFile(extensions: exts);
+    } else {
+      const group = XTypeGroup(
+        label: 'Image',
+        extensions: exts,
+        mimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+      );
+      path = (await openFile(acceptedTypeGroups: [group]))?.path;
+    }
+    if (path == null) return;
     try {
-      final bytes = await file.readAsBytes();
+      final bytes = await File(path).readAsBytes();
       if (bytes.length > _maxImageBytes) {
         _post({'type': 'chat.notice', 'message': 'Image too large (max 12MB).'});
         return;
       }
-      final mime = _imageMimeFor(file.path);
+      final mime = _imageMimeFor(path);
+      // `.collabo/attach` 에 사본 저장 → 서브 컨텍스트 동반/도구 접근용 경로.
+      final saved = await _persistAttachment(bytes, path);
       final url = 'data:$mime;base64,${base64Encode(bytes)}';
       _post({
         'type': 'composer.attachImage',
         'url': url,
-        'name': p.basename(file.path),
+        'name': p.basename(path),
+        'kind': 'image',
+        'mime': mime,
+        if (saved != null) 'path': saved,
       });
     } catch (e) {
       _post({'type': 'chat.notice', 'message': 'Failed to read image: $e'});
@@ -1472,46 +2468,258 @@ class WebBridge {
     });
   }
 
+  // --- 트리에서의 파일 조작 (드래그 이동/복사, 우클릭 새로 만들기/이름 변경/삭제) ---
+
+  /// 앱이 관리하는 폴더. 트리에서 직접 옮기거나 지우지 못하게 한다 —
+  /// 대화 DB·venv·백그라운드 명령 레지스트리가 **열려 있는 채로** 사라질 수 있다.
+  static const String _appDirName = '.collabo';
+
+  void _fsError(String message) =>
+      _post({'type': 'fs.error', 'message': message});
+
+  /// 사용자가 트리에서 지시한 경로를 검증한다(이동/복사/생성/이름 변경/삭제 공용).
+  ///
+  /// 통과하면 **심링크를 푼 실제 경로**, 아니면 null — 이유는 `fs.error` 로 이미 보냈다.
+  /// 뷰어 저장(`_handleFileSave`)과 같은 취지의 fail-safe 가드이고, 여기에
+  /// `.collabo` 차단이 더 붙는다. [allowRoot] 는 프로젝트 루트 자신을 허용할지 —
+  /// 새로 만들 때의 **부모**로는 되지만, 이름 변경·삭제·이동의 **대상**으로는 안 된다.
+  Future<String?> _resolveUserPath(String? path, {bool allowRoot = false}) async {
+    if (path == null || path.isEmpty) return null;
+    final root = _projectPath;
+    if (root == null || root.isEmpty) {
+      _fsError('No project is open.');
+      return null;
+    }
+    final String real;
+    final String realRoot;
+    try {
+      realRoot = await Directory(root).resolveSymbolicLinks();
+      real = await File(path).absolute.resolveSymbolicLinks();
+    } catch (e) {
+      // 존재하지 않는 경로도 여기로 온다(resolveSymbolicLinks 가 던진다).
+      _fsError('$e');
+      return null;
+    }
+    if (p.equals(real, realRoot)) {
+      if (allowRoot) return real;
+      _fsError('The project root cannot be changed here.');
+      return null;
+    }
+    // isWithin 은 형제 prefix 탈출(`/proj-evil` vs `/proj`)을 걸러 준다.
+    if (!p.isWithin(realRoot, real)) {
+      _fsError('Outside the project: $path');
+      return null;
+    }
+    if (p.split(p.relative(real, from: realRoot)).first == _appDirName) {
+      _fsError('$_appDirName is managed by the app.');
+      return null;
+    }
+    return real;
+  }
+
+  /// 새 이름을 검사해 다듬은 값을 준다. 부적합하면 null(오류는 이미 보냈다).
+  ///
+  /// 규칙은 새 프로젝트 다이얼로그와 공유한다(`fs/entry_name.dart`) — 웹에도 같은
+  /// 규칙이 한 벌 있지만(모달에서 즉시 번역 메시지를 띄우려고), 판정은 여기가 최종이다.
+  String? _checkEntryName(String? raw) {
+    final name = (raw ?? '').trim();
+    if (validateProjectName(name) != null) {
+      _fsError('Invalid name: ${raw ?? ''}');
+      return null;
+    }
+    return name;
+  }
+
   /// 트리에서 드래그한 항목을 폴더로 이동/복사한다(사용자 동작).
   Future<void> _handleFsMove(String? src, String? dst, {required bool move}) async {
-    if (src == null || dst == null || src.isEmpty || dst.isEmpty) return;
+    final source = await _resolveUserPath(src);
+    if (source == null) return;
     // dst 는 대상 폴더. 실제 목적지 = 폴더/원본이름.
-    final destDir = dst;
-    final target = p.join(destDir, p.basename(src));
+    final destDir = await _resolveUserPath(dst, allowRoot: true);
+    if (destDir == null) return;
+    final target = p.join(destDir, p.basename(source));
     // 자기 자신/내부로의 이동 방지.
-    if (p.equals(src, target)) return;
-    if (p.isWithin(src, destDir) || p.equals(src, destDir)) {
-      _post({'type': 'fs.error', 'message': 'Cannot move a folder into itself.'});
+    if (p.equals(source, target)) return;
+    if (p.isWithin(source, destDir) || p.equals(source, destDir)) {
+      _fsError('Cannot move a folder into itself.');
       return;
     }
     if (FileSystemEntity.typeSync(target) != FileSystemEntityType.notFound) {
-      _post({'type': 'fs.error', 'message': 'Target already exists: $target'});
+      _fsError('Target already exists: $target');
       return;
     }
     try {
       if (move) {
-        await _fs.movePath(src, target);
+        await _fs.movePath(source, target);
       } else {
-        await _fs.copyPath(src, target);
+        await _fs.copyPath(source, target);
       }
       // 감시자가 양쪽 디렉토리를 갱신하지만, 즉시 반영 위해 명시적으로도 통지.
       _post({
         'type': 'fs.change',
-        'paths': [p.dirname(src), destDir],
+        'paths': [p.dirname(source), destDir],
       });
     } catch (e) {
-      _post({'type': 'fs.error', 'message': '$e'});
+      _fsError('$e');
     }
   }
 
+  /// 우클릭 → 새 파일 / 새 폴더. [parent] 는 만들 곳(폴더), [name] 은 이름 하나.
+  Future<void> _handleFsCreate(String? parent, String? name, bool isDir) async {
+    final dir = await _resolveUserPath(parent, allowRoot: true);
+    if (dir == null) return;
+    if (FileSystemEntity.typeSync(dir) != FileSystemEntityType.directory) {
+      _fsError('Not a folder: $parent');
+      return;
+    }
+    final clean = _checkEntryName(name);
+    if (clean == null) return;
+    final target = p.join(dir, clean);
+    if (FileSystemEntity.typeSync(target) != FileSystemEntityType.notFound) {
+      _fsError('Target already exists: $target');
+      return;
+    }
+    try {
+      if (isDir) {
+        await Directory(target).create();
+      } else {
+        // 빈 파일. 뷰어가 바로 열어 편집할 수 있다.
+        await File(target).create();
+      }
+      _post({'type': 'fs.change', 'paths': [dir]});
+      // 웹이 만든 항목을 펼쳐서 선택하도록(파일이면 뷰어로 연다).
+      _post({'type': 'fs.created', 'path': target, 'isDir': isDir});
+    } catch (e) {
+      _fsError('$e');
+    }
+  }
+
+  /// 우클릭 → 이름 변경. 같은 폴더 안에서만 바꾼다(경로 이동은 드래그로).
+  Future<void> _handleFsRename(String? path, String? name) async {
+    final src = await _resolveUserPath(path);
+    if (src == null) return;
+    final clean = _checkEntryName(name);
+    if (clean == null) return;
+    final target = p.join(p.dirname(src), clean);
+    if (p.equals(src, target)) return; // 이름이 그대로면 조용히 넘어간다.
+    if (FileSystemEntity.typeSync(target) != FileSystemEntityType.notFound) {
+      _fsError('Target already exists: $target');
+      return;
+    }
+    try {
+      await _fs.movePath(src, target);
+      _post({
+        'type': 'fs.change',
+        'paths': [p.dirname(src)],
+        'files': [src, target],
+      });
+      _post({'type': 'fs.renamed', 'path': src, 'to': target});
+    } catch (e) {
+      _fsError('$e');
+    }
+  }
+
+  /// 우클릭 → 삭제. **되돌릴 수 없다**(휴지통을 거치지 않는다) — 확인은 웹 모달이 받는다.
+  Future<void> _handleFsDelete(String? path) async {
+    final target = await _resolveUserPath(path);
+    if (target == null) return;
+    try {
+      if (FileSystemEntity.typeSync(target) == FileSystemEntityType.directory) {
+        await Directory(target).delete(recursive: true);
+      } else {
+        await File(target).delete();
+      }
+      _post({
+        'type': 'fs.change',
+        'paths': [p.dirname(target)],
+        'files': [target],
+      });
+      // 보고 있던 파일이 사라졌으면 웹이 뷰어를 닫는다.
+      _post({'type': 'fs.deleted', 'path': target});
+    } catch (e) {
+      _fsError('$e');
+    }
+  }
+
+  /// 뷰어 편집기의 저장. 결과를 `file.saved{path,ok,message}` 로 알린다.
+  ///
+  /// **프로젝트 밖은 거부한다**(fail-safe). 뷰어는 트리에서 고른 파일만 열지만,
+  /// 쓰기는 되돌릴 수 없으니 경로를 여기서 한 번 더 확인한다 — Python 도구 계층의
+  /// `_resolve()` 가드와 같은 취지다(심링크는 realpath 로 풀어 비교).
+  Future<void> _handleFileSave(String? path, String? content) async {
+    if (path == null || path.isEmpty || content == null) return;
+    final root = _projectPath;
+    void fail(String message) =>
+        _post({'type': 'file.saved', 'path': path, 'ok': false, 'message': message});
+    if (root == null || root.isEmpty) {
+      fail('No project is open.');
+      return;
+    }
+    try {
+      final target = File(path).absolute;
+      // 존재하는 파일만 저장한다(뷰어는 열려 있는 파일을 저장하는 것이다).
+      if (!await target.exists()) {
+        fail('File does not exist: $path');
+        return;
+      }
+      final realTarget = await target.resolveSymbolicLinks();
+      final realRoot = await Directory(root).resolveSymbolicLinks();
+      // isWithin 은 형제 prefix 탈출(`/proj-evil` vs `/proj`)을 걸러 주고,
+      // Windows 에서는 대소문자를 무시한다(package:path 가 플랫폼 컨텍스트를 쓴다).
+      if (!p.isWithin(realRoot, realTarget)) {
+        fail('Outside the project: $path');
+        return;
+      }
+      await _fs.writeFile(realTarget, content);
+      _post({'type': 'file.saved', 'path': path, 'ok': true});
+    } catch (e) {
+      fail('$e');
+    }
+  }
+
+  /// 대용량 파일의 **줄 창**을 읽어 준다(뷰어 가상 스크롤).
+  ///
+  /// 파일을 한 번에 다 보내지 않고 화면에 필요한 줄만 오간다. 응답은 요청한
+  /// `path/mode/from` 을 그대로 담아 보낸다 — 웹이 늦게 온 응답을 버릴 수 있게.
+  Future<void> _handleFileWindow(
+      String? path, String? modeName, int from, int count) async {
+    if (path == null || path.isEmpty) return;
+    final mode = _viewModeFor(modeName) ?? FileViewMode.text;
+    try {
+      final window =
+          await _fs.readWindow(path, mode: mode, from: from, count: count);
+      _post({
+        'type': 'file.windowData',
+        'path': path,
+        'mode': mode.name,
+        'from': window.from,
+        'lines': window.lines,
+        'lineCount': window.lineCount,
+      });
+    } catch (e) {
+      _post({
+        'type': 'file.windowData',
+        'path': path,
+        'mode': mode.name,
+        'from': from,
+        'lines': const <String>[],
+        'lineCount': 0,
+        'error': '$e',
+      });
+    }
+  }
+
+  FileViewMode? _viewModeFor(String? modeName) => switch (modeName) {
+        'text' => FileViewMode.text,
+        'hex' => FileViewMode.hex,
+        'md' => FileViewMode.md,
+        'archive' => FileViewMode.archive,
+        _ => null,
+      };
+
   Future<void> _handleFileOpen(String? path, String? modeName) async {
     if (path == null || path.isEmpty) return;
-    final mode = switch (modeName) {
-      'text' => FileViewMode.text,
-      'hex' => FileViewMode.hex,
-      'md' => FileViewMode.md,
-      _ => null,
-    };
+    final mode = _viewModeFor(modeName);
     try {
       final content = await _fs.readFile(path, mode: mode);
       _post({'type': 'file.content', ...content.toJson()});
@@ -1566,6 +2774,12 @@ class WebBridge {
   }
 
   Future<void> dispose() async {
+    _workspace.removeListener(_onWorkspaceChanged);
+    // 남아 있는 도구 프로세스를 정리한다(프로젝트 전환·종료 시 고아 프로세스 방지).
+    for (final proc in _toolProcesses.toList()) {
+      proc.kill();
+    }
+    _toolProcesses.clear();
     await _msgSub?.cancel();
     await _watchSub?.cancel();
     _flushTimer?.cancel();
@@ -1575,6 +2789,30 @@ class WebBridge {
     }
   }
 }
+
+/// 예전(인라인 마커) 방식으로 저장된 본문에서 `<turn_summary>` 흔적을 걷어낸다.
+///
+/// 턴 요약은 이제 응답에 섞지 않고 별도 호출로 만들지만, **그 이전 대화 기록에는
+/// 마커가 그대로 남아 있다**(본문으로 저장됐다). 표시·컨텍스트 재사용 시 이걸로
+/// 정리한다. 새 대화에는 애초에 나타나지 않는다.
+///
+/// - 짝이 맞는 블록은 통째로 제거한다.
+/// - 짝이 없는 태그는 **태그만** 지우고 내용은 남긴다 — 닫히지 않은 경우 그 뒤가
+///   실제 답변일 수 있어, 통째로 지우면 답변을 잃는다.
+String stripTurnSummary(String raw) {
+  // 대부분의 메시지엔 마커가 없다 — 대소문자 무시로 한 번만 확인하고 빠져나간다.
+  if (!_turnSummaryProbe.hasMatch(raw)) return raw;
+  return raw
+      .replaceAll(_turnSummaryBlock, '')
+      .replaceAll(_turnSummaryStray, '')
+      .trimLeft();
+}
+
+final RegExp _turnSummaryProbe = RegExp('turn_summary', caseSensitive: false);
+final RegExp _turnSummaryBlock =
+    RegExp(r'<turn_summary>[\s\S]*?</turn_summary>\s*', caseSensitive: false);
+final RegExp _turnSummaryStray =
+    RegExp(r'</?turn_summary>\s*', caseSensitive: false);
 
 /// 사용자가 "중지"를 눌러 생성을 강제로 끊을 때 스트림에 실어 보내는 신호.
 /// (재시도 대상 오류와 구분하기 위한 내부 전용 예외)

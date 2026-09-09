@@ -20,7 +20,12 @@ class LlmConfig {
     this.multimodal = false,
     this.reasoningEffort = '',
     this.parseTextToolCalls = false,
+    this.firstResponseTimeoutSec = defaultFirstResponseTimeoutSec,
   });
+
+  /// [firstResponseTimeoutSec] 기본값(초). 예전에는 5분 고정이었는데, 로컬 모델은
+  /// 큰 컨텍스트의 **프리필**만으로 그보다 오래 걸리는 일이 흔해 늘렸다.
+  static const int defaultFirstResponseTimeoutSec = 600;
 
   /// 연결 방식(OpenAI 호환 등).
   final LlmConnection connection;
@@ -49,6 +54,19 @@ class LlmConfig {
   /// (`openaiPrompted` 연결은 이 파싱이 본질이라 이 플래그와 무관하게 항상 동작.)
   final bool parseTextToolCalls;
 
+  /// 첫 응답(**프리필**) 대기 시간(초). 요청을 보낸 뒤 **첫 이벤트**가 이 시간 안에
+  /// 오지 않으면 끊고 재시도한다. 이벤트가 하나라도 오면 타이머는 **해제**되어,
+  /// 그 뒤로는 아무리 오래 걸려도 시간으로 끊지 않는다(§note 2026-08-13).
+  ///
+  /// **0 이면 제한 없음** — 프리필이 아무리 오래 걸려도 기다린다(중지는 언제든 가능).
+  /// 서버마다 속도가 다르므로 앱 전역이 아니라 **연결(프리셋)별** 값이다.
+  final int firstResponseTimeoutSec;
+
+  /// 첫 응답 대기 시간. `0` 이하면 **제한 없음**(null).
+  Duration? get firstResponseTimeout => firstResponseTimeoutSec > 0
+      ? Duration(seconds: firstResponseTimeoutSec)
+      : null;
+
   bool get isConfigured => baseUrl.isNotEmpty && model.isNotEmpty;
 
   LlmConfig copyWith({
@@ -59,6 +77,7 @@ class LlmConfig {
     bool? multimodal,
     String? reasoningEffort,
     bool? parseTextToolCalls,
+    int? firstResponseTimeoutSec,
   }) =>
       LlmConfig(
         connection: connection ?? this.connection,
@@ -68,6 +87,8 @@ class LlmConfig {
         multimodal: multimodal ?? this.multimodal,
         reasoningEffort: reasoningEffort ?? this.reasoningEffort,
         parseTextToolCalls: parseTextToolCalls ?? this.parseTextToolCalls,
+        firstResponseTimeoutSec:
+            firstResponseTimeoutSec ?? this.firstResponseTimeoutSec,
       );
 
   Map<String, Object?> toJson() => {
@@ -78,6 +99,7 @@ class LlmConfig {
         'multimodal': multimodal,
         'reasoningEffort': reasoningEffort,
         'parseTextToolCalls': parseTextToolCalls,
+        'firstResponseTimeoutSec': firstResponseTimeoutSec,
       };
 
   factory LlmConfig.fromJson(Map<String, Object?> json) => LlmConfig(
@@ -88,5 +110,11 @@ class LlmConfig {
         multimodal: (json['multimodal'] as bool?) ?? false,
         reasoningEffort: (json['reasoningEffort'] as String?) ?? '',
         parseTextToolCalls: (json['parseTextToolCalls'] as bool?) ?? false,
+        // 키가 없는 예전 설정은 기본값으로 읽는다(예전 동작은 5분 고정이었다).
+        // 음수는 0(제한 없음)으로 정규화해 저장·표시가 흔들리지 않게 한다.
+        firstResponseTimeoutSec: switch (json['firstResponseTimeoutSec']) {
+          final num v => v.toInt() < 0 ? 0 : v.toInt(),
+          _ => defaultFirstResponseTimeoutSec,
+        },
       );
 }

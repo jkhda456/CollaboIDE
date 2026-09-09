@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../app/workspace_controller.dart';
+import '../tools/tool_call_log.dart';
 import '../ui/app_theme.dart';
 import 'platform_web_view.dart';
 import 'web_assets.dart';
@@ -23,6 +24,8 @@ class WebViewPanel extends StatefulWidget {
     required this.projectPath,
     required this.themeMode,
     required this.langCode,
+    this.onOpenSettings,
+    this.onOpenActivity,
   });
 
   final WorkspaceController workspace;
@@ -31,6 +34,13 @@ class WebViewPanel extends StatefulWidget {
 
   /// 웹 UI 언어 코드('ko' | 'en').
   final String langCode;
+
+  /// 웹의 설정 안내 버튼 → 네이티브 설정 창 열기(인자는 열 섹션 이름).
+  final void Function(String section)? onOpenSettings;
+
+  /// 웹의 "호출 내역" 링크 → 네이티브 도구 호출 내역 창 열기.
+  /// 기록(결과 원문)은 브리지가 들고 있으므로 [ToolCallLog] 를 함께 넘긴다.
+  final void Function(ToolCallLog log, String id)? onOpenActivity;
 
   @override
   State<WebViewPanel> createState() => _WebViewPanelState();
@@ -57,7 +67,15 @@ class _WebViewPanelState extends State<WebViewPanel> {
       final view = createPlatformWebView();
       _view = view;
       await view.initialize();
-      _bridge = WebBridge(view, widget.workspace)..start();
+      _bridge = WebBridge(
+        view,
+        widget.workspace,
+        onOpenSettings: (section) => widget.onOpenSettings?.call(section),
+        // 호출 기록은 브리지가 들고 있다 — 열 때 그걸 그대로 넘긴다
+        // (콜백이 불릴 시점엔 _bridge 가 이미 채워져 있다).
+        onOpenActivity: (id) =>
+            widget.onOpenActivity?.call(_bridge!.toolCalls, id),
+      )..start();
       // 페이지 로드가 끝나면 테마/프로젝트(=트리 루트)를 전달.
       _loadingSub = view.pageFinished.listen((_) {
         _pushStrings();

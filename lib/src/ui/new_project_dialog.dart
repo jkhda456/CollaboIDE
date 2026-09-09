@@ -5,36 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../l10n/app_localizations.dart';
+import '../fs/entry_name.dart';
 
-/// 프로젝트 이름 유효성 오류 종류(다국어 메시지 매핑용).
-enum ProjectNameError { empty, invalidChars, invalidName, trailingDot, reserved }
-
-/// 프로젝트 이름(=폴더명) 유효성 검사. 문제가 있으면 오류 종류, 없으면 null.
-///
-/// Windows/Linux/macOS 에서 모두 폴더명으로 쓸 수 없는 경우를 모두 막는다.
-ProjectNameError? validateProjectName(String raw) {
-  final name = raw.trim();
-  if (name.isEmpty) return ProjectNameError.empty;
-  // 3개 OS 공통 금지: < > : " / \ | ? * 및 제어문자(0x00-0x1F).
-  if (RegExp(r'[<>:"/\\|?*\x00-\x1F]').hasMatch(name)) {
-    return ProjectNameError.invalidChars;
-  }
-  if (name == '.' || name == '..') return ProjectNameError.invalidName;
-  // Windows: 마침표/공백으로 끝날 수 없음.
-  if (name.endsWith('.') || name.endsWith(' ')) {
-    return ProjectNameError.trailingDot;
-  }
-  // Windows 예약어(확장자 유무 무관).
-  const reserved = {
-    'CON', 'PRN', 'AUX', 'NUL',
-    'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-    'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
-  };
-  if (reserved.contains(name.split('.').first.toUpperCase())) {
-    return ProjectNameError.reserved;
-  }
-  return null;
-}
+// 이름 규칙은 트리의 새 파일/폴더·이름 변경과 공유한다(../fs/entry_name.dart).
+// 예전부터 이 파일에서 import 하던 곳이 있어 그대로 다시 내보낸다.
+export '../fs/entry_name.dart' show ProjectNameError, validateProjectName;
 
 /// 이름 오류를 현재 언어 메시지로 변환.
 String projectNameErrorText(AppLocalizations l, ProjectNameError e) =>

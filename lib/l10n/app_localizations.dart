@@ -122,6 +122,12 @@ abstract class AppLocalizations {
   /// **'Tools'**
   String get tabTools;
 
+  /// No description provided for @tabViewers.
+  ///
+  /// In en, this message translates to:
+  /// **'Viewers'**
+  String get tabViewers;
+
   /// No description provided for @tabPrompt.
   ///
   /// In en, this message translates to:
@@ -181,6 +187,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Before replying, a sub-agent reviews your latest request and adds a one-line note on whether it should be delegated.'**
   String get usePreAssessmentDesc;
+
+  /// No description provided for @useProjectState.
+  ///
+  /// In en, this message translates to:
+  /// **'Send project state'**
+  String get useProjectState;
+
+  /// No description provided for @useProjectStateDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Give the agent a short summary of the folder structure and the files tools have changed, so it does not redo work that is already done (length-limited).'**
+  String get useProjectStateDesc;
 
   /// No description provided for @resetDefault.
   ///
@@ -331,6 +349,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No running processes'**
   String get activityIdleTooltip;
+
+  /// No description provided for @activityTitleNative.
+  ///
+  /// In en, this message translates to:
+  /// **'Tool calls'**
+  String get activityTitleNative;
+
+  /// No description provided for @activityEmptyNative.
+  ///
+  /// In en, this message translates to:
+  /// **'No tool calls yet.'**
+  String get activityEmptyNative;
+
+  /// No description provided for @activitySelectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a call to see its arguments and full result.'**
+  String get activitySelectHint;
+
+  /// No description provided for @activityArgs.
+  ///
+  /// In en, this message translates to:
+  /// **'Arguments'**
+  String get activityArgs;
+
+  /// No description provided for @activityResult.
+  ///
+  /// In en, this message translates to:
+  /// **'Result'**
+  String get activityResult;
+
+  /// No description provided for @activityClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get activityClear;
+
+  /// No description provided for @activityScopeMain.
+  ///
+  /// In en, this message translates to:
+  /// **'main'**
+  String get activityScopeMain;
+
+  /// No description provided for @activityScopeSub.
+  ///
+  /// In en, this message translates to:
+  /// **'sub-agent'**
+  String get activityScopeSub;
+
+  /// No description provided for @activityScopeVerify.
+  ///
+  /// In en, this message translates to:
+  /// **'verify'**
+  String get activityScopeVerify;
+
+  /// No description provided for @activityScopeDelegate.
+  ///
+  /// In en, this message translates to:
+  /// **'delegate'**
+  String get activityScopeDelegate;
+
+  /// No description provided for @copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get copy;
 
   /// No description provided for @procTitle.
   ///
@@ -596,6 +680,24 @@ abstract class AppLocalizations {
   /// **'Don\'t attach'**
   String get reasoningEffortOff;
 
+  /// No description provided for @firstResponseTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'First response (prefill) timeout'**
+  String get firstResponseTimeout;
+
+  /// No description provided for @firstResponseTimeoutDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'If no response arrives within this time after the request is sent, it is dropped and retried. Once the response starts the timer is released, and nothing is cut off by time after that. 0 means no limit — use it for local models with a long prefill on large contexts (you can still stop at any time).'**
+  String get firstResponseTimeoutDesc;
+
+  /// No description provided for @secondsUnit.
+  ///
+  /// In en, this message translates to:
+  /// **'sec'**
+  String get secondsUnit;
+
   /// No description provided for @testConnection.
   ///
   /// In en, this message translates to:
@@ -623,7 +725,7 @@ abstract class AppLocalizations {
   /// No description provided for @toolModelDesc.
   ///
   /// In en, this message translates to:
-  /// **'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the default preset.'**
+  /// **'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the conversation model picked in the header.'**
   String get toolModelDesc;
 
   /// No description provided for @useDefaultModel.
@@ -740,12 +842,6 @@ abstract class AppLocalizations {
   /// **'{name} tools ({count})'**
   String toolsCount(String name, int count);
 
-  /// No description provided for @baseModuleLabel.
-  ///
-  /// In en, this message translates to:
-  /// **'collabo_base (base)'**
-  String get baseModuleLabel;
-
   /// No description provided for @extractPending.
   ///
   /// In en, this message translates to:
@@ -757,6 +853,126 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'View tools'**
   String get viewTools;
+
+  /// No description provided for @viewersDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Extend the file viewer (bottom right) with a JS file. Added viewers show up in the viewer\'s mode dropdown right away.'**
+  String get viewersDesc;
+
+  /// No description provided for @viewerRulesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'File type assignment'**
+  String get viewerRulesTitle;
+
+  /// No description provided for @viewerRulesDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose which extensions each viewer handles. A viewer with extensions is used automatically for those files only; leaving the field empty makes it a fallback for files no viewer claims. Unchecking turns the viewer off entirely (built-in ones too). When several viewers claim the same extension the one higher in this list wins — drag the handle to reorder.'**
+  String get viewerRulesDesc;
+
+  /// No description provided for @viewerOrderReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset order'**
+  String get viewerOrderReset;
+
+  /// No description provided for @viewerReorderTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Drag to reorder'**
+  String get viewerReorderTooltip;
+
+  /// No description provided for @viewerUserFilesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'User viewer files'**
+  String get viewerUserFilesTitle;
+
+  /// No description provided for @viewerExampleDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'An example viewer bundled with the app. Adding it registers it as a user viewer; copy it to start your own.'**
+  String get viewerExampleDesc;
+
+  /// No description provided for @viewerBuiltinBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'built-in'**
+  String get viewerBuiltinBadge;
+
+  /// No description provided for @viewerUserBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'user'**
+  String get viewerUserBadge;
+
+  /// No description provided for @viewersWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading the viewer list…'**
+  String get viewersWaiting;
+
+  /// No description provided for @viewersNeedProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Open a project once and the viewer list will appear here.'**
+  String get viewersNeedProject;
+
+  /// No description provided for @addViewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Add viewer'**
+  String get addViewer;
+
+  /// No description provided for @addViewerFile.
+  ///
+  /// In en, this message translates to:
+  /// **'A single JS file'**
+  String get addViewerFile;
+
+  /// No description provided for @addViewerFileDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'A .js file containing one viewer'**
+  String get addViewerFileDesc;
+
+  /// No description provided for @addViewerFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'A folder (viewer.json)'**
+  String get addViewerFolder;
+
+  /// No description provided for @addViewerFolderDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'A viewer made of several files or WASM. The folder must contain viewer.json'**
+  String get addViewerFolderDesc;
+
+  /// No description provided for @viewersEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No viewers added. Only the built-in ones are used.'**
+  String get viewersEmpty;
+
+  /// No description provided for @viewSource.
+  ///
+  /// In en, this message translates to:
+  /// **'View source'**
+  String get viewSource;
+
+  /// No description provided for @viewerFileMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'File not found'**
+  String get viewerFileMissing;
+
+  /// No description provided for @viewerReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read the file.'**
+  String get viewerReadFailed;
 
   /// No description provided for @pythonEnv.
   ///

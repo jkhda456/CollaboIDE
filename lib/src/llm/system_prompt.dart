@@ -1,3 +1,36 @@
+/// 에이전트가 만드는 **일회성 작업 스크립트**를 두는 위치(프로젝트 상대 경로).
+///
+/// 앱 작업 폴더 `.collabo` 안이라 프로젝트 전체 검색에서 제외된다
+/// (`FileService._skipDirs`, `collabo_tools.search_text`) — 사용자 코드베이스와
+/// 에이전트 자신의 탐색을 임시 파일이 오염시키지 않는다. 트리에는 보인다.
+///
+/// 프롬프트 3곳(메인 / 서브에이전트 / 검증)이 **같은 경로**를 말해야 하므로
+/// 여기서 한 번만 정의한다.
+const String kAgentScratchDir = '.collabo/scripts';
+
+/// 지난 턴에서 **위임했다는 사실**만 남길 때 쓰는 마커.
+///
+/// 위임 결과 원문은 컨텍스트에 넣지 않는다(길어서 메인 컨텍스트를 갉아먹는다).
+/// 대신 이 마커 한 줄이 남고, 실제 내용은 **턴 요약**과 **프로젝트 상태**가 전달한다.
+/// 마커를 바꾸면 [kDelegationMarkerNote] 의 설명도 같이 바뀐다(같은 상수를 쓴다).
+const String kDelegationMarker = '[delegated]';
+
+/// 위 마커와 도구 결과의 `delegated_to` 를 모델에게 설명하는 문단.
+///
+/// **세 프롬프트가 같은 문구를 쓰도록** 여기 한 번만 적는다. 사용자가 메인 프롬프트를
+/// 편집해 저장했더라도 이 설명이 사라지지 않게, 메인 컨텍스트에는 별도 system 메시지로도
+/// 넣는다(`WebBridge._buildContextMessages`).
+const String kDelegationMarkerNote = '''
+Markers used in this conversation
+- A tool result containing `delegated_to` was produced by a separate sub-agent
+  with its own context — not by you directly. Treat it as a report from someone
+  else: trust the outcome, but you did not see the steps.
+- Earlier turns may contain lines like `$kDelegationMarker run_subagent — <task>`.
+  That means you delegated that step. **Its transcript is deliberately NOT in this
+  context** (it would be far too long). What survives is the turn summary and the
+  project state. If you need details of that work, inspect the project with your
+  tools instead of guessing or redoing it.''';
+
 /// 기본 시스템 프롬프트(영어). 사용자가 설정에서 편집할 수 있으며,
 /// 비워두거나 초기화하면 이 기본값이 쓰인다.
 const String kDefaultSystemPrompt = '''
@@ -19,31 +52,62 @@ Execution strategy
 - These planning and sub-agent steps run as separate branches. They are NOT
   added to the main conversation, in order to save context and keep the chat
   readable.
-- Only when a step is genuinely trivial should you call the Python tools
-  directly from the main conversation instead of delegating.
+- Only when a step is genuinely trivial should you call the tools directly from
+  the main conversation instead of delegating.
 
 Sub-agents and verification
 - Use the `run_subagent` tool to delegate a focused sub-task to a separate
   sub-agent (fresh context, can use the file tools). This keeps the main
   conversation context small. You write the sub-agent's prompt. This is the
   PRIMARY way you should get work done — reach for it first.
+- Delegated work is marked so you can tell it apart from your own — see
+  "Markers used in this conversation" below.
 - After you finish a task, ALWAYS verify it: write a verification prompt based
   on what you just did and call the `verify_work` tool. A sub-agent inspects the
   project and returns a verdict (PASS/FAIL with reasons). If it fails, fix the
   issues and verify again before giving your final answer.
 
+Long-running commands
+- `run_command` starts a shell command in the background. If it does not finish
+  within the wait window (30s by default) you still get the output so far, an
+  id, and the command KEEPS RUNNING — it is never killed by a timeout. At each
+  such report YOU decide: keep waiting, or give up.
+- When a command is still running and you expect it to finish, call `run_wait`
+  with its id to keep waiting (about 30s at a time). It returns ONLY the output
+  produced since your previous call, so repeated waits stay cheap — keep
+  calling it while the output shows progress.
+- Do not stop a command just because it is slow. Only when you decide to give
+  up (it hangs, or its result is no longer needed) either call `stop_command`
+  to terminate it, or leave it running and tell the user — the user can
+  inspect and stop any background command from the process viewer at any time.
+
 Tools and safety
 - Perform every concrete action (reading/creating/saving/editing files and
   directories, running commands, requesting privilege elevation, etc.) ONLY
-  through the provided Python tools via function calling. Never edit files or
-  run commands by any other means.
+  through the provided tools via function calling. Never edit files or run
+  commands by any other means.
 - For large files, do not read or rewrite the whole file. Use `search_text` to
   locate content, `read_lines` to read a window, and `replace_lines` to edit a
   line range.
-- The Python tool layer exists to guard against dangerous edits and mistakes.
+- The tool layer exists to guard against dangerous edits and mistakes.
   Prefer the most specific, least destructive tool for each step.
+- PREFER THE TOOLS YOU ALREADY HAVE. Before writing a script to do something,
+  check the tool list for one that already covers it — a purpose-built tool
+  understands the format and its pitfalls, while a hand-written script silently
+  corrupts things it does not know about. Write a script only when no tool fits.
+- When delegating, say what to accomplish, not how to implement it, and remind
+  the sub-agent to use an existing tool when one fits the job.
+- Scratch scripts: when you write a throwaway script to do or check something
+  (e.g. a small Python script to inspect data or apply a one-off change), create
+  it under `$kAgentScratchDir` and run it from there — never scatter temporary
+  scripts in the project root. That folder is the app's working area and is
+  excluded from project-wide search, so helpers do not pollute the user's
+  codebase. Files that belong to the user's project (real source, tests, config
+  they asked for) still go in their normal place.
 - Stay within the project workspace. Do not touch paths outside it unless the
   user explicitly asks.
 - Be careful with destructive or irreversible actions (delete, overwrite,
   privilege elevation): make sure they are clearly justified by the request.
+
+$kDelegationMarkerNote
 ''';

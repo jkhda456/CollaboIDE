@@ -70,6 +70,44 @@ class Conversation {
       );
 }
 
+/// 도구가 파일에 가한 변경 한 건(경로 기준 최신 상태).
+///
+/// 같은 파일을 여러 번 고쳐도 **행은 하나**로 유지하고 [edits] 만 올린다 —
+/// 편집 횟수만큼 행이 쌓이면 DB 와 주입 컨텍스트가 금방 불어나기 때문이다.
+/// 에이전트가 매 턴 받는 프로젝트 상태 요약의 재료로 쓰인다.
+class FileChange {
+  const FileChange({
+    required this.path,
+    required this.action,
+    required this.edits,
+    required this.updatedAt,
+    this.tool,
+  });
+
+  /// 프로젝트 루트 기준 **상대 경로**(주입 길이를 줄이려고 절대 경로를 쓰지 않는다).
+  final String path;
+
+  /// created | modified | deleted | moved
+  final String action;
+
+  /// 이 경로에 대한 누적 변경 횟수.
+  final int edits;
+
+  final DateTime updatedAt;
+
+  /// 마지막으로 이 파일을 바꾼 도구 이름(예: edit_file).
+  final String? tool;
+
+  factory FileChange.fromRow(Map<String, Object?> row) => FileChange(
+        path: row['path'] as String? ?? '',
+        action: row['action'] as String? ?? 'modified',
+        edits: row['edits'] as int? ?? 1,
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(row['updated_at'] as int),
+        tool: row['tool'] as String?,
+      );
+}
+
 /// 대화 메시지 한 건.
 ///
 /// function calling 지원: assistant 의 [toolCalls](tool_use 목록, JSON),

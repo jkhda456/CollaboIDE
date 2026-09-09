@@ -60,6 +60,10 @@ class NativeFilePicker {
     panel.showsHiddenFiles = true               // .collabo/venv 등 숨김 경로 접근
     panel.treatsFilePackagesAsDirectories = true
     if let title = args?["title"] as? String, !title.isEmpty { panel.message = title }
+    // 확장자 필터(예: 이미지 첨부). 미지정이면 모든 파일.
+    if let exts = args?["extensions"] as? [String], !exts.isEmpty {
+      panel.allowedFileTypes = exts
+    }
 
     let respond: (NSApplication.ModalResponse) -> Void = { resp in
       guard resp == .OK, let url = panel.url else { result(nil); return }

@@ -27,11 +27,15 @@ class ViewerSource {
   /// 서로 다른 폴더의 같은 이름(`image.js` 두 개)을 구분해야 하므로 경로 해시를
   /// 붙인다. **같은 경로면 항상 같은 이름**이어야 한다 — 스테이징은 이 이름으로
   /// 잔재(설정에서 제거된 뷰어)를 판별하기 때문이다.
-  String get stagedName {
+  String get stagedName => '$stagedBaseName.js';
+
+  /// 여러 파일로 된 뷰어(폴더)를 스테이징할 때 쓸 **폴더명**.
+  /// 파일 하나짜리와 같은 규칙(이름 + 경로 해시)이라 서로 겹치지 않는다.
+  String get stagedBaseName {
     final base = p.basenameWithoutExtension(path);
     final safe = base.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
     final tag = _fnv1a(id).toRadixString(16).padLeft(8, '0');
-    return '${safe.isEmpty ? 'viewer' : safe}_$tag.js';
+    return '${safe.isEmpty ? 'viewer' : safe}_$tag';
   }
 
   /// FNV-1a(32비트). 경로 → 짧은 안정적 태그. 암호학적 용도가 아니다

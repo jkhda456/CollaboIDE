@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -17,18 +18,36 @@ import '../platform/mac_file_picker.dart';
 import '../tools/tool_module.dart';
 import '../tools/tool_runner.dart';
 import '../tools/tool_source.dart';
+import '../viewers/viewer_assets.dart';
+import '../viewers/viewer_rule.dart';
+import '../viewers/viewer_source.dart';
 import 'console_dialog.dart';
 
-/// 설정 창을 띄운다(탭: 모델 / 모양).
+/// 설정 창을 띄운다(탭: 모델 / 프롬프트 / 도구 / 모양 / 정보).
+/// [initialTab] 으로 처음 보일 탭을 고른다([settingsTabIndexFor] 참고).
 Future<void> showSettingsDialog(
   BuildContext context,
-  WorkspaceController workspace,
-) {
+  WorkspaceController workspace, {
+  int initialTab = 0,
+}) {
   return showDialog<void>(
     context: context,
-    builder: (_) => _SettingsDialog(workspace: workspace),
+    builder: (_) =>
+        _SettingsDialog(workspace: workspace, initialTab: initialTab),
   );
 }
+
+/// 섹션 이름 → 설정 탭 인덱스. 웹(대화 헤더의 설정 안내 버튼)이 넘기는 이름을
+/// 여기서 해석한다. 탭 순서가 바뀌면 [_SettingsDialog] 와 함께 이 표도 고칠 것.
+int settingsTabIndexFor(String section) => switch (section) {
+      'model' => 0,
+      'prompt' => 1,
+      'tools' => 2,
+      'viewers' => 3,
+      'appearance' => 4,
+      'about' => 5,
+      _ => 0,
+    };
 
 /// 첫 실행 초기 설정 마법사를 띄운다.
 ///
@@ -171,9 +190,15 @@ class _SetupWizardState extends State<_SetupWizard> {
 }
 
 class _SettingsDialog extends StatelessWidget {
-  const _SettingsDialog({required this.workspace});
+  const _SettingsDialog({required this.workspace, this.initialTab = 0});
 
   final WorkspaceController workspace;
+
+  /// 처음 보일 탭 인덱스(0=모델 … 5=정보). [_tabCount] 와 [settingsTabIndexFor] 참고.
+  final int initialTab;
+
+  /// 탭 개수. TabBar/TabBarView 항목 수와 반드시 같아야 한다.
+  static const int _tabCount = 6;
 
   @override
   Widget build(BuildContext context) {
@@ -182,7 +207,10 @@ class _SettingsDialog extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
         child: DefaultTabController(
-          length: 5,
+          length: _tabCount,
+          // 범위를 벗어난 값이 들어와도 첫 탭으로 (num 을 돌려주는 clamp 대신 명시적으로).
+          initialIndex:
+              (initialTab >= 0 && initialTab < _tabCount) ? initialTab : 0,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -201,6 +229,7 @@ class _SettingsDialog extends StatelessWidget {
                   Tab(text: l.tabModel),
                   Tab(text: l.tabPrompt),
                   Tab(text: l.tabTools),
+                  Tab(text: l.tabViewers),
                   Tab(text: l.tabAppearance),
                   Tab(text: l.tabAbout),
                 ],
@@ -211,6 +240,7 @@ class _SettingsDialog extends StatelessWidget {
                     _ModelTab(workspace: workspace),
                     _PromptTab(workspace: workspace),
                     _ToolsTab(workspace: workspace),
+                    _ViewersTab(workspace: workspace),
                     _AppearanceTab(workspace: workspace),
                     const _AboutTab(),
                   ],
@@ -353,6 +383,7 @@ class _ModelTabState extends State<_ModelTab> {
   late final TextEditingController _baseUrl;
   late final TextEditingController _apiKey;
   late final TextEditingController _model;
+  late final TextEditingController _firstTimeout; // 첫 응답(프리필) 대기 시간(초)
 
   bool _testing = false;
   bool _showKey = false; // API 키 마스크 해제 여부
@@ -374,6 +405,7 @@ class _ModelTabState extends State<_ModelTab> {
     _baseUrl = TextEditingController();
     _apiKey = TextEditingController();
     _model = TextEditingController();
+    _firstTimeout = TextEditingController();
     final presets = widget.workspace.llmPresets;
     _selectedId = widget.workspace.defaultPresetId.isNotEmpty
         ? widget.workspace.defaultPresetId
@@ -404,7 +436,22 @@ class _ModelTabState extends State<_ModelTab> {
     _parseTextToolCalls = cfg.parseTextToolCalls;
     _reasoningEffort =
         _reasoningOptions.contains(cfg.reasoningEffort) ? cfg.reasoningEffort : '';
+    _firstTimeout.text = cfg.firstResponseTimeoutSec.toString();
     _result = null;
+  }
+
+  /// 입력창의 첫 응답 대기 시간(초). 입력 도중의 어중간한 상태를 저장이 망치지
+  /// 않도록 관대하게 읽는다 — 비우면 기본값, 숫자가 아니면 **지금 저장된 값** 유지.
+  /// 음수는 0(제한 없음)으로 본다.
+  int get _firstTimeoutSec {
+    final t = _firstTimeout.text.trim();
+    if (t.isEmpty) return LlmConfig.defaultFirstResponseTimeoutSec;
+    final n = int.tryParse(t);
+    if (n == null) {
+      return _selectedPreset?.config.firstResponseTimeoutSec ??
+          LlmConfig.defaultFirstResponseTimeoutSec;
+    }
+    return n < 0 ? 0 : n;
   }
 
   @override
@@ -413,6 +460,7 @@ class _ModelTabState extends State<_ModelTab> {
     _baseUrl.dispose();
     _apiKey.dispose();
     _model.dispose();
+    _firstTimeout.dispose();
     super.dispose();
   }
 
@@ -424,6 +472,7 @@ class _ModelTabState extends State<_ModelTab> {
         multimodal: _multimodal,
         reasoningEffort: _reasoningEffort,
         parseTextToolCalls: _parseTextToolCalls,
+        firstResponseTimeoutSec: _firstTimeoutSec,
       );
 
   /// 변경 즉시 선택된 프리셋에 자동 저장한다(이름 + 설정).
@@ -468,32 +517,14 @@ class _ModelTabState extends State<_ModelTab> {
   }
 
   /// 현재 프리셋 이름 변경(작은 다이얼로그). 프로필 메뉴에서 호출.
+  /// 다이얼로그 컨트롤러는 [_RenamePresetDialog] 가 자체 소유/정리한다.
+  /// (여기서 `await showDialog` 직후 컨트롤러를 dispose 하면, 닫히는 애니메이션
+  ///  동안 TextField 가 이미 정리된 컨트롤러를 참조해 크래시가 났다.)
   Future<void> _renamePreset() async {
-    final l = AppLocalizations.of(context);
-    final ctrl = TextEditingController(text: _name.text);
     final newName = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l.renamePreset),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: l.presetNameLabel,
-            border: const OutlineInputBorder(),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: Text(l.cancel)),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text),
-              child: Text(l.save)),
-        ],
-      ),
+      builder: (ctx) => _RenamePresetDialog(initial: _name.text),
     );
-    ctrl.dispose();
     if (newName == null) return;
     _name.text = newName.trim();
     await _persist();
@@ -774,6 +805,21 @@ class _ModelTabState extends State<_ModelTab> {
             },
           ),
           const SizedBox(height: 12),
+          // 첫 응답(프리필) 대기 시간. 로컬 모델은 컨텍스트가 크면 첫 토큰 전까지
+          // 수십 분이 걸릴 수 있어 서버에 맞춰 늘리거나(0) 끌 수 있어야 한다.
+          TextField(
+            controller: _firstTimeout,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: l.firstResponseTimeout,
+              helperText: l.firstResponseTimeoutDesc,
+              helperMaxLines: 4,
+              suffixText: l.secondsUnit,
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) => _persist(),
+          ),
+          const SizedBox(height: 12),
           Row(
             children: [
               OutlinedButton.icon(
@@ -851,6 +897,18 @@ class _PromptTabState extends State<_PromptTab> {
               onChanged: widget.workspace.setPreAssessment,
             ),
           ),
+          ListenableBuilder(
+            listenable: widget.workspace,
+            builder: (context, _) => SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(l.useProjectState),
+              subtitle:
+                  Text(l.useProjectStateDesc, style: theme.textTheme.bodySmall),
+              value: widget.workspace.projectState,
+              onChanged: widget.workspace.setProjectState,
+            ),
+          ),
           const Divider(height: 16),
           Text(l.systemPromptDesc, style: theme.textTheme.bodySmall),
           const SizedBox(height: 12),
@@ -891,6 +949,28 @@ class _PromptTabState extends State<_PromptTab> {
       ),
     );
   }
+}
+
+/// 읽기 전용 텍스트(도구 JSON, 뷰어 소스 등)를 스크롤 가능한 다이얼로그로 보여 준다.
+Future<void> _showTextDialog(BuildContext context, String title, String body) {
+  return showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: SelectableText(body,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(AppLocalizations.of(ctx).close)),
+      ],
+    ),
+  );
 }
 
 /// 도구 탭: function calling 으로 확장되는 도구 목록.
@@ -1005,22 +1085,25 @@ class _ToolsTab extends StatelessWidget {
   }
 
   /// 소스의 도구를 describe 해 생성된 function-calling JSON 을 보여준다.
-  Future<void> _preview(BuildContext context, {ToolSource? source}) async {
+  /// [baseScript] 를 주면 그 기본 모듈을, [source] 를 주면 사용자 소스를 본다.
+  Future<void> _preview(BuildContext context,
+      {ToolSource? source, String? baseScript}) async {
     final l = AppLocalizations.of(context);
     // describe 도 런타임과 같은 실효 파이썬(venv 준비 시 venv)으로 실행한다.
     final interp = workspace.effectivePython;
     final dir = workspace.toolAdaptersDir;
     if (!workspace.pythonInstalled || interp == null || dir == null) {
-      await _showText(context, l.toolInspect, l.pythonNotReadyInspect);
+      await _showTextDialog(context, l.toolInspect, l.pythonNotReadyInspect);
       return;
     }
     final runner = ToolRunner(interp);
     final ToolModule? module = source == null
-        ? await runner.describe(workspace.baseToolModulePath!, isBase: true)
+        ? await runner.describe(baseScript ?? workspace.baseToolModulePath!,
+            isBase: true)
         : await runner.describeSource(source, dir);
     if (!context.mounted) return;
     if (module == null) {
-      await _showText(context, l.toolInspect, l.toolInfoFailed);
+      await _showTextDialog(context, l.toolInspect, l.toolInfoFailed);
       return;
     }
     const enc = JsonEncoder.withIndent('  ');
@@ -1028,28 +1111,9 @@ class _ToolsTab extends StatelessWidget {
         .map((t) => '• ${t.name}\n${enc.convert(t.raw)}')
         .join('\n\n');
     if (context.mounted) {
-      await _showText(context, l.toolsCount(module.name, module.tools.length), body);
+      await _showTextDialog(
+          context, l.toolsCount(module.name, module.tools.length), body);
     }
-  }
-
-  Future<void> _showText(BuildContext context, String title, String body) {
-    return showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: SelectableText(body, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(AppLocalizations.of(ctx).close)),
-        ],
-      ),
-    );
   }
 
   @override
@@ -1083,17 +1147,25 @@ class _ToolsTab extends StatelessWidget {
             Expanded(
               child: ListView(
                 children: [
-                  ListTile(
-                    leading: const Icon(Icons.lock_outline),
-                    title: Text(l.baseModuleLabel),
-                    subtitle: Text(workspace.baseToolModulePath ?? l.extractPending,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
-                    trailing: TextButton(
-                      onPressed: () => _preview(context),
-                      child: Text(l.viewTools),
+                  // 고정 기본 모듈들(파일 작업 / 문서 편집 …). 추가·삭제는 불가.
+                  if (workspace.baseToolModulePaths.isEmpty)
+                    ListTile(
+                      leading: const Icon(Icons.lock_outline),
+                      title: Text(l.extractPending),
+                      dense: true,
                     ),
-                    dense: true,
-                  ),
+                  for (final script in workspace.baseToolModulePaths)
+                    ListTile(
+                      leading: const Icon(Icons.lock_outline),
+                      title: Text('${p.basename(script)}  (${l.defaultBadge})'),
+                      subtitle: Text(script,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      trailing: TextButton(
+                        onPressed: () => _preview(context, baseScript: script),
+                        child: Text(l.viewTools),
+                      ),
+                      dense: true,
+                    ),
                   for (final s in workspace.toolSources)
                     ListTile(
                       leading: Icon(s.kind == ToolSourceKind.mcp
@@ -1173,6 +1245,412 @@ class _ToolsTab extends StatelessWidget {
               ],
               onChanged: (v) => workspace.setToolModel(tool, v ?? ''),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 뷰어 탭: 우측 하단 파일 뷰어를 JS 플러그인으로 확장하고, 각 뷰어가 담당할
+/// 확장자를 정한다.
+///
+/// 뷰어의 **정체와 기본값은 웹(레지스트리)에 있다** — 그래서 목록은 웹이 보고한
+/// [WorkspaceController.registeredViewers] 를 쓰고, 사용자가 덮어쓴 값만
+/// (`ViewerRule`) 메인 DB 에 저장한다. 번들 뷰어도 끌 수 있다.
+class _ViewersTab extends StatelessWidget {
+  const _ViewersTab({required this.workspace});
+  final WorkspaceController workspace;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l = AppLocalizations.of(context);
+    return ListenableBuilder(
+      listenable: workspace,
+      builder: (context, _) {
+        final sources = workspace.viewerSources;
+        // 표시 순서 = 실제 선택 순서. 끌어서 바꾼다.
+        final viewers = workspace.orderedViewers;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(l.viewersDesc, style: theme.textTheme.bodySmall),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: () => _addViewer(context),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: Text(l.addViewer),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 스크롤 영역 전체를 ReorderableListView 하나로 둔다 —
+            // ListView 안에 또 스크롤 목록을 넣으면 드래그가 꼬인다.
+            Expanded(
+              child: ReorderableListView(
+                // 행에 입력창이 있어 아무 데나 눌러 끌면 텍스트 선택과 충돌한다.
+                // 전용 손잡이로만 끌게 한다.
+                buildDefaultDragHandles: false,
+                onReorder: (oldIndex, newIndex) =>
+                    _reorder(viewers, oldIndex, newIndex),
+                header: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _rulesHeader(context),
+                    // 목록은 웹이 보고한다. 웹뷰는 프로젝트가 열려 있을 때만 있으므로
+                    // (AppLayout), 캐시도 없는 첫 실행에서는 그 사실을 알려 준다.
+                    if (viewers.isEmpty)
+                      _hint(
+                          context,
+                          workspace.hasProject
+                              ? l.viewersWaiting
+                              : l.viewersNeedProject),
+                  ],
+                ),
+                footer: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Divider(height: 16),
+                    _sectionHeader(context, l.viewerUserFilesTitle, null),
+                    if (sources.isEmpty) _hint(context, l.viewersEmpty),
+                    for (final v in sources) _viewerTile(context, v),
+                    // 앱에 담긴 예제(마크다운 편집기 등) — 아직 안 얹었으면 권한다.
+                    for (final e in workspace.availableViewerExamples)
+                      _exampleTile(context, e),
+                  ],
+                ),
+                children: [
+                  for (var i = 0; i < viewers.length; i++)
+                    _ViewerRuleTile(
+                      key: ValueKey(viewers[i].id),
+                      workspace: workspace,
+                      info: viewers[i],
+                      index: i,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _reorder(List<ViewerInfo> viewers, int oldIndex, int newIndex) {
+    final ids = [for (final v in viewers) v.id];
+    // ReorderableListView 는 "빼기 전" 기준 위치를 준다.
+    if (newIndex > oldIndex) newIndex -= 1;
+    ids.insert(newIndex, ids.removeAt(oldIndex));
+    workspace.setViewerOrder(ids);
+  }
+
+  /// 확장자 연결 섹션 머리말 + (순서를 바꿨을 때만) 순서 초기화.
+  Widget _rulesHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    final l = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l.viewerRulesTitle, style: theme.textTheme.titleSmall),
+                const SizedBox(height: 2),
+                Text(l.viewerRulesDesc, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+          if (workspace.viewerOrder.isNotEmpty)
+            TextButton(
+              onPressed: workspace.resetViewerOrder,
+              child: Text(l.viewerOrderReset),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionHeader(BuildContext context, String title, String? desc) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: theme.textTheme.titleSmall),
+          if (desc != null) ...[
+            const SizedBox(height: 2),
+            Text(desc, style: theme.textTheme.bodySmall),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _hint(BuildContext context, String text) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Text(text,
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+    );
+  }
+
+  /// 앱에 담긴 예제 뷰어 한 줄. 추가하면 사용자 뷰어와 똑같이 취급된다.
+  Widget _exampleTile(BuildContext context, ViewerExample e) {
+    final l = AppLocalizations.of(context);
+    return ListTile(
+      leading: const Icon(Icons.auto_awesome_outlined),
+      title: Text(e.fileName),
+      subtitle: Text(l.viewerExampleDesc,
+          maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: OutlinedButton(
+        onPressed: () => workspace.addViewerExample(e),
+        child: Text(l.add),
+      ),
+      dense: true,
+    );
+  }
+
+  Widget _viewerTile(BuildContext context, ViewerSource v) {
+    final l = AppLocalizations.of(context);
+    // 원본이 이동·삭제되면 조용히 로드되지 않으므로 경고를 보여 준다.
+    // (설정 창의 몇 줄짜리 목록이라 동기 확인으로 충분하다.)
+    // 폴더 뷰어도 있으므로 파일/폴더 둘 다 없을 때만 경고다.
+    final isDir = Directory(v.path).existsSync();
+    final missing = !isDir && !File(v.path).existsSync();
+    return ListTile(
+      leading: Icon(missing
+          ? Icons.warning_amber
+          : (isDir ? Icons.folder_zip_outlined : Icons.extension_outlined)),
+      title: Text(v.displayName),
+      subtitle: Text(
+        missing ? '${l.viewerFileMissing} — ${v.path}' : v.path,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextButton(
+            onPressed: () => _showViewerSource(context, v),
+            child: Text(l.viewSource),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: l.remove,
+            onPressed: () => workspace.removeViewerSource(v),
+          ),
+        ],
+      ),
+      dense: true,
+    );
+  }
+
+  /// 뷰어 추가: 파일 하나(.js) 또는 **폴더**(여러 파일 + `viewer.json`, WASM 포함).
+  Future<void> _addViewer(BuildContext context) async {
+    final l = AppLocalizations.of(context);
+    final folder = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(l.addViewer),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: ListTile(
+              leading: const Icon(Icons.javascript),
+              title: Text(l.addViewerFile),
+              subtitle: Text(l.addViewerFileDesc),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: ListTile(
+              leading: const Icon(Icons.folder_zip_outlined),
+              title: Text(l.addViewerFolder),
+              subtitle: Text(l.addViewerFolderDesc),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (folder == null || !context.mounted) return;
+
+    String? path;
+    if (folder) {
+      path = await getDirectoryPath(confirmButtonText: l.selectButton);
+    } else {
+      const typeGroup = XTypeGroup(label: 'JavaScript', extensions: ['js']);
+      path = (await openFile(acceptedTypeGroups: [typeGroup]))?.path;
+    }
+    if (path == null) return;
+    await workspace.addViewerSource(ViewerSource(path: path));
+  }
+
+  /// 추가한 JS 를 그대로 보여 준다(무엇을 얹었는지 확인용).
+  /// 폴더 뷰어면 매니페스트(`viewer.json`)를 보여 준다 — 그게 무엇이 로드되는지다.
+  Future<void> _showViewerSource(BuildContext context, ViewerSource v) async {
+    final l = AppLocalizations.of(context);
+    String body;
+    try {
+      final target = Directory(v.path).existsSync()
+          ? File(p.join(v.path, ViewerAssets.manifestName))
+          : File(v.path);
+      body = await target.readAsString();
+      // 다이얼로그가 감당할 만큼만. 확인용이지 편집기가 아니다.
+      if (body.length > 20000) body = '${body.substring(0, 20000)}\n…';
+    } catch (e) {
+      body = '${l.viewerReadFailed}\n$e';
+    }
+    if (context.mounted) await _showTextDialog(context, v.displayName, body);
+  }
+}
+
+/// 뷰어 한 줄: 사용 여부 + 담당 확장자.
+///
+/// 확장자 입력은 자유 텍스트라 **입력 중에는 저장하지 않는다** — 매 글자마다
+/// 저장하면 웹으로 규칙이 다시 밀려 뷰어가 재선택된다. 포커스가 빠지거나
+/// Enter 를 칠 때 커밋한다.
+class _ViewerRuleTile extends StatefulWidget {
+  const _ViewerRuleTile({
+    super.key,
+    required this.workspace,
+    required this.info,
+    required this.index,
+  });
+
+  final WorkspaceController workspace;
+  final ViewerInfo info;
+
+  /// 목록에서의 위치(드래그 손잡이가 필요로 한다).
+  final int index;
+
+  @override
+  State<_ViewerRuleTile> createState() => _ViewerRuleTileState();
+}
+
+class _ViewerRuleTileState extends State<_ViewerRuleTile> {
+  late final TextEditingController _ext;
+  late final FocusNode _focus;
+
+  ViewerRule get _rule => widget.workspace.viewerRuleFor(widget.info.id);
+
+  @override
+  void initState() {
+    super.initState();
+    _ext = TextEditingController(
+        text: ViewerRule.formatExtensions(
+            widget.workspace.effectiveExtensionsFor(widget.info)));
+    _focus = FocusNode();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ext.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _commit() {
+    final parsed = ViewerRule.parseExtensions(_ext.text);
+    // 보기 좋게 정규화된 형태로 되돌려 준다(`MD` → `.md`).
+    final text = ViewerRule.formatExtensions(parsed);
+    if (_ext.text != text) _ext.text = text;
+    // 선언값과 같아지면 override 를 지운다(플러그인이 기본값을 바꾸면 따라가도록).
+    final sameAsDefault =
+        parsed.join(',') == widget.info.defaultExtensions.join(',');
+    widget.workspace.setViewerRule(
+      widget.info.id,
+      sameAsDefault
+          ? _rule.copyWith(clearExtensions: true)
+          : _rule.copyWith(extensions: parsed),
+    );
+  }
+
+  void _reset() {
+    widget.workspace.resetViewerRule(widget.info.id);
+    _ext.text = ViewerRule.formatExtensions(widget.info.defaultExtensions);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l = AppLocalizations.of(context);
+    final rule = _rule;
+    // 입력창 값은 여기서 컨트롤러와 다시 맞추지 않는다 — build 중에
+    // TextEditingController.text 를 건드리면 TextField 가 build 중에 setState 를
+    // 부르게 된다. 값을 바꾸는 경로는 커밋(_commit)과 되돌리기(_reset) 둘뿐이고,
+    // 둘 다 자기가 입력창을 갱신한다.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // 같은 확장자를 여러 뷰어가 담당할 때는 위에 있는 쪽이 이긴다 → 순서 변경.
+          ReorderableDragStartListener(
+            index: widget.index,
+            child: Tooltip(
+              message: l.viewerReorderTooltip,
+              child: Icon(Icons.drag_indicator,
+                  size: 18, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+          Checkbox(
+            value: rule.enabled,
+            onChanged: (v) => widget.workspace
+                .setViewerRule(widget.info.id, rule.copyWith(enabled: v ?? true)),
+          ),
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(widget.info.label,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(
+                  '${widget.info.dataMode} · '
+                  '${widget.info.user ? l.viewerUserBadge : l.viewerBuiltinBadge}',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 4,
+            child: TextField(
+              controller: _ext,
+              focusNode: _focus,
+              enabled: rule.enabled,
+              style: theme.textTheme.bodySmall,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                hintText: '.md, .txt',
+              ),
+              onSubmitted: (_) => _commit(),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.restart_alt, size: 18),
+            tooltip: l.resetDefault,
+            onPressed: rule.isDefault ? null : _reset,
           ),
         ],
       ),
@@ -1579,5 +2057,58 @@ class _PresetAvatar extends StatelessWidget {
       hash = (hash * 31 + code) & 0x7fffffff;
     }
     return HSLColor.fromAHSL(1, (hash % 360).toDouble(), 0.55, 0.45).toColor();
+  }
+}
+
+/// 프리셋 이름 변경 다이얼로그. 텍스트 컨트롤러를 **자체 State 가 소유**하고
+/// dispose 에서 정리하므로, 라우트가 완전히 사라진 뒤 안전하게 해제된다.
+/// (호출부에서 `await showDialog` 직후 컨트롤러를 dispose 하면, 닫히는 애니메이션
+///  동안 TextField 가 정리된 컨트롤러를 참조해 "used after being disposed" 크래시.)
+class _RenamePresetDialog extends StatefulWidget {
+  const _RenamePresetDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_RenamePresetDialog> createState() => _RenamePresetDialogState();
+}
+
+class _RenamePresetDialogState extends State<_RenamePresetDialog> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return AlertDialog(
+      title: Text(l.renamePreset),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: l.presetNameLabel,
+          border: const OutlineInputBorder(),
+        ),
+        onSubmitted: (v) => Navigator.pop(context, v),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: Text(l.cancel)),
+        FilledButton(
+            onPressed: () => Navigator.pop(context, _ctrl.text),
+            child: Text(l.save)),
+      ],
+    );
   }
 }

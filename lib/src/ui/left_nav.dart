@@ -242,8 +242,9 @@ class _ProjectMonogram extends StatelessWidget {
   }
 }
 
-/// 진행 상태(Activity) 아이콘. 실행 중 프로세스가 있으면 활성 표시 + 개수 배지.
-class _ActivityItem extends StatelessWidget {
+/// 진행 상태(Activity) 아이콘. 실행 중 프로세스가 있으면 활성 표시 + 개수 배지 +
+/// sync 아이콘이 회전하는 애니메이션.
+class _ActivityItem extends StatefulWidget {
   const _ActivityItem({
     required this.expanded,
     required this.runningCount,
@@ -255,22 +256,61 @@ class _ActivityItem extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
+  State<_ActivityItem> createState() => _ActivityItemState();
+}
+
+class _ActivityItemState extends State<_ActivityItem>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin;
+
+  bool get _active => widget.runningCount > 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _spin =
+        AnimationController(vsync: this, duration: const Duration(seconds: 1));
+    if (_active) _spin.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_ActivityItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 실행 중이면 계속 회전, 아니면 멈추고 원위치.
+    if (_active && !_spin.isAnimating) {
+      _spin.repeat();
+    } else if (!_active && _spin.isAnimating) {
+      _spin.stop();
+      _spin.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l = AppLocalizations.of(context);
-    final active = runningCount > 0;
+    final active = _active;
     final color = active
         ? theme.colorScheme.primary
         : theme.colorScheme.onSurfaceVariant;
 
+    Widget icon = Icon(
+      active ? Icons.sync : Icons.sync_disabled,
+      size: 22,
+      color: color,
+    );
+    if (active) icon = RotationTransition(turns: _spin, child: icon);
+
     final iconWithBadge = Stack(
       clipBehavior: Clip.none,
       children: [
-        Icon(
-          active ? Icons.sync : Icons.sync_disabled,
-          size: 22,
-          color: color,
-        ),
+        icon,
         if (active)
           Positioned(
             right: -6,
@@ -283,7 +323,7 @@ class _ActivityItem extends StatelessWidget {
               ),
               constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
               child: Text(
-                '$runningCount',
+                '${widget.runningCount}',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onPrimary,
@@ -296,25 +336,25 @@ class _ActivityItem extends StatelessWidget {
     );
 
     final tooltipMsg = active
-        ? l.activityRunningTooltip(runningCount)
+        ? l.activityRunningTooltip(widget.runningCount)
         : l.activityIdleTooltip;
 
     return Tooltip(
       message: tooltipMsg,
       child: InkWell(
-        onTap: onTap,
+        onTap: widget.onTap,
         child: SizedBox(
           height: 48,
           child: Row(
             children: [
               const SizedBox(width: 16),
               iconWithBadge,
-              if (expanded) ...[
+              if (widget.expanded) ...[
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     active
-                        ? l.activityRunningLabel(runningCount)
+                        ? l.activityRunningLabel(widget.runningCount)
                         : l.activityTitle,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium,

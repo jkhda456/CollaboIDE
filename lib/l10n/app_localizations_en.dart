@@ -21,6 +21,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tabTools => 'Tools';
 
   @override
+  String get tabViewers => 'Viewers';
+
+  @override
   String get tabPrompt => 'Prompt';
 
   @override
@@ -54,6 +57,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get usePreAssessmentDesc =>
       'Before replying, a sub-agent reviews your latest request and adds a one-line note on whether it should be delegated.';
+
+  @override
+  String get useProjectState => 'Send project state';
+
+  @override
+  String get useProjectStateDesc =>
+      'Give the agent a short summary of the folder structure and the files tools have changed, so it does not redo work that is already done (length-limited).';
 
   @override
   String get resetDefault => 'Reset to default';
@@ -133,6 +143,40 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get activityIdleTooltip => 'No running processes';
+
+  @override
+  String get activityTitleNative => 'Tool calls';
+
+  @override
+  String get activityEmptyNative => 'No tool calls yet.';
+
+  @override
+  String get activitySelectHint =>
+      'Select a call to see its arguments and full result.';
+
+  @override
+  String get activityArgs => 'Arguments';
+
+  @override
+  String get activityResult => 'Result';
+
+  @override
+  String get activityClear => 'Clear';
+
+  @override
+  String get activityScopeMain => 'main';
+
+  @override
+  String get activityScopeSub => 'sub-agent';
+
+  @override
+  String get activityScopeVerify => 'verify';
+
+  @override
+  String get activityScopeDelegate => 'delegate';
+
+  @override
+  String get copy => 'Copy';
 
   @override
   String get procTitle => 'Processes';
@@ -278,6 +322,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reasoningEffortOff => 'Don\'t attach';
 
   @override
+  String get firstResponseTimeout => 'First response (prefill) timeout';
+
+  @override
+  String get firstResponseTimeoutDesc =>
+      'If no response arrives within this time after the request is sent, it is dropped and retried. Once the response starts the timer is released, and nothing is cut off by time after that. 0 means no limit — use it for local models with a long prefill on large contexts (you can still stop at any time).';
+
+  @override
+  String get secondsUnit => 'sec';
+
+  @override
   String get testConnection => 'Test connection';
 
   @override
@@ -291,7 +345,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get toolModelDesc =>
-      'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the default preset.';
+      'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the conversation model picked in the header.';
 
   @override
   String get useDefaultModel => 'Use default model';
@@ -356,13 +410,76 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get baseModuleLabel => 'collabo_base (base)';
-
-  @override
   String get extractPending => 'Extracting…';
 
   @override
   String get viewTools => 'View tools';
+
+  @override
+  String get viewersDesc =>
+      'Extend the file viewer (bottom right) with a JS file. Added viewers show up in the viewer\'s mode dropdown right away.';
+
+  @override
+  String get viewerRulesTitle => 'File type assignment';
+
+  @override
+  String get viewerRulesDesc =>
+      'Choose which extensions each viewer handles. A viewer with extensions is used automatically for those files only; leaving the field empty makes it a fallback for files no viewer claims. Unchecking turns the viewer off entirely (built-in ones too). When several viewers claim the same extension the one higher in this list wins — drag the handle to reorder.';
+
+  @override
+  String get viewerOrderReset => 'Reset order';
+
+  @override
+  String get viewerReorderTooltip => 'Drag to reorder';
+
+  @override
+  String get viewerUserFilesTitle => 'User viewer files';
+
+  @override
+  String get viewerExampleDesc =>
+      'An example viewer bundled with the app. Adding it registers it as a user viewer; copy it to start your own.';
+
+  @override
+  String get viewerBuiltinBadge => 'built-in';
+
+  @override
+  String get viewerUserBadge => 'user';
+
+  @override
+  String get viewersWaiting => 'Loading the viewer list…';
+
+  @override
+  String get viewersNeedProject =>
+      'Open a project once and the viewer list will appear here.';
+
+  @override
+  String get addViewer => 'Add viewer';
+
+  @override
+  String get addViewerFile => 'A single JS file';
+
+  @override
+  String get addViewerFileDesc => 'A .js file containing one viewer';
+
+  @override
+  String get addViewerFolder => 'A folder (viewer.json)';
+
+  @override
+  String get addViewerFolderDesc =>
+      'A viewer made of several files or WASM. The folder must contain viewer.json';
+
+  @override
+  String get viewersEmpty =>
+      'No viewers added. Only the built-in ones are used.';
+
+  @override
+  String get viewSource => 'View source';
+
+  @override
+  String get viewerFileMissing => 'File not found';
+
+  @override
+  String get viewerReadFailed => 'Could not read the file.';
 
   @override
   String get pythonEnv => 'Python environment';

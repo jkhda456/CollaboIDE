@@ -10,10 +10,22 @@ import 'package:path_provider/path_provider.dart';
 /// 기본 모듈은 고정이며 앱과 함께 임베딩된다.
 class ToolAssets {
   static const String _assetPrefix = 'assets/python/';
-  static const String _baseScript = 'collabo_tools.py';
 
-  /// 기본 모듈을 추출하고 그 스크립트 경로를 반환한다.
-  static Future<String> extractBaseModule() async {
+  /// 고정 기본 모듈들(도구 계약을 따르는 `describe`/`call` 스크립트).
+  ///
+  /// **첫 번째가 대표**다 — 어댑터 디렉토리(`toolAdaptersDir`)와 준비 상태 판정이
+  /// 이 경로를 기준으로 한다. 이름이 겹치는 도구는 앞선 모듈이 이긴다.
+  static const List<String> baseScripts = [
+    'collabo_tools.py', // 파일·명령·권한 등 기본 작업
+    'collabo_docs.py', // docx/xlsx/pptx 문서 읽기·편집
+  ];
+
+  /// 기본 모듈을 추출하고 대표 스크립트 경로를 반환한다.
+  static Future<String> extractBaseModule() async =>
+      (await extractBaseModules()).first;
+
+  /// 번들된 Python 에셋을 모두 펼치고, 기본 모듈들의 경로를 순서대로 반환한다.
+  static Future<List<String>> extractBaseModules() async {
     final support = await getApplicationSupportDirectory();
     final destRoot = Directory(p.join(support.path, 'python_modules'));
 
@@ -28,6 +40,6 @@ class ToolAssets {
         data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
       );
     }
-    return p.join(destRoot.path, _baseScript);
+    return [for (final s in baseScripts) p.join(destRoot.path, s)];
   }
 }

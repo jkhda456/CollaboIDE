@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -21,7 +23,11 @@ class ConversationStore {
   final Database db;
   final String dbPath;
 
-  static const int _schemaVersion = 2;
+  static const int _schemaVersion = 3;
+
+  /// `file_changes` 에 유지할 최대 행 수. 오래된 것부터 버려 DB 가 무한히 크지
+  /// 않게 한다(경로 기준 1행이라 실제로는 파일 개수만큼만 쌓인다).
+  static const int maxFileChangeRows = 300;
 
   /// 대화 DB 임을 식별하는 표식(가져오기 검증용).
   static const String dbKind = 'collabo-conversation';
@@ -44,6 +50,13 @@ class ConversationStore {
         onCreate: _createSchema,
         onUpgrade: _upgradeSchema,
       ),
+    );
+    // 고아 하위 대화 정리: 분기 원점 메시지가 없는(과거 버전이 남긴
+    // parent_message_id NULL 포함) 서브에이전트 기록은 열 때 걷어낸다.
+    await db.delete(
+      'conversations',
+      where: "kind = 'sub' AND (parent_message_id IS NULL "
+          'OR parent_message_id NOT IN (SELECT id FROM messages))',
     );
     return ConversationStore._(db, path);
   }
@@ -99,6 +112,25 @@ class ConversationStore {
       'CREATE INDEX idx_conv_parent '
       'ON conversations(parent_conversation_id)',
     );
+    await _createFileChanges(db);
+  }
+
+  /// v3: 도구가 바꾼 파일 이력. 신규 생성(onCreate)과 업그레이드(onUpgrade)가
+  /// 같은 DDL 을 쓰도록 분리해 둔다.
+  static Future<void> _createFileChanges(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_changes (
+        path       TEXT PRIMARY KEY,
+        action     TEXT NOT NULL,
+        tool       TEXT,
+        edits      INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_file_changes_at '
+      'ON file_changes(updated_at)',
+    );
   }
 
   static Future<void> _upgradeSchema(
@@ -128,7 +160,65 @@ class ConversationStore {
       await db.update('meta', {'value': '2'}, where: 'key = ?',
           whereArgs: ['schema_version']);
     }
+    if (oldVersion < 3) {
+      // v2 → v3: 파일 변경 이력(에이전트 상태 요약용).
+      await _createFileChanges(db);
+    }
+    await db.update('meta', {'value': '$newVersion'}, where: 'key = ?',
+        whereArgs: ['schema_version']);
   }
+
+  // --- 파일 변경 이력 (에이전트 상태 요약용) ---
+
+  /// 도구가 파일을 바꿨을 때 기록한다(경로 기준 1행, 재변경 시 [FileChange.edits] 증가).
+  ///
+  /// [path] 는 **프로젝트 루트 기준 상대 경로**를 넣는다(주입 길이 절약).
+  /// 실패해도 대화 흐름을 막지 않도록 호출측에서 예외를 삼킨다.
+  Future<void> recordFileChange({
+    required String path,
+    required String action,
+    String? tool,
+  }) async {
+    if (path.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // UPSERT 대신 update→insert: 구버전 SQLite 에서도 동작한다.
+    final updated = await db.rawUpdate(
+      'UPDATE file_changes SET action = ?, tool = ?, edits = edits + 1, '
+      'updated_at = ? WHERE path = ?',
+      [action, tool, now, path],
+    );
+    if (updated == 0) {
+      await db.insert('file_changes', {
+        'path': path,
+        'action': action,
+        'tool': tool,
+        'edits': 1,
+        'updated_at': now,
+      });
+      // 새 경로가 들어왔을 때만 상한을 확인하면 충분하다.
+      // rowid 보조 정렬 — 같은 밀리초에 여러 건이 들어와도 순서가 확정된다.
+      await db.rawDelete(
+        'DELETE FROM file_changes WHERE path NOT IN '
+        '(SELECT path FROM file_changes ORDER BY updated_at DESC, rowid DESC '
+        'LIMIT ?)',
+        [maxFileChangeRows],
+      );
+    }
+  }
+
+  /// 최근 변경된 파일 목록(최신순, 최대 [limit] 건).
+  Future<List<FileChange>> recentFileChanges({int limit = 30}) async {
+    final rows = await db.query(
+      'file_changes',
+      // rowid 보조 정렬 — 같은 밀리초에 기록된 항목의 순서를 확정한다.
+      orderBy: 'updated_at DESC, rowid DESC',
+      limit: limit,
+    );
+    return rows.map(FileChange.fromRow).toList();
+  }
+
+  /// 파일 변경 이력을 모두 지운다(프로젝트 상태 요약 초기화용).
+  Future<void> clearFileChanges() => db.delete('file_changes');
 
   // --- conversations ---
 
@@ -267,27 +357,95 @@ class ConversationStore {
 
   /// 특정 메시지부터(그 메시지 포함) 이후의 메시지를 삭제한다.
   /// 대화 내용 수정/재시도 시, 수정 지점 이후를 잘라낼 때 쓴다.
+  /// 삭제되는 메시지에서 분기한 하위 대화(서브에이전트 기록)도 함께 지운다.
   Future<void> deleteMessagesFrom(int conversationId, int messageId) async {
-    await db.delete(
-      'messages',
-      where: 'conversation_id = ? AND id >= ?',
-      whereArgs: [conversationId, messageId],
-    );
+    await db.transaction((txn) async {
+      await txn.delete(
+        'conversations',
+        where: 'parent_conversation_id = ? AND parent_message_id >= ?',
+        whereArgs: [conversationId, messageId],
+      );
+      await txn.delete(
+        'messages',
+        where: 'conversation_id = ? AND id >= ?',
+        whereArgs: [conversationId, messageId],
+      );
+    });
   }
 
   /// 특정 메시지 **이후**(그 메시지는 유지)의 메시지를 삭제한다.
   /// 인플레이스 수정 시, 수정한 메시지는 두고 그 아래만 재생성할 때 쓴다.
+  /// 삭제되는 메시지에서 분기한 하위 대화(서브에이전트 기록)도 함께 지운다.
   Future<void> deleteMessagesAfter(int conversationId, int messageId) async {
-    await db.delete(
-      'messages',
-      where: 'conversation_id = ? AND id > ?',
-      whereArgs: [conversationId, messageId],
-    );
+    await db.transaction((txn) async {
+      await txn.delete(
+        'conversations',
+        where: 'parent_conversation_id = ? AND parent_message_id > ?',
+        whereArgs: [conversationId, messageId],
+      );
+      await txn.delete(
+        'messages',
+        where: 'conversation_id = ? AND id > ?',
+        whereArgs: [conversationId, messageId],
+      );
+    });
   }
 
-  /// 메시지 한 건을 삭제한다(체크포인트/시작점 원복 등에 사용).
+  /// 메시지 한 건을 삭제한다(체크포인트 원복 등 단일 행 대상에 사용).
+  /// 그 메시지에서 분기한 하위 대화(서브에이전트 기록)도 함께 지운다.
   Future<void> deleteMessage(int id) async {
-    await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      await txn.delete(
+        'conversations',
+        where: 'parent_message_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete('messages', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  /// 메시지가 속한 **턴 구간 전체**를 삭제한다(대화창의 삭제 버튼용).
+  ///
+  /// 한 턴은 DB 에 여러 행으로 저장된다: 도구 호출을 실은 중간 assistant 행들
+  /// (본문 없음 — 화면 미표시) + `role=tool` 결과 행들 + 최종 assistant 행.
+  /// 한 행만 지우면 나머지(에이전트 작업 기록)가 남으므로 구간째 지운다.
+  ///
+  /// 경계는 user 메시지/체크포인트다:
+  /// - user 메시지를 지우면: 그 메시지부터 다음 경계 직전까지(응답 포함).
+  /// - assistant/tool 을 지우면: 직전 경계 다음부터 다음 경계 직전까지
+  ///   (질문 user 메시지는 유지).
+  /// 구간 안의 체크포인트 행은 남기고, 구간 메시지에서 분기한 하위 대화
+  /// (서브에이전트 기록)도 함께 지운다.
+  Future<void> deleteTurn(int conversationId, int messageId) async {
+    final all = await messages(conversationId);
+    final idx = all.indexWhere((m) => m.id == messageId);
+    if (idx < 0) return;
+    bool isBoundary(Message m) =>
+        m.role == MessageRole.user || m.pipeline == 'checkpoint';
+    var start = idx;
+    if (all[idx].role != MessageRole.user) {
+      while (start > 0 && !isBoundary(all[start - 1])) {
+        start--;
+      }
+    }
+    var end = idx + 1;
+    while (end < all.length && !isBoundary(all[end])) {
+      end++;
+    }
+    final ids = [
+      for (var i = start; i < end; i++)
+        if (all[i].pipeline != 'checkpoint') all[i].id,
+    ];
+    if (ids.isEmpty) return;
+    final ph = List.filled(ids.length, '?').join(',');
+    await db.transaction((txn) async {
+      await txn.delete(
+        'conversations',
+        where: 'parent_conversation_id = ? AND parent_message_id IN ($ph)',
+        whereArgs: [conversationId, ...ids],
+      );
+      await txn.delete('messages', where: 'id IN ($ph)', whereArgs: ids);
+    });
   }
 
   /// 메시지 본문을 수정한다.
@@ -295,6 +453,94 @@ class ConversationStore {
     await db.update(
       'messages',
       {'content': content},
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  /// 이 메시지가 **위임한 작업**을 metadata 에 한 줄 남긴다.
+  ///
+  /// 위임(`run_subagent`/`verify_work`)의 결과 원문은 컨텍스트에 넣지 않는다 —
+  /// 길어서 메인 컨텍스트를 갉아먹는다. 대신 **"위임했다는 사실"** 만 남겨,
+  /// 다음 턴에서 에이전트가 "그 단계는 다른 에이전트가 했고 상세는 여기 없다" 를
+  /// 알 수 있게 한다(실제 내용은 턴 요약과 프로젝트 상태가 전달한다).
+  ///
+  /// 도구만 부른 턴은 assistant 본문이 비어 컨텍스트에서 통째로 사라지는데,
+  /// 이 표시가 그 자리를 대신한다.
+  Future<void> addMessageDelegation(
+    int messageId, {
+    required String tool,
+    required String task,
+  }) async {
+    final meta = await _readMetadata(messageId);
+    if (meta == null) return; // 이미 삭제된 메시지
+    final list = <Object?>[
+      ...((meta['delegated'] as List?) ?? const []),
+      {'tool': tool, 'task': task},
+    ];
+    // 한 턴에 여러 번 위임할 수 있지만 무한정 쌓이지 않게 최근 것만 남긴다.
+    meta['delegated'] = list.length > 8 ? list.sublist(list.length - 8) : list;
+    await db.update(
+      'messages',
+      {'metadata': jsonEncode(meta)},
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  /// 메시지의 metadata 를 읽는다(없거나 깨졌으면 빈 맵, 메시지 자체가 없으면 null).
+  Future<Map<String, Object?>?> _readMetadata(int messageId) async {
+    final rows = await db.query(
+      'messages',
+      columns: ['metadata'],
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final raw = rows.first['metadata'] as String?;
+    if (raw == null || raw.isEmpty) return <String, Object?>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return decoded.cast<String, Object?>();
+    } catch (_) {
+      // 깨진 metadata 는 새로 쓴다.
+    }
+    return <String, Object?>{};
+  }
+
+  /// 메시지 metadata 의 `summary` 만 갱신한다(reasoning/usage 등 기존 키는 보존).
+  ///
+  /// 턴 요약은 답변을 내보낸 뒤 **백그라운드로** 만들어지므로, 도착 시점에 대상
+  /// 메시지가 이미 사라졌을 수 있다(사용자가 그 위를 수정/삭제하고 다시 진행).
+  /// 그 경우 조용히 아무 일도 하지 않는다.
+  Future<void> updateMessageSummary(int messageId, String summary) async {
+    final rows = await db.query(
+      'messages',
+      columns: ['metadata'],
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return; // 이미 삭제된 메시지 — 늦게 온 요약은 버린다.
+    var meta = <String, Object?>{};
+    final raw = rows.first['metadata'] as String?;
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) meta = decoded.cast<String, Object?>();
+      } catch (_) {
+        // 깨진 metadata 는 새로 쓴다(요약을 잃는 것보다 낫다).
+      }
+    }
+    if (summary.isEmpty) {
+      meta.remove('summary');
+    } else {
+      meta['summary'] = summary;
+    }
+    await db.update(
+      'messages',
+      {'metadata': jsonEncode(meta)},
       where: 'id = ?',
       whereArgs: [messageId],
     );

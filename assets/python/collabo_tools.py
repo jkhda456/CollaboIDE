@@ -29,6 +29,7 @@ import difflib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -175,6 +176,55 @@ def _tail_text(path, max_bytes=PROC_TAIL_BYTES):
     return ("…(truncated)\n" + text) if size > max_bytes else text
 
 
+def _cursor_path(proc_dir):
+    """`<procDir>/cursor.json` — how far the LLM has read each log (bytes)."""
+    return os.path.join(proc_dir, "cursor.json")
+
+
+def _read_new_output(proc_dir, max_bytes=PROC_TAIL_BYTES):
+    """Return stdout/stderr appended since the stored cursor, then advance it.
+
+    Only the delta since the previous run_command/run_wait call is returned so
+    repeated waits do not resend (and re-bill) the same log content. If the
+    delta exceeds `max_bytes`, only its tail is returned (with a marker).
+    """
+    cur = _read_json(_cursor_path(proc_dir))
+    out = {}
+    new_cur = {}
+    for key, fn in (("stdout", "stdout.log"), ("stderr", "stderr.log")):
+        path = os.path.join(proc_dir, fn)
+        start = int(cur.get(key) or 0)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            out[key] = ""
+            new_cur[key] = start
+            continue
+        if size < start:
+            start = 0  # log replaced/truncated — start over
+        text = ""
+        if size > start:
+            try:
+                with open(path, "rb") as f:
+                    if size - start > max_bytes:
+                        f.seek(size - max_bytes)
+                        text = "…(truncated)\n" + f.read().decode(
+                            "utf-8", errors="replace")
+                    else:
+                        f.seek(start)
+                        text = f.read().decode("utf-8", errors="replace")
+            except OSError:
+                text = ""
+        out[key] = text
+        new_cur[key] = size
+    try:
+        with open(_cursor_path(proc_dir), "w", encoding="utf-8") as f:
+            json.dump(new_cur, f)
+    except OSError:
+        pass  # best-effort: worst case some output is resent next time
+    return out
+
+
 def _spawn_detached(cmd_argv, cwd):
     """Spawn a fully detached process that survives this process exiting."""
     kwargs = {
@@ -226,7 +276,9 @@ def read_file(args):
     "List the direct entries of a directory.",
     {
         "type": "object",
-        "properties": {"path": {"type": "string"}},
+        "properties": {
+            "path": {"type": "string", "description": "Directory to list"},
+        },
         "required": ["path"],
     },
 )
@@ -245,7 +297,12 @@ def list_directory(args):
     "Create a directory (including parents).",
     {
         "type": "object",
-        "properties": {"path": {"type": "string"}},
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Directory to create (parent folders are created too)",
+            },
+        },
         "required": ["path"],
     },
 )
@@ -262,7 +319,7 @@ def create_directory(args):
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
+            "path": {"type": "string", "description": "Path of the file to create"},
             "content": {"type": "string", "description": "File content (default empty)"},
             "overwrite": {"type": "boolean", "description": "Allow overwriting an existing file"},
         },
@@ -295,8 +352,16 @@ def create_file(args):
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
-            "content": {"type": "string"},
+            "path": {
+                "type": "string",
+                "description": "Path of the existing file to overwrite",
+            },
+            "content": {
+                "type": "string",
+                "description": "The complete new contents of the file (it replaces "
+                               "everything). This writes text — do NOT use it on "
+                               "zip-based documents such as .docx/.xlsx/.pptx.",
+            },
         },
         "required": ["path", "content"],
     },
@@ -324,10 +389,22 @@ def write_file(args):
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
-            "old_string": {"type": "string"},
-            "new_string": {"type": "string"},
-            "replace_all": {"type": "boolean"},
+            "path": {"type": "string", "description": "File to edit"},
+            "old_string": {
+                "type": "string",
+                "description": "Exact text to find. Unless replace_all is true it "
+                               "must occur exactly once — include surrounding lines "
+                               "to make it unique.",
+            },
+            "new_string": {
+                "type": "string",
+                "description": "Text to put in its place (empty string deletes it)",
+            },
+            "replace_all": {
+                "type": "boolean",
+                "description": "Replace every occurrence instead of requiring a "
+                               "single unique match (default false)",
+            },
         },
         "required": ["path", "old_string", "new_string"],
     },
@@ -363,8 +440,12 @@ def edit_file(args):
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
-            "recursive": {"type": "boolean"},
+            "path": {"type": "string", "description": "File or directory to delete"},
+            "recursive": {
+                "type": "boolean",
+                "description": "Required (true) to delete a directory and "
+                               "everything inside it",
+            },
         },
         "required": ["path"],
     },
@@ -390,8 +471,12 @@ def delete_path(args):
     {
         "type": "object",
         "properties": {
-            "src": {"type": "string"},
-            "dst": {"type": "string"},
+            "src": {"type": "string", "description": "Existing file/directory to move"},
+            "dst": {
+                "type": "string",
+                "description": "New path. Renaming is moving to a different name "
+                               "in the same folder.",
+            },
         },
         "required": ["src", "dst"],
     },
@@ -410,6 +495,18 @@ def move_path(args):
     return {"src": src, "dst": dst, "moved": True}
 
 
+def _wait_until_done(meta_path, seconds):
+    """Poll meta.json for up to `seconds`; return the last meta read."""
+    deadline = time.time() + max(1, seconds)
+    meta = {}
+    while time.time() < deadline:
+        meta = _read_json(meta_path)
+        if meta.get("status", "running") != "running":
+            break
+        time.sleep(0.2)
+    return meta
+
+
 @tool(
     "run_command",
     "Run a shell command in the background and return its output. The command "
@@ -417,18 +514,23 @@ def move_path(args):
     "registered as a background process (with an id) whose stdout/stderr are "
     "logged. If it finishes within `timeout` seconds you get the full output "
     "and exit code; otherwise you get the output so far plus running=true and "
-    "an id — use check_command with that id later, or the process viewer to "
-    "stop/inspect it. If elevated is true, administrator privileges are "
-    "required (requested if not available).",
+    "an id. It is NEVER killed on timeout - call run_wait with that id to keep "
+    "waiting (it returns only NEW output), stop_command to terminate it, or "
+    "leave it to the user (process viewer). If elevated is true, administrator "
+    "privileges are required (requested if not available).",
     {
         "type": "object",
         "properties": {
-            "command": {"type": "string"},
+            "command": {
+                "type": "string",
+                "description": "Shell command line to run (as you would type it "
+                               "in a terminal)",
+            },
             "cwd": {"type": "string", "description": "Working directory (default: workspace)"},
             "timeout": {
                 "type": "integer",
                 "description": "Seconds to wait for completion before returning "
-                "as still-running (default 60). The process is NOT killed on "
+                "as still-running (default 30). The process is NOT killed on "
                 "timeout.",
             },
             "elevated": {"type": "boolean", "description": "Whether admin privileges are required"},
@@ -443,7 +545,7 @@ def run_command(args):
     cwd = args.get("cwd") or WORKSPACE or None
     if cwd:
         cwd = _resolve(cwd)
-    timeout = int(args.get("timeout") or 60)
+    timeout = int(args.get("timeout") or 30)
 
     proc_id = uuid.uuid4().hex[:12]
     proc_dir = os.path.join(_proc_root(), proc_id)
@@ -459,17 +561,11 @@ def run_command(args):
     _spawn_detached([sys.executable, "-u", PROC_RUNNER, proc_dir], cwd=proc_dir)
 
     # Wait up to `timeout` for completion (the process is never killed here).
-    meta_path = os.path.join(proc_dir, "meta.json")
-    deadline = time.time() + max(1, timeout)
-    meta = {}
-    while time.time() < deadline:
-        meta = _read_json(meta_path)
-        if meta.get("status", "running") != "running":
-            break
-        time.sleep(0.2)
+    meta = _wait_until_done(os.path.join(proc_dir, "meta.json"), timeout)
 
     status = meta.get("status") or "running"
     running = status == "running"
+    new = _read_new_output(proc_dir)
     result = {
         "id": proc_id,
         "pid": meta.get("pid"),
@@ -477,14 +573,17 @@ def run_command(args):
         "running": running,
         "command": command,
         "cwd": cwd or "",
-        "stdout": _tail_text(os.path.join(proc_dir, "stdout.log")),
-        "stderr": _tail_text(os.path.join(proc_dir, "stderr.log")),
+        "stdout": new["stdout"],
+        "stderr": new["stderr"],
     }
     if running:
         result["note"] = (
-            "Still running in the background after %ds. Call check_command with "
-            "id '%s' to get its current status/output, or use the process viewer "
-            "to stop it." % (timeout, proc_id)
+            "Still running in the background after %ds (NOT killed). To keep "
+            "waiting call run_wait with id '%s' - it returns only output "
+            "produced since this call. If you decide to give up, call "
+            "stop_command to terminate it, or leave it running and tell the "
+            "user (the process viewer can inspect/stop it at any time)."
+            % (timeout, proc_id)
         )
     else:
         result["exit_code"] = meta.get("exit_code")
@@ -492,39 +591,97 @@ def run_command(args):
 
 
 @tool(
-    "check_command",
-    "Check the current status and output of a background command previously "
-    "started by run_command, by its id (preferred) or pid. Returns status "
-    "(running/exited/killed), exit code when finished, and the tail of "
-    "stdout/stderr.",
+    "run_wait",
+    "Keep waiting for a background command started by run_command. Waits up to "
+    "`wait` seconds (default 30) for it to finish and returns its status plus "
+    "ONLY the stdout/stderr produced since your previous run_command/run_wait "
+    "call (incremental - safe to call repeatedly without bloating context). "
+    "Call it again while you still expect the command to finish; if you give "
+    "up, call stop_command or leave the process to the user.",
     {
         "type": "object",
         "properties": {
             "id": {"type": "string", "description": "Command id returned by run_command"},
-            "pid": {"type": "integer", "description": "Process id (alternative to id)"},
+            "wait": {
+                "type": "integer",
+                "description": "Seconds to wait before reporting back (default 30).",
+            },
         },
+        "required": ["id"],
     },
 )
-def check_command(args):
+def run_wait(args):
+    proc_dir = _find_proc_dir(args)
+    wait = int(args.get("wait") or 30)
+    meta = _wait_until_done(os.path.join(proc_dir, "meta.json"), wait)
+    status = meta.get("status") or "running"
+    running = status == "running"
+    new = _read_new_output(proc_dir)
+    result = {
+        "id": meta.get("id") or os.path.basename(proc_dir),
+        "pid": meta.get("pid"),
+        "status": status,
+        "running": running,
+        "command": meta.get("command"),
+        "stdout": new["stdout"],
+        "stderr": new["stderr"],
+        "incremental": True,
+    }
+    if running:
+        result["note"] = (
+            "Still running after waiting %ds more. stdout/stderr above contain "
+            "only NEW output since your previous call. Call run_wait again to "
+            "keep waiting, stop_command to terminate, or leave it to the user."
+            % wait
+        )
+    else:
+        result["exit_code"] = meta.get("exit_code")
+    return result
+
+
+def _find_proc_dir(args):
+    """Locate a background command's procDir by id (preferred) or pid."""
     proc_id = args.get("id")
     pid = args.get("pid")
     root = _proc_root()
-    proc_dir = None
     if proc_id:
         cand = os.path.join(root, str(proc_id))
         if os.path.isdir(cand):
-            proc_dir = cand
-    if proc_dir is None and pid is not None:
+            return cand
+    if pid is not None:
         try:
             for name in os.listdir(root):
                 d = os.path.join(root, name)
                 if _read_json(os.path.join(d, "meta.json")).get("pid") == int(pid):
-                    proc_dir = d
-                    break
+                    return d
         except OSError:
             pass
-    if proc_dir is None:
-        raise ToolError("No such background command (id/pid not found).")
+    raise ToolError("No such background command (id/pid not found).")
+
+
+@tool(
+    "check_command",
+    "Check the current status and output of a background command previously "
+    "started by run_command, by its id (preferred) or pid. Returns status "
+    "(running/exited/killed), exit code when finished, and the tail of "
+    "stdout/stderr. This is a snapshot: unlike run_wait it does not wait and "
+    "does not advance the incremental-output cursor.",
+    {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Command id returned by run_command. Give either id or pid — id is preferred.",
+            },
+            "pid": {
+                "type": "integer",
+                "description": "Process id, if you do not have the command id.",
+            },
+        },
+    },
+)
+def check_command(args):
+    proc_dir = _find_proc_dir(args)
     meta = _read_json(os.path.join(proc_dir, "meta.json"))
     status = meta.get("status") or "running"
     return {
@@ -536,6 +693,67 @@ def check_command(args):
         "command": meta.get("command"),
         "stdout": _tail_text(os.path.join(proc_dir, "stdout.log")),
         "stderr": _tail_text(os.path.join(proc_dir, "stderr.log")),
+    }
+
+
+@tool(
+    "stop_command",
+    "Terminate a background command (whole process tree) started by "
+    "run_command. Use this only when you have decided to give up on the "
+    "command (e.g. it hangs or is no longer needed) - never just because it "
+    "is slow. Returns the final status and any remaining new output.",
+    {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Command id returned by run_command. Give either id or pid — id is preferred.",
+            },
+            "pid": {
+                "type": "integer",
+                "description": "Process id, if you do not have the command id.",
+            },
+        },
+    },
+)
+def stop_command(args):
+    proc_dir = _find_proc_dir(args)
+    meta_path = os.path.join(proc_dir, "meta.json")
+    meta = _read_json(meta_path)
+    status = meta.get("status") or "running"
+    pid = meta.get("pid")
+    stopped = False
+    if status == "running" and pid:
+        try:
+            if os.name == "nt":
+                # Kill the whole tree (the child may have grandchildren).
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                )
+            else:
+                # The child is its session/group leader (pgid == pid).
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    os.kill(pid, signal.SIGTERM)
+            stopped = True
+        except (OSError, ProcessLookupError, subprocess.SubprocessError):
+            pass  # already gone / cannot signal — report the state below
+        # proc_runner notices the child died and updates meta shortly.
+        meta = _wait_until_done(meta_path, 5)
+        status = meta.get("status") or "running"
+    new = _read_new_output(proc_dir)
+    return {
+        "id": meta.get("id") or os.path.basename(proc_dir),
+        "pid": pid,
+        "status": status,
+        "running": status == "running",
+        "stopped": stopped,
+        "exit_code": meta.get("exit_code"),
+        "command": meta.get("command"),
+        "stdout": new["stdout"],
+        "stderr": new["stderr"],
     }
 
 
@@ -615,9 +833,17 @@ def search_text(args):
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
-            "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"},
+            "path": {"type": "string", "description": "File to read from"},
+            "start_line": {
+                "type": "integer",
+                "description": "First line to read, 1-based and inclusive "
+                               "(default: 1)",
+            },
+            "end_line": {
+                "type": "integer",
+                "description": "Last line to read, 1-based and inclusive "
+                               "(default: end of file)",
+            },
         },
         "required": ["path"],
     },
@@ -648,9 +874,16 @@ def read_lines(args):
     {
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
-            "start_line": {"type": "integer"},
-            "end_line": {"type": "integer"},
+            "path": {"type": "string", "description": "File to edit"},
+            "start_line": {
+                "type": "integer",
+                "description": "First line to replace, 1-based and inclusive "
+                               "(use read_lines first to confirm the range)",
+            },
+            "end_line": {
+                "type": "integer",
+                "description": "Last line to replace, 1-based and inclusive",
+            },
             "content": {"type": "string", "description": "Replacement text (may be empty)"},
         },
         "required": ["path", "start_line", "end_line", "content"],
@@ -688,7 +921,13 @@ def replace_lines(args):
     "(handled by the native side, e.g. via UAC).",
     {
         "type": "object",
-        "properties": {"reason": {"type": "string"}},
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": "Why elevation is needed, in one sentence — it is "
+                               "shown to the user, who decides whether to allow it",
+            },
+        },
         "required": ["reason"],
     },
 )

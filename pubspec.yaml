@@ -48,6 +48,7 @@ dependencies:
   intl: ^0.20.2
   webview_flutter: ^4.14.0
   package_info_plus: ^10.1.0
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_test:
@@ -75,6 +76,9 @@ flutter:
   assets:
     - assets/web/
     - assets/web/vendor/
+    - assets/web/viewers/
+    # 예제 뷰어(기본으로 붙지 않고 설정에서 추가). 에셋 폴더는 비재귀라 따로 적는다.
+    - assets/web/viewers/examples/
     - assets/web/lang/
     - assets/python/
     - assets/python/lang/

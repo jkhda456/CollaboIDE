@@ -12,10 +12,18 @@ import 'package:path_provider/path_provider.dart';
 class WebAssets {
   static const String _assetPrefix = 'assets/web/';
 
+  /// 웹 리소스가 펼쳐지는 루트(`<appSupport>/web`).
+  ///
+  /// 사용자 뷰어 스테이징(`ViewerAssets.sync`)도 **이 안**에 둔다 — macOS 웹뷰가
+  /// 읽을 수 있는 범위가 여기로 한정되기 때문이다(이유는 그쪽 주석 참고).
+  static Future<Directory> webRoot() async {
+    final support = await getApplicationSupportDirectory();
+    return Directory(p.join(support.path, 'web'));
+  }
+
   /// 웹 에셋을 추출하고 진입점 `index.html` 의 `file://` URL 을 반환한다.
   static Future<String> extractAndGetIndexUrl() async {
-    final support = await getApplicationSupportDirectory();
-    final destRoot = Directory(p.join(support.path, 'web'));
+    final destRoot = await webRoot();
 
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final keys =

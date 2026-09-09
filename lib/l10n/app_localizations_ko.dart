@@ -21,6 +21,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get tabTools => '도구';
 
   @override
+  String get tabViewers => '뷰어';
+
+  @override
   String get tabPrompt => '프롬프트';
 
   @override
@@ -53,6 +56,13 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get usePreAssessmentDesc =>
       '답변 전에 서브에이전트가 마지막 요청을 보고 위임이 필요한지 한 줄 의견을 덧붙입니다.';
+
+  @override
+  String get useProjectState => '프로젝트 상태 알려주기';
+
+  @override
+  String get useProjectStateDesc =>
+      '폴더 구조와 도구가 바꾼 파일 목록을 요약해 에이전트에게 함께 전달합니다. 이미 끝난 작업을 다시 시도하는 낭비를 줄입니다(길이 제한 적용).';
 
   @override
   String get resetDefault => '기본값으로 되돌리기';
@@ -132,6 +142,39 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get activityIdleTooltip => '실행 중 프로세스 없음';
+
+  @override
+  String get activityTitleNative => '도구 호출 내역';
+
+  @override
+  String get activityEmptyNative => '아직 도구 호출이 없습니다.';
+
+  @override
+  String get activitySelectHint => '호출을 선택하면 인자와 결과 원문을 볼 수 있습니다.';
+
+  @override
+  String get activityArgs => '인자';
+
+  @override
+  String get activityResult => '결과';
+
+  @override
+  String get activityClear => '기록 비우기';
+
+  @override
+  String get activityScopeMain => '메인';
+
+  @override
+  String get activityScopeSub => '서브에이전트';
+
+  @override
+  String get activityScopeVerify => '검증';
+
+  @override
+  String get activityScopeDelegate => '위임';
+
+  @override
+  String get copy => '복사';
 
   @override
   String get procTitle => '프로세스';
@@ -275,6 +318,16 @@ class AppLocalizationsKo extends AppLocalizations {
   String get reasoningEffortOff => '안 붙이기';
 
   @override
+  String get firstResponseTimeout => '첫 응답(프리필) 대기 시간';
+
+  @override
+  String get firstResponseTimeoutDesc =>
+      '요청을 보낸 뒤 첫 응답이 이 시간 안에 오지 않으면 끊고 다시 시도합니다. 응답이 시작되면 해제되어 그 뒤로는 시간으로 끊지 않습니다. 0 이면 제한 없음 — 큰 컨텍스트의 프리필에 오래 걸리는 로컬 모델에 쓰세요(대기 중에도 중지는 언제든 가능합니다).';
+
+  @override
+  String get secondsUnit => '초';
+
+  @override
   String get testConnection => '연결 상태 확인';
 
   @override
@@ -288,7 +341,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get toolModelDesc =>
-      '서브에이전트·검증 도구가 사용할 프리셋을 선택합니다. \'기본 모델 사용\'은 기본 프리셋을 따릅니다.';
+      '서브에이전트·검증 도구가 사용할 프리셋을 선택합니다. \'기본 모델 사용\'은 상단 헤더에서 고른 대화 모델을 따릅니다.';
 
   @override
   String get useDefaultModel => '기본 모델 사용';
@@ -352,13 +405,74 @@ class AppLocalizationsKo extends AppLocalizations {
   }
 
   @override
-  String get baseModuleLabel => 'collabo_base (기본)';
-
-  @override
   String get extractPending => '추출 대기 중…';
 
   @override
   String get viewTools => '도구 보기';
+
+  @override
+  String get viewersDesc =>
+      '우측 하단 파일 뷰어를 JS 파일로 확장합니다. 추가하면 뷰어의 보기 방식 드롭다운에 바로 나타납니다.';
+
+  @override
+  String get viewerRulesTitle => '확장자 연결';
+
+  @override
+  String get viewerRulesDesc =>
+      '각 뷰어가 담당할 확장자를 정합니다. 담당 확장자가 있으면 그 파일에만 자동으로 쓰이고, 비워 두면 아무도 담당하지 않는 파일의 폴백으로만 쓰입니다. 체크를 끄면 그 뷰어를 아예 쓰지 않습니다(기본 뷰어도 끌 수 있습니다). 같은 확장자를 여러 뷰어가 담당하면 위에 있는 뷰어가 쓰이므로, 손잡이를 끌어 순서를 바꾸세요.';
+
+  @override
+  String get viewerOrderReset => '순서 초기화';
+
+  @override
+  String get viewerReorderTooltip => '끌어서 순서 변경';
+
+  @override
+  String get viewerUserFilesTitle => '사용자 뷰어 파일';
+
+  @override
+  String get viewerExampleDesc =>
+      '앱에 들어 있는 예제 뷰어입니다. 추가하면 사용자 뷰어로 얹히고, 복사해서 새 뷰어를 만들 수 있습니다.';
+
+  @override
+  String get viewerBuiltinBadge => '기본';
+
+  @override
+  String get viewerUserBadge => '사용자';
+
+  @override
+  String get viewersWaiting => '뷰어 목록을 불러오는 중입니다…';
+
+  @override
+  String get viewersNeedProject => '프로젝트를 한 번 열면 뷰어 목록이 표시됩니다.';
+
+  @override
+  String get addViewer => '뷰어 추가';
+
+  @override
+  String get addViewerFile => 'JS 파일 하나';
+
+  @override
+  String get addViewerFileDesc => '뷰어 하나가 담긴 .js 파일';
+
+  @override
+  String get addViewerFolder => '폴더 (viewer.json)';
+
+  @override
+  String get addViewerFolderDesc =>
+      '여러 파일·WASM 로 된 뷰어. 폴더에 viewer.json 이 있어야 합니다';
+
+  @override
+  String get viewersEmpty => '추가한 뷰어가 없습니다. 기본 뷰어만 사용합니다.';
+
+  @override
+  String get viewSource => '소스 보기';
+
+  @override
+  String get viewerFileMissing => '파일을 찾을 수 없음';
+
+  @override
+  String get viewerReadFailed => '파일을 읽을 수 없습니다.';
 
   @override
   String get pythonEnv => 'Python 환경';

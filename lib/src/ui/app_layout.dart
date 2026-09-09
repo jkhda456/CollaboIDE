@@ -9,6 +9,7 @@ import 'left_nav.dart';
 import 'new_project_dialog.dart';
 import 'process_monitor_dialog.dart';
 import 'settings_dialog.dart';
+import 'tool_activity_dialog.dart';
 
 /// 최상위 레이아웃: 좌측 네이티브 메뉴 + 웹뷰 영역.
 ///
@@ -69,8 +70,11 @@ class _AppLayoutState extends State<AppLayout> {
     }
   }
 
-  void _onOpenSettings() {
-    showSettingsDialog(context, _workspace);
+  /// 설정 창을 연다. [section] 은 웹의 설정 안내 버튼이 넘기는 대상 섹션
+  /// ('model'|'tools' 등). 좌측 메뉴의 ⚙ 는 인자 없이 호출해 기본 탭으로 연다.
+  void _onOpenSettings([String section = '']) {
+    showSettingsDialog(context, _workspace,
+        initialTab: settingsTabIndexFor(section));
   }
 
   @override
@@ -101,6 +105,9 @@ class _AppLayoutState extends State<AppLayout> {
                         projectPath: _workspace.projectPath,
                         themeMode: _workspace.themeMode,
                         langCode: _workspace.langCode,
+                        onOpenSettings: _onOpenSettings,
+                        onOpenActivity: (log, id) =>
+                            showToolActivity(context, log, initialId: id),
                       )
                     : _EmptyState(
                         onNewProject: _onNewProject,

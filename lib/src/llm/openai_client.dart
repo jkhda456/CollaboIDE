@@ -34,12 +34,18 @@ class OpenAiClient implements LlmProvider {
   @override
   Future<LlmTestResult> test(LlmConfig cfg) async {
     if (cfg.baseUrl.isEmpty) return const LlmTestResult(false, 'URL is empty.');
+    final uri = Uri.tryParse('${_base(cfg)}/models');
+    if (uri == null) return const LlmTestResult(false, 'Invalid URL.');
+    // 헤더에 실을 수 없는 문자가 키에 있으면 전송 시 FormatException 이 나므로 미리 안내.
+    final keyErr = apiKeyHeaderError(cfg.apiKey);
+    if (keyErr != null) return LlmTestResult(false, keyErr);
     try {
       final resp = await _client
-          .get(Uri.parse('${_base(cfg)}/models'), headers: _headers(cfg))
+          .get(uri, headers: _headers(cfg))
           .timeout(const Duration(seconds: 15));
       if (resp.statusCode == 200) return const LlmTestResult(true, 'Connected');
-      return LlmTestResult(false, 'HTTP ${resp.statusCode}: ${_short(resp.body)}');
+      return LlmTestResult(
+          false, 'HTTP ${resp.statusCode}: ${_short(bodyText(resp))}');
     } catch (e) {
       return LlmTestResult(false, 'Connection failed: $e');
     }
@@ -57,6 +63,9 @@ class OpenAiClient implements LlmProvider {
     // 이전 턴에서 남은(죽은) 연결로 요청이 나가 서버에 도달하지 못하고 멈추는
     // 문제가 있어, 연결 재사용을 피한다(첫 요청만 되고 다음이 멈추는 증상 방지).
     // 단, 테스트에서 주입한 클라이언트가 있으면 그걸 그대로 쓴다(닫지 않음).
+    // 키에 헤더로 못 실을 문자가 있으면 전송 시 FormatException 이 나므로 미리 막고 안내.
+    final keyErr = apiKeyHeaderError(cfg.apiKey);
+    if (keyErr != null) throw Exception(keyErr);
     final client = _injected ?? http.Client();
     try {
       final req =
@@ -79,7 +88,9 @@ class OpenAiClient implements LlmProvider {
 
       final resp = await client.send(req);
       if (resp.statusCode != 200) {
-        final body = await resp.stream.bytesToString();
+        // 엄격 utf8(bytesToString 기본)은 깨진 바이트에서 FormatException 을 던지므로
+        // allowMalformed 로 안전하게 디코딩한다.
+        final body = utf8.decode(await resp.stream.toBytes(), allowMalformed: true);
         throw Exception('HTTP ${resp.statusCode}: ${_short(body)}');
       }
 
@@ -95,8 +106,10 @@ class OpenAiClient implements LlmProvider {
           ? PromptedToolParser(knownNames: knownNames)
           : null;
 
-      final lines =
-          resp.stream.transform(utf8.decoder).transform(const LineSplitter());
+      // 스트림 중간에 깨진 바이트가 와도 대화가 끊기지 않도록 관대한 디코더 사용.
+      final lines = resp.stream
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter());
       await for (final line in lines) {
         if (!line.startsWith('data:')) continue;
         final data = line.substring(5).trim();

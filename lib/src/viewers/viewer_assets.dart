@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
@@ -66,6 +67,16 @@ class ViewerAssets {
     return dest.path;
   }
 
+  /// 여러 파일로 된 뷰어(폴더)의 매니페스트 파일명.
+  ///
+  /// ```json
+  /// { "entry": "main.js", "scripts": ["lib/dep.js"], "assets": ["mod.wasm"] }
+  /// ```
+  /// `scripts` → `entry` 순서로 로드된다. `assets`(예: .wasm)는 로드하지 않고 그냥
+  /// 같이 복사되며, 플러그인이 `collaboViewers.asset(id, name)` 으로 바이트를 읽는다
+  /// (웹은 `file://` 에서 fetch 를 못 하므로 네이티브가 읽어 준다).
+  static const String manifestName = 'viewer.json';
+
   /// [sources] 를 웹 루트로 복사하고, 웹에 넘길 상대 URL 목록을 돌려준다.
   /// 목록에 없는 예전 파일은 지운다(설정에서 제거한 뷰어가 되살아나지 않게).
   ///
@@ -86,29 +97,86 @@ class ViewerAssets {
     final urls = <String>[];
     for (final s in sources) {
       if (s.path.isEmpty) continue;
-      final name = s.stagedName;
-      if (keep.contains(name)) continue; // 같은 파일이 두 번 등록된 경우.
       try {
-        if (!await File(s.path).exists()) continue;
-        await File(s.path).copy(p.join(dir.path, name));
+        final type = await FileSystemEntity.type(s.path, followLinks: true);
+        if (type == FileSystemEntityType.directory) {
+          // 여러 파일로 된 뷰어(폴더 + viewer.json).
+          final name = s.stagedBaseName;
+          if (keep.contains(name)) continue;
+          final staged = await _stagePackage(s, Directory(p.join(dir.path, name)));
+          if (staged.isEmpty) continue;
+          keep.add(name);
+          urls.addAll([for (final rel in staged) '$_urlPrefix$name/$rel']);
+        } else if (type == FileSystemEntityType.file) {
+          final name = s.stagedName;
+          if (keep.contains(name)) continue; // 같은 파일이 두 번 등록된 경우.
+          await File(s.path).copy(p.join(dir.path, name));
+          keep.add(name);
+          urls.add('$_urlPrefix$name');
+        }
       } catch (_) {
-        continue; // 권한/락 등으로 복사 실패 — 그 뷰어만 빠진다.
+        continue; // 없는 경로/권한/락 — 그 뷰어만 빠진다(설정에 경고가 뜬다).
       }
-      keep.add(name);
-      urls.add('$_urlPrefix$name');
     }
 
-    // 잔재 정리: 이번에 스테이징하지 않은 파일은 더 이상 등록된 뷰어가 아니다.
+    // 잔재 정리: 이번에 스테이징하지 않은 것은 더 이상 등록된 뷰어가 아니다.
     try {
       await for (final e in dir.list(followLinks: false)) {
-        if (e is File && !keep.contains(p.basename(e.path))) {
-          try {
-            await e.delete();
-          } catch (_) {}
-        }
+        if (keep.contains(p.basename(e.path))) continue;
+        try {
+          await e.delete(recursive: e is Directory);
+        } catch (_) {}
       }
     } catch (_) {}
 
     return urls;
+  }
+
+  /// 폴더 뷰어 하나를 통째로 복사하고, **로드할 순서대로** 상대 경로를 돌려준다.
+  /// 매니페스트가 없거나 entry 를 못 찾으면 빈 목록(그 뷰어는 빠진다).
+  static Future<List<String>> _stagePackage(
+      ViewerSource source, Directory dest) async {
+    final src = Directory(source.path);
+    final manifestFile = File(p.join(src.path, manifestName));
+    if (!await manifestFile.exists()) return const [];
+
+    List<String> scripts;
+    String entry;
+    try {
+      final json = jsonDecode(await manifestFile.readAsString());
+      if (json is! Map) return const [];
+      entry = (json['entry'] as String?) ?? 'main.js';
+      scripts = [
+        for (final s in (json['scripts'] as List? ?? const []))
+          if (s is String) s,
+      ];
+    } catch (_) {
+      return const []; // 깨진 매니페스트 — 조용히 건너뛴다(설정에서 소스를 볼 수 있다).
+    }
+    if (!await File(p.join(src.path, entry)).exists()) return const [];
+
+    // 폴더를 그대로 복사한다(assets/wasm 포함). 매번 새로 만들어 지워진 파일이
+    // 남지 않게 한다.
+    try {
+      if (await dest.exists()) await dest.delete(recursive: true);
+      await _copyTree(src, dest);
+    } catch (_) {
+      return const [];
+    }
+    // scripts → entry 순서. 웹은 이 순서대로 **차례로** 로드한다.
+    return [...scripts, entry];
+  }
+
+  static Future<void> _copyTree(Directory src, Directory dest) async {
+    await dest.create(recursive: true);
+    await for (final e in src.list(followLinks: false)) {
+      final name = p.basename(e.path);
+      final target = p.join(dest.path, name);
+      if (e is Directory) {
+        await _copyTree(e, Directory(target));
+      } else if (e is File) {
+        await e.copy(target);
+      }
+    }
   }
 }

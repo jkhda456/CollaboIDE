@@ -13,10 +13,16 @@ import 'tool_source.dart';
 ///   `<python> <script> describe`        → 도구 스키마(JSON)
 ///   `<python> <script> call <tool>`     → stdin(JSON 인자) → stdout(JSON 결과)
 class ToolRunner {
-  const ToolRunner(this.interpreter);
+  const ToolRunner(this.interpreter, {this.onProcessStart});
 
   /// Python 인터프리터 경로(포터블 환경).
   final String interpreter;
+
+  /// 도구 프로세스를 띄울 때마다 호출된다(호출측이 추적해 **중지 시 죽이려는** 용도).
+  ///
+  /// 도구에는 기본 타임아웃이 없어서(`run_wait` 처럼 길게 기다리는 게 정상), 사용자가
+  /// 중지를 눌렀을 때 이 핸들이 없으면 그 도구가 끝날 때까지 중지가 지연된다.
+  final void Function(Process proc)? onProcessStart;
 
   /// 모듈의 도구 목록을 조회한다. 실패하면 null.
   Future<ToolModule?> describe(
@@ -26,10 +32,15 @@ class ToolRunner {
     String? workingDirectory,
   }) async {
     try {
+      // Python 은 UTF-8 로 출력하게 하고(비-ASCII 설명이 cp949 콘솔에서 죽지
+      // 않도록), Dart 도 stdout 을 UTF-8 로 디코딩한다(Process.run 기본은
+      // systemEncoding 이라 한국어 Windows 에서 깨진다).
       final res = await Process.run(
         interpreter,
         [scriptPath, 'describe'],
-        environment: env,
+        environment: {'PYTHONIOENCODING': 'utf-8', ...?env},
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
         workingDirectory: workingDirectory,
       ).timeout(const Duration(seconds: 30));
       if (res.exitCode != 0) return null;
@@ -102,7 +113,7 @@ class ToolRunner {
     bool elevated = false,
     Map<String, String>? extraEnv,
     String? workingDirectory,
-    Duration timeout = const Duration(seconds: 300),
+    Duration? timeout,
   }) async {
     final env = <String, String>{'PYTHONIOENCODING': 'utf-8'};
     if (workspace != null) env['COLLABO_WORKSPACE'] = workspace;
@@ -115,19 +126,24 @@ class ToolRunner {
       // 상대 경로가 프로젝트 기준으로 풀리도록 cwd 를 프로젝트로 잡는다.
       workingDirectory: workingDirectory ?? workspace,
     );
+    onProcessStart?.call(proc);
     proc.stdin.write(jsonEncode(args));
     await proc.stdin.close();
     try {
-      // 멈춘(응답 없는) 도구가 영원히 대기하지 않도록 전체 실행에 타임아웃을 건다.
+      // 기본은 타임아웃 없음: 도구는 스스로 완료를 보고한다(백그라운드 명령의
+      // 긴 대기(run_wait)를 여기서 죽이면 안 된다). 대기 중인 명령은 사용자가
+      // 프로세스 뷰어에서 종료하면 도구도 상태 변화를 보고 즉시 반환한다.
+      // [timeout] 을 지정한 호출에만 백스톱을 건다.
+      final stdoutText = proc.stdout.transform(utf8.decoder).join();
       final out =
-          await proc.stdout.transform(utf8.decoder).join().timeout(timeout);
+          timeout == null ? await stdoutText : await stdoutText.timeout(timeout);
       await proc.stderr.drain<void>();
       await proc.exitCode;
       return ToolCallResult.fromJson(jsonDecode(out) as Map<String, Object?>);
     } on TimeoutException {
       proc.kill(ProcessSignal.sigkill);
       return ToolCallResult(
-          ok: false, error: 'Tool timed out after ${timeout.inSeconds}s');
+          ok: false, error: 'Tool timed out after ${timeout!.inSeconds}s');
     } catch (e) {
       return ToolCallResult(ok: false, error: '도구 응답 파싱 실패: $e');
     }
