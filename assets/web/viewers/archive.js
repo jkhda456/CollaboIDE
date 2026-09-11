@@ -246,7 +246,7 @@
           var empty = document.createElement('div');
           empty.className = 'p-2 text-secondary small';
           empty.textContent = q
-            ? t('noResults', '검색 결과 없음')
+            ? t('noResults', '검색 결과가 없습니다')
             : t('archiveEmpty', '빈 압축 파일입니다.');
           listEl.appendChild(empty);
         }
@@ -285,7 +285,7 @@
 
         var body = document.createElement('div');
         body.className = 'archive-preview-body text-secondary small';
-        body.textContent = t('viewerLoading', '파일을 읽는 중…');
+        body.textContent = t('viewerLoading', '파일을 읽는 중입니다…');
         preview.appendChild(body);
 
         var wanted = node.entryName;

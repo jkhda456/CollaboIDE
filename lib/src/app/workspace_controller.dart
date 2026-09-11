@@ -8,6 +8,7 @@ import '../conversation/conversation_store.dart';
 import '../data/app_database.dart';
 import '../llm/llm_config.dart';
 import '../llm/llm_preset.dart';
+import '../llm/stream_budget.dart';
 import '../llm/system_prompt.dart';
 import '../process/background_process_registry.dart';
 import '../process/process_manager.dart';
@@ -67,6 +68,13 @@ class WorkspaceController extends ChangeNotifier {
 
   /// 사용자가 추가한 도구 소스(일반 CLI / MCP). (설정에 저장, tools 로 확장)
   List<ToolSource> _toolSources = const [];
+
+  /// 에이전트에게 **넘기지 않을** 도구들(`toolKey(소스 id, 원래 이름)`).
+  ///
+  /// 소스는 추가된 채로 두고 노출만 막는 장치다 — 지우면 설정(경로·MCP 명령)까지
+  /// 사라지지만, 꺼 두면 언제든 다시 켤 수 있다. 실제 배제는
+  /// [ToolRegistry.load] 가 한 곳에서 한다(목록에서 빠지므로 부를 수도 없다).
+  Set<String> _disabledTools = const {};
 
   /// 사용자가 추가한 파일 뷰어(JS 익스텐션). (설정에 저장, 웹뷰가 로드)
   List<ViewerSource> _viewerSources = const [];
@@ -133,6 +141,7 @@ class WorkspaceController extends ChangeNotifier {
   static const String _toolModelsKey = 'llm_tool_models';
   static const String _projectModelsKey = 'llm_project_models';
   static const String _toolModulesKey = 'tool_modules';
+  static const String _disabledToolsKey = 'tool_disabled';
   static const String _viewerSourcesKey = 'viewer_sources';
   static const String _viewerRulesKey = 'viewer_rules';
   static const String _viewerOrderKey = 'viewer_order';
@@ -217,6 +226,80 @@ class WorkspaceController extends ChangeNotifier {
       if (p != null) return p.config;
     }
     return configForConversation(projectPath);
+  }
+
+  /// 대화가 실제로 쓰는 프리셋 id(**빈 문자열이 아니라 해석된 값**).
+  /// 속도 실측을 프리셋별로 모으려면 "기본 사용" 이 아니라 실제 id 가 필요하다.
+  String resolvedPresetIdForConversation([String? projectPath]) {
+    final path = projectPath ?? _projectPath;
+    if (path != null) {
+      final id = _projectModels[path];
+      if (id != null && id.isNotEmpty && _presetById(id) != null) return id;
+    }
+    return defaultPreset.id;
+  }
+
+  /// 도구가 실제로 쓰는 프리셋 id. 해석 순서는 [configForTool] 과 같다.
+  String resolvedPresetIdForTool(String toolName, [String? projectPath]) {
+    final id = _toolModels[toolName];
+    if (id != null && id.isNotEmpty && _presetById(id) != null) return id;
+    return resolvedPresetIdForConversation(projectPath);
+  }
+
+  /// 프리셋별 실측 속도계(세션 한정). 신뢰 조건을 넘으면 프리셋에도 저장한다.
+  final Map<String, SpeedMeter> _speedMeters = {};
+
+  /// 이 프리셋에 적용할 처리 속도(tok/s).
+  ///
+  /// 해석 순서: **사용자 지정 → 이번 세션 실측 → 저장된 실측 → 기본값(100)**.
+  /// 사용자가 값을 넣었으면 앱은 그걸 덮지 않는다.
+  double effectiveTps(String presetId) {
+    final cfg = _presetById(presetId)?.config ?? const LlmConfig();
+    if (cfg.speedTps > 0) return cfg.speedTps;
+    final live = _speedMeters[presetId]?.tps;
+    if (live != null) return live;
+    return cfg.storedTps; // 저장된 실측 → 기본값
+  }
+
+  /// 이 프리셋의 스트리밍 시간 상한(널이면 무제한).
+  Duration? streamingLimitFor(String presetId) {
+    final cfg = _presetById(presetId)?.config;
+    if (cfg == null) return null;
+    return budgetToTime(cfg.responseTokenBudget, effectiveTps(presetId));
+  }
+
+  /// 상한에 걸렸을 때 보여 줄 근거 문구.
+  String budgetReasonFor(String presetId, Duration limit) {
+    final cfg = _presetById(presetId)?.config ?? const LlmConfig();
+    final userSet = cfg.speedTps > 0;
+    return budgetReason(
+      limit: limit,
+      tokenBudget: cfg.responseTokenBudget,
+      tokPerSec: effectiveTps(presetId),
+      source: userSet ? 'you set' : 'measured',
+    );
+  }
+
+  /// 응답 하나의 실측치를 더한다. 표본 규칙과 신뢰 조건은 [SpeedMeter] 가 판단한다.
+  ///
+  /// 사용자가 속도를 직접 지정한 프리셋은 **재지 않는다** — 그 값을 쓰기로 한 것이고,
+  /// 매 턴 DB 를 건드릴 이유도 없다.
+  Future<void> observeSpeed(String presetId,
+      {required int completionTokens, required int elapsedMs}) async {
+    final preset = _presetById(presetId);
+    if (preset == null || preset.config.speedTps > 0) return;
+    final meter = _speedMeters.putIfAbsent(presetId, SpeedMeter.new);
+    if (!meter.add(
+        completionTokens: completionTokens, elapsedMs: elapsedMs)) {
+      return; // 표본으로 안 쓰는 라운드
+    }
+    final tps = meter.tps;
+    if (tps == null) return; // 아직 믿을 만큼 안 모였다
+    // 매 턴 DB 를 쓰지 않는다 — 저장분과 10% 넘게 벌어질 때만 갱신한다.
+    final saved = preset.config.measuredTps;
+    if (saved > 0 && (tps - saved).abs() / saved < 0.10) return;
+    await updatePreset(presetId,
+        config: preset.config.copyWith(measuredTps: tps));
   }
 
   /// 도구에 지정된 프리셋 id('' = 기본 사용).
@@ -434,6 +517,8 @@ class WorkspaceController extends ChangeNotifier {
     if (pmModels is Map) _projectModels = _strMap(pmModels);
     final tm = await _appDb!.getSetting(_toolModulesKey);
     if (tm is List) _toolSources = _parseSources(tm);
+    final dt = await _appDb!.getSetting(_disabledToolsKey);
+    if (dt is List) _disabledTools = dt.whereType<String>().toSet();
     final vs = await _appDb!.getSetting(_viewerSourcesKey);
     if (vs is List) _viewerSources = _parseViewerSources(vs);
     final vr = await _appDb!.getSetting(_viewerRulesKey);
@@ -588,8 +673,45 @@ class WorkspaceController extends ChangeNotifier {
 
   Future<void> removeToolSource(ToolSource source) async {
     _toolSources = _toolSources.where((s) => s.id != source.id).toList();
+    // 소스가 사라지면 그 도구들의 비활성 표시도 같이 지운다 — 안 그러면 같은
+    // 스크립트를 다시 추가했을 때 예전에 꺼 둔 도구가 조용히 꺼진 채로 온다.
+    final prefix = '${source.id}::';
+    final kept = _disabledTools.where((k) => !k.startsWith(prefix)).toSet();
+    final pruned = kept.length != _disabledTools.length;
+    if (pruned) _disabledTools = kept;
     notifyListeners();
     await _saveSources();
+    if (pruned) await _saveDisabledTools();
+  }
+
+  /// 꺼 둔 도구 키 집합(레지스트리에 그대로 넘긴다).
+  Set<String> get disabledTools => _disabledTools;
+
+  /// 이 도구를 에이전트에게 넘기는가. [sourceId] 는 [ToolSource.id] 또는
+  /// [baseSourceId], [toolName] 은 모듈이 아는 원래 이름이다.
+  bool isToolEnabled(String sourceId, String toolName) =>
+      !_disabledTools.contains(toolKey(sourceId, toolName));
+
+  /// 도구 여러 개의 활성 상태를 한 번에 바꾼다(모듈 줄의 체크박스가 전체를 넘긴다).
+  Future<void> setToolsEnabled(
+      String sourceId, Iterable<String> toolNames, bool enabled) async {
+    final next = Set<String>.from(_disabledTools);
+    // add/remove 가 "실제로 바뀌었나" 를 돌려주므로 그걸 그대로 쓴다
+    // (집합 비교 함수는 foundation 에 있는데, 이 파일은 material 만 쓴다).
+    var changed = false;
+    for (final name in toolNames) {
+      final key = toolKey(sourceId, name);
+      if (enabled ? next.remove(key) : next.add(key)) changed = true;
+    }
+    if (!changed) return;
+    _disabledTools = next;
+    notifyListeners();
+    await _saveDisabledTools();
+  }
+
+  Future<void> _saveDisabledTools() async {
+    // 목록 순서는 의미가 없지만, 저장본이 매번 뒤집히면 눈으로 비교하기 나쁘다.
+    await _appDb?.setSetting(_disabledToolsKey, _disabledTools.toList()..sort());
   }
 
   static List<ViewerSource> _parseViewerSources(List<Object?> raw) {
@@ -805,6 +927,16 @@ class WorkspaceController extends ChangeNotifier {
     if (vo is List) _viewerOrder = vo.whereType<String>().toList();
     final vg = await db.getSetting(_viewerRegistryKey);
     if (vg is List) _registeredViewers = _parseViewerInfos(vg);
+  }
+
+  /// 테스트 전용: 주어진 메인 DB 에서 도구 소스/비활성 목록만 로드한다.
+  @visibleForTesting
+  Future<void> loadToolsForTest(AppDatabase db) async {
+    _appDb = db;
+    final tm = await db.getSetting(_toolModulesKey);
+    if (tm is List) _toolSources = _parseSources(tm);
+    final dt = await db.getSetting(_disabledToolsKey);
+    if (dt is List) _disabledTools = dt.whereType<String>().toSet();
   }
 
   /// 프리셋을 추가한다(반환: 추가된 프리셋). 첫 프리셋이면 기본으로 지정.

@@ -28,6 +28,53 @@ void main() {
     expect(pb.openSteps, isEmpty);
   });
 
+  test('★ 목표를 정하면 디스크에 실제로 파일이 생긴다', () async {
+    // "계획이 파일로 안 떨어지는 것 같다" 는 의심을 고정해 두는 검사다.
+    expect(fileOf(dir).existsSync(), isFalse);
+    await pb.setGoal('로그인 레이스 컨디션을 고친다');
+    await pb.setPlan(['재현 테스트', '락 걸기']);
+    expect(fileOf(dir).existsSync(), isTrue);
+    final text = fileOf(dir).readAsStringSync();
+    expect(text, contains('## GOAL'));
+    expect(text, contains('로그인 레이스 컨디션을 고친다'));
+    expect(text, contains('- [TODO] 재현 테스트'));
+    await pb.updateStep('1', 'DONE');
+    expect(fileOf(dir).readAsStringSync(), contains('- [DONE] 재현 테스트'));
+  });
+
+  test('fileExists 는 내용 유무가 아니라 파일 유무다', () async {
+    // 트리 헤더의 "계획 파일 열기" 버튼이 이 값으로 뜬다. 계획 카드(isEmpty)와
+    // 판단 기준이 다르다 — 내용이 비어도 파일이 있으면 열 수 있어야 한다.
+    expect(pb.fileExists, isFalse);
+    await pb.setGoal('무언가');
+    expect(pb.fileExists, isTrue);
+
+    await fileOf(dir).writeAsString('# PLAYBOOK\n'); // 내용만 비운다
+    final reloaded = Playbook.forProject(dir.path);
+    await reloaded.load();
+    expect(reloaded.isEmpty, isTrue);
+    expect(reloaded.fileExists, isTrue);
+    expect(reloaded.path, endsWith('PLAYBOOK.md'));
+  });
+
+  test('★ 쓰기에 실패하면 조용히 넘어가지 않고 던진다', () async {
+    // 삼키면 도구가 ok 를 돌려주고 모델은 계획을 적었다고 믿는데 파일에는 아무것도
+    // 없다 — 아무도 모르는 채로 계획이 사라진다. `.collabo` 자리에 파일을 놓아 재현.
+    final bad = await Directory.systemTemp.createTemp('playbook_bad');
+    addTearDown(() {
+      try {
+        bad.deleteSync(recursive: true);
+      } catch (_) {}
+    });
+    File(p.join(bad.path, '.collabo')).writeAsStringSync('not a directory');
+    final broken = Playbook.forProject(bad.path);
+    await broken.load(); // 읽기는 관대하다 — 여기서는 안 던진다
+    await expectLater(
+      broken.setGoal('못 쓸 목표'),
+      throwsA(isA<PlaybookWriteException>()),
+    );
+  });
+
   test('목표·계획 저장 후 다시 읽어도 그대로', () async {
     await pb.setGoal('로그인 레이스 컨디션을 고친다');
     await pb.setPlan(['재현 테스트를 쓴다', '락을 건다', '테스트를 돌린다']);
@@ -56,6 +103,24 @@ void main() {
     await pb.setPlan(['필요 없어진 일']);
     await pb.updateStep('1', 'DROP', note: '요구사항이 바뀜');
     expect(pb.openSteps, isEmpty);
+  });
+
+  test('BLOCKED 는 열린 단계가 아니다 — 사용자를 기다리는 상태', () async {
+    // 종료 차단을 빠져나가는 **유일한 명시적 경로**다. 답변 문장이 아니라
+    // 도구 호출로 표시되므로 모호하지 않다.
+    await pb.setPlan(['어느 경로를 쓸지 확인', '그 경로로 작성']);
+    await pb.updateStep('1', 'BLOCKED', note: '경로를 사용자에게 물음');
+    expect(pb.openSteps, ['그 경로로 작성']);
+    expect(pb.blockedSteps, hasLength(1));
+    expect(pb.blockedSteps.first, contains('경로를 사용자에게 물음'));
+  });
+
+  test('답을 받으면 BLOCKED 를 다시 DOING 으로 되돌릴 수 있다', () async {
+    await pb.setPlan(['확인 필요']);
+    await pb.updateStep('1', 'BLOCKED');
+    await pb.updateStep('1', 'DOING');
+    expect(pb.blockedSteps, isEmpty);
+    expect(pb.openSteps, hasLength(1));
   });
 
   test('없는 단계를 가리키면 null', () async {

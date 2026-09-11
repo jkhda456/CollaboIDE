@@ -40,13 +40,24 @@ class ToolRegistry {
           ((t['function'] as Map?)?['name'] as String?) ?? '',
       ]..removeWhere((n) => n.isEmpty);
 
+  /// 사용자가 꺼 둔 도구들(`toolKey(소스 id, 원래 이름)`). [load] 가 채운다.
+  Set<String> _disabled = const {};
+
   /// 기본 모듈과 각 소스를 describe 해 도구 목록을 구성한다.
   /// 이름이 겹치면 먼저 등록된 것(기본 우선)을 유지한다.
-  Future<void> load(List<ToolSource> sources, {String? workingDirectory}) async {
+  ///
+  /// [disabled] 에 든 도구는 **아예 등록하지 않는다** — 모델에게 목록으로도 가지
+  /// 않고 이름으로 부를 수도 없다. 소스 자체는 설정에 그대로 남아 있다.
+  Future<void> load(
+    List<ToolSource> sources, {
+    String? workingDirectory,
+    Set<String> disabled = const {},
+  }) async {
     _owner.clear();
     _baseScriptOf.clear();
     _realName.clear();
     _tools.clear();
+    _disabled = disabled;
 
     for (final script in baseScripts) {
       final base = await runner.describe(
@@ -72,8 +83,12 @@ class ToolRegistry {
   /// **아무 표시 없이 사라졌다**. 이제는 소유 모듈 이름을 접두사로 붙여 둘 다 살린다
   /// (`read_file` 이 이미 있으면 → `myscript_read_file`).
   void _register(ToolModule module, ToolSource? source, {String? script}) {
+    final sourceId = source?.id ?? baseSourceId(script ?? '');
     for (final t in module.tools) {
       if (t.name.isEmpty) continue;
+      // 꺼 둔 도구는 이름조차 잡지 않는다 — 이 자리에서 건너뛰어야 뒤따르는
+      // 도구가 쓸데없이 접두사를 받지 않는다(꺼진 도구와는 이제 안 겹친다).
+      if (_disabled.contains(toolKey(sourceId, t.name))) continue;
       final exposed = _uniqueName(t.name, module, source);
       _owner[exposed] = source;
       _realName[exposed] = t.name;

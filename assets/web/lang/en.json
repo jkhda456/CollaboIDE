@@ -120,6 +120,8 @@
   "rawTool": "tool",
   "planCard": "Plan",
   "planToggleTitle": "Expand/collapse the plan steps",
+  "planBlocked": "A step is waiting on your answer",
+  "openPlaybook": "Open the plan file (.collabo/PLAYBOOK.md)",
   "supervisorStep": "Supervisor stepped in",
   "supervisorExit": "Supervisor: sent back — the plan still has open steps"
 }

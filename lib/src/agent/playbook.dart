@@ -22,7 +22,12 @@ import 'package:path/path.dart' as p;
 const String kPlaybookPath = '.collabo/PLAYBOOK.md';
 
 /// 계획 항목의 상태. **열린 항목(TODO/DOING)이 남았는지**가 종료 차단의 근거가 된다.
-const List<String> kStepMarkers = ['TODO', 'DOING', 'DONE', 'DROP'];
+///
+/// `BLOCKED` 는 "사용자를 기다리는 중" 이다. 열린 항목이 아니므로 종료 차단에 걸리지
+/// 않는다 — 모델이 사용자에게 되묻고 턴을 끝내는 **유일하고 명시적인** 길이다.
+/// (예전에는 답변 문장을 정규식으로 보고 질문이면 면제했는데, 모델이 어떻게 끝맺을지
+/// 규정할 수 없어 잘못된 설계였다. 도구 호출은 모호하지 않다.)
+const List<String> kStepMarkers = ['TODO', 'DOING', 'BLOCKED', 'DONE', 'DROP'];
 
 /// 지식에 붙이는 신뢰 수준. 가정이 사실로 슬쩍 승격되는 것을 막지 못하면
 /// 그 뒤의 모든 추론이 오염된다.
@@ -62,6 +67,17 @@ final RegExp _itemRe = RegExp(r'^\s*-\s*\[([A-Z_ ]+)\]\s*(.+?)\s*$');
 List<String> markersFor(String section) =>
     section == kSecPlan ? kStepMarkers : kKnowledgeMarkers;
 
+/// PLAYBOOK 파일을 쓰지 못했을 때. **조용히 넘어가면 안 되는 실패**다 —
+/// 계획을 적었다고 믿은 채 계획 없이 진행하게 된다.
+class PlaybookWriteException implements Exception {
+  const PlaybookWriteException(this.path, this.reason);
+  final String path;
+  final String reason;
+
+  @override
+  String toString() => 'Could not write the plan file ($path): $reason';
+}
+
 class PlaybookItem {
   PlaybookItem(this.text, this.marker);
   String text;
@@ -88,14 +104,28 @@ class Playbook {
     for (final s in kPlaybookSections) s: <PlaybookItem>[],
   };
 
+  bool _exists = false;
+
+  /// 디스크에 파일이 실제로 있는가([load] 시점 기준, [save] 성공 시 true).
+  ///
+  /// **비어 있음([isEmpty])과 다르다.** 계획 카드는 내용이 있을 때만 뜨지만,
+  /// 트리의 "계획 파일 열기" 버튼은 **파일이 있으면** 떠야 한다 — `.collabo` 안에만
+  /// 생기다 보니 사용자가 존재 자체를 모르고 지나치기 때문이다.
+  bool get fileExists => _exists;
+
+  /// 파일의 절대 경로(웹에 넘겨 뷰어로 열게 한다).
+  String get path => file.path;
+
   /// 파일에서 읽는다. 파일이 없으면 빈 상태로 둔다(오류가 아니다).
   Future<void> load() async {
     for (final s in kPlaybookSections) {
       _data[s] = <PlaybookItem>[];
     }
+    _exists = false;
     String text;
     try {
       if (!await file.exists()) return;
+      _exists = true;
       text = await file.readAsString();
     } catch (_) {
       return;
@@ -130,9 +160,9 @@ class Playbook {
     final out = <String>[
       '# PLAYBOOK',
       '',
-      '<!-- Collabo IDE 하니스가 관리하는 파일. 목표·계획·알아낸 것이 여기 남아',
-      '     대화가 요약되거나 잘려도 살아남는다. 직접 고쳐도 된다 —',
-      '     규격 밖 마커는 다음에 읽을 때 가장 약한 값으로 강등된다. -->',
+      '<!-- Collabo IDE 가 관리하는 파일입니다. 목표와 계획, 알아낸 것이 여기 남아',
+      '     대화가 요약되거나 잘려도 사라지지 않습니다. 직접 고치셔도 됩니다.',
+      '     규격에 없는 마커는 다음에 읽을 때 가장 약한 값으로 내려갑니다. -->',
       '',
     ];
     for (final section in kPlaybookSections) {
@@ -140,11 +170,16 @@ class Playbook {
       out.addAll((_data[section] ?? const []).map((i) => i.render()));
       out.add('');
     }
+    // **쓰기 실패를 삼키지 않는다.** 삼키면 도구가 `ok: true` 를 돌려주고 모델은
+    // 계획을 적었다고 믿는데 파일에는 아무것도 없다 — 아무도 모르는 채로 계획이
+    // 사라진다. 여기서 던지면 `_runPlanTool` 이 도구 오류로 바꿔 모델과 화면 양쪽에
+    // 이유가 보인다. (읽기는 반대로 관대하다 — 없는 파일은 오류가 아니다.)
     try {
       await file.parent.create(recursive: true);
       await file.writeAsString(out.join('\n'));
-    } catch (_) {
-      // 쓰기 실패는 무시한다(권한·디스크). 이번 턴의 메모리는 in-memory 로 남는다.
+      _exists = true;
+    } on FileSystemException catch (e) {
+      throw PlaybookWriteException(file.path, e.osError?.message ?? e.message);
     }
   }
 
@@ -232,9 +267,17 @@ class Playbook {
 
   // ------------------------------------------------------------------ 조회
 
+  /// 아직 **끝내야 할** 단계. `BLOCKED`(사용자 대기)와 `DONE`/`DROP` 은 빠진다.
+  /// 종료 차단이 보는 값이다.
   List<String> get openSteps => [
         for (final i in _data[kSecPlan] ?? const <PlaybookItem>[])
           if (i.marker == 'TODO' || i.marker == 'DOING') i.text,
+      ];
+
+  /// 사용자를 기다리는 단계. 계획 카드가 따로 표시한다.
+  List<String> get blockedSteps => [
+        for (final i in _data[kSecPlan] ?? const <PlaybookItem>[])
+          if (i.marker == 'BLOCKED') i.text,
       ];
 
   bool get hasPlan => (_data[kSecPlan] ?? const []).isNotEmpty;

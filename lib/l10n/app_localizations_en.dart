@@ -343,10 +343,39 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get firstResponseTimeoutDesc =>
-      'If no response arrives within this time after the request is sent, it is dropped and retried. Once the response starts the timer is released, and nothing is cut off by time after that. 0 means no limit — use it for local models with a long prefill on large contexts (you can still stop at any time).';
+      'Applies only until the first response arrives. Defaults to 0 (no limit), because during prefill the server sends nothing, so a clock cannot tell \'working hard\' from \'dead connection\'. You can still stop at any time.';
 
   @override
   String get secondsUnit => 'sec';
+
+  @override
+  String get tokensUnit => 'tokens';
+
+  @override
+  String get noLimit => 'no limit';
+
+  @override
+  String get responseTokenBudget => 'Token budget per response';
+
+  @override
+  String get responseTokenBudgetDesc =>
+      'Sets the time limit as \'long enough to produce this many tokens\'. The real limit is budget ÷ speed, so a slower model automatically gets more time. A model stuck repeating itself burns the budget regardless of speed, so it always gets caught. 0 means no limit.';
+
+  @override
+  String get tokPerSec => 'Processing speed (tok/s)';
+
+  @override
+  String get tokPerSecDesc =>
+      'Leave empty and the app measures it from real responses. A value here wins over the measurement. Current limit for this connection';
+
+  @override
+  String get tokPerSecAuto =>
+      'Empty = measure automatically (assumes 100 tok/s until then)';
+
+  @override
+  String tokPerSecMeasured(String tps) {
+    return 'Measured: $tps tok/s';
+  }
 
   @override
   String get testConnection => 'Test connection';
@@ -356,13 +385,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get hideKey => 'Hide key';
-
-  @override
-  String get toolModelTitle => 'Per-tool model';
-
-  @override
-  String get toolModelDesc =>
-      'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the conversation model picked in the header.';
 
   @override
   String get useDefaultModel => 'Use default model';
@@ -431,6 +453,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get viewTools => 'View tools';
+
+  @override
+  String get toolToggleDesc =>
+      'Unchecked tools are never passed to the agent. The entry stays, so you can turn it back on any time.';
+
+  @override
+  String get toolListLoading => 'Reading the tool list…';
+
+  @override
+  String get toolNativeFixed => 'Run by the app · always on';
 
   @override
   String get viewersDesc =>

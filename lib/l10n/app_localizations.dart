@@ -719,7 +719,7 @@ abstract class AppLocalizations {
   /// No description provided for @firstResponseTimeoutDesc.
   ///
   /// In en, this message translates to:
-  /// **'If no response arrives within this time after the request is sent, it is dropped and retried. Once the response starts the timer is released, and nothing is cut off by time after that. 0 means no limit — use it for local models with a long prefill on large contexts (you can still stop at any time).'**
+  /// **'Applies only until the first response arrives. Defaults to 0 (no limit), because during prefill the server sends nothing, so a clock cannot tell \'working hard\' from \'dead connection\'. You can still stop at any time.'**
   String get firstResponseTimeoutDesc;
 
   /// No description provided for @secondsUnit.
@@ -727,6 +727,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'sec'**
   String get secondsUnit;
+
+  /// No description provided for @tokensUnit.
+  ///
+  /// In en, this message translates to:
+  /// **'tokens'**
+  String get tokensUnit;
+
+  /// No description provided for @noLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'no limit'**
+  String get noLimit;
+
+  /// No description provided for @responseTokenBudget.
+  ///
+  /// In en, this message translates to:
+  /// **'Token budget per response'**
+  String get responseTokenBudget;
+
+  /// No description provided for @responseTokenBudgetDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Sets the time limit as \'long enough to produce this many tokens\'. The real limit is budget ÷ speed, so a slower model automatically gets more time. A model stuck repeating itself burns the budget regardless of speed, so it always gets caught. 0 means no limit.'**
+  String get responseTokenBudgetDesc;
+
+  /// No description provided for @tokPerSec.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing speed (tok/s)'**
+  String get tokPerSec;
+
+  /// No description provided for @tokPerSecDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty and the app measures it from real responses. A value here wins over the measurement. Current limit for this connection'**
+  String get tokPerSecDesc;
+
+  /// No description provided for @tokPerSecAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty = measure automatically (assumes 100 tok/s until then)'**
+  String get tokPerSecAuto;
+
+  /// No description provided for @tokPerSecMeasured.
+  ///
+  /// In en, this message translates to:
+  /// **'Measured: {tps} tok/s'**
+  String tokPerSecMeasured(String tps);
 
   /// No description provided for @testConnection.
   ///
@@ -745,18 +793,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide key'**
   String get hideKey;
-
-  /// No description provided for @toolModelTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Per-tool model'**
-  String get toolModelTitle;
-
-  /// No description provided for @toolModelDesc.
-  ///
-  /// In en, this message translates to:
-  /// **'Choose which preset the sub-agent and verification tools use. \"Use default model\" follows the conversation model picked in the header.'**
-  String get toolModelDesc;
 
   /// No description provided for @useDefaultModel.
   ///
@@ -883,6 +919,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'View tools'**
   String get viewTools;
+
+  /// No description provided for @toolToggleDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Unchecked tools are never passed to the agent. The entry stays, so you can turn it back on any time.'**
+  String get toolToggleDesc;
+
+  /// No description provided for @toolListLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading the tool list…'**
+  String get toolListLoading;
+
+  /// No description provided for @toolNativeFixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Run by the app · always on'**
+  String get toolNativeFixed;
 
   /// No description provided for @viewersDesc.
   ///

@@ -312,8 +312,16 @@
     #plan-steps li.done .pt, #plan-steps li.drop .pt { text-decoration: line-through; }
     #plan-steps li.drop { opacity: .55; }
     #plan-steps li.doing { color: var(--bs-body-color); font-weight: 600; }
+    /* BLOCKED = 사용자 답을 기다리는 중. 끝난 것도 진행 중인 것도 아니라 따로 보인다. */
+    #plan-steps li.blocked { color: var(--bs-warning-text-emphasis); }
     #plan-caret { transition: transform .15s; }
     #plan-card.open #plan-caret { transform: rotate(180deg); }
+
+    /* 계획 파일 바로가기 — 파일이 없으면 감춘다.
+       ⚠️ `d-none` 을 쓰면 안 된다. 이 버튼은 `data-search-extra` 라서 검색창을 닫을 때
+       검색 토글이 `d-none` 을 **일괄로 벗겨** 파일이 없어도 되살아난다. 검색 코드가
+       건드리지 않는 별도 클래스로 둬야 두 상태가 서로를 덮지 않는다. */
+    #tree-open-playbook.no-file { display: none !important; }
 
     /* 진행 상태 말풍선(대화 흐름 안, 작업 중 표시 → 완료 시 제거) */
     .msg.status { display: flex; align-items: center; gap: 8px; }
@@ -538,6 +546,17 @@
           <span id="project-path"
                 class="path-text text-truncate flex-grow-1 text-secondary"
                 data-search-label>열린 프로젝트 없음</span>
+          <!-- 계획 파일로 바로 가기. `.collabo` 안에만 생겨서 사용자가 존재 자체를
+               모르고 지나치기 때문에 띄운다. **파일이 있을 때만** 나타난다
+               (네이티브가 chat.plan 의 path 로 알려 준다). -->
+          <button class="btn btn-sm p-1 icon-btn no-file" type="button"
+                  id="tree-open-playbook" data-search-extra
+                  data-i18n-title="openPlaybook" title="계획 파일 열기">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                 fill="currentColor" viewBox="0 0 16 16">
+              <path d="M5 11.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5M3.854 2.146a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 3.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 7.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 0 1 .708-.708l.146.147 1.146-1.147a.5.5 0 0 1 .708 0"/>
+            </svg>
+          </button>
           <button class="btn btn-sm p-1 icon-btn" type="button"
                   id="tree-open-external" data-search-extra
                   data-i18n-title="openInExplorer" title="탐색기에서 열기" disabled>
@@ -1098,7 +1117,7 @@
       });
       cpPreviewBtn.addEventListener('click', function () {
         cpPreviewBtn.disabled = true;
-        cpPreviewBtn.querySelector('span').textContent = T('checkpointGenerating', '생성 중…');
+        cpPreviewBtn.querySelector('span').textContent = T('checkpointGenerating', '만드는 중입니다…');
         send({ type: 'chat.checkpoint.preview', size: parseInt(sizeEl.value, 10) });
       });
       btn.addEventListener('click', function () {
@@ -1174,8 +1193,8 @@
       renderChatTitle();
       renderSetupWarning(setupMissing); // 라벨/툴팁이 번역 문자열이라 다시 그린다
 
-      if (!rootPath) pathEl.textContent = T('noProject', '열린 프로젝트 없음');
-      if (!currentFilePath) fileNameEl.textContent = T('fileNone', '선택된 파일 없음');
+      if (!rootPath) pathEl.textContent = T('noProject', '열린 프로젝트가 없습니다');
+      if (!currentFilePath) fileNameEl.textContent = T('fileNone', '선택한 파일이 없습니다');
       if (typeof refreshFullscreenTitle === 'function') refreshFullscreenTitle();
     }
 
@@ -1691,7 +1710,7 @@
 
     function onProjectChanged(path) {
       rootPath = path || '';
-      pathEl.textContent = rootPath || T('noProject', '열린 프로젝트 없음');
+      pathEl.textContent = rootPath || T('noProject', '열린 프로젝트가 없습니다');
       renderChatTitle();
       treeOpenBtn.disabled = !rootPath;
       childrenCache.clear(); expanded.clear(); dirContainers.clear();
@@ -1703,7 +1722,7 @@
         return;
       }
       treeEl.innerHTML = '<div class="text-secondary small"></div>';
-      treeEl.firstChild.textContent = T('treeLoading', '불러오는 중…');
+      treeEl.firstChild.textContent = T('treeLoading', '불러오는 중입니다…');
       send({ type: 'dir.list', path: rootPath });
     }
 
@@ -1759,7 +1778,7 @@
         try { w.done(ok, msg.message || ''); } catch (e) { console.error(e); }
         return false;
       });
-      if (!ok) onChatNotice({ text: T('saveFailed', '저장 실패') + ': ' + (msg.message || '') });
+      if (!ok) onChatNotice({ text: T('saveFailed', '저장하지 못했습니다') + ': ' + (msg.message || '') });
     }
 
     let viewerReloadTimer = null;
@@ -1784,7 +1803,7 @@
       if (files.length === 0) {
         const d = document.createElement('div');
         d.className = 'text-secondary small p-1';
-        d.textContent = T('noResults', '검색 결과 없음');
+        d.textContent = T('noResults', '검색 결과가 없습니다');
         treeEl.appendChild(d);
         return;
       }
@@ -2031,14 +2050,14 @@
       'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'];
     function validateEntryName(raw) {
       const name = String(raw || '').trim();
-      if (!name) return T('nameEmpty', '이름을 입력하세요');
+      if (!name) return T('nameEmpty', '이름을 입력하세요.');
       if (/[<>:"/\\|?*\x00-\x1f]/.test(name)) {
-        return T('nameInvalidChars', '다음 문자는 쓸 수 없습니다: < > : " / \\ | ? *');
+        return T('nameInvalidChars', '사용할 수 없는 문자가 있습니다: < > : " / \\ | ? *');
       }
-      if (name === '.' || name === '..') return T('nameInvalidName', '쓸 수 없는 이름입니다');
-      if (/[. ]$/.test(name)) return T('nameTrailingDot', '마침표나 공백으로 끝날 수 없습니다');
+      if (name === '.' || name === '..') return T('nameInvalidName', '사용할 수 없는 이름입니다.');
+      if (/[. ]$/.test(name)) return T('nameTrailingDot', '이름은 마침표(.)나 공백으로 끝날 수 없습니다.');
       if (WIN_RESERVED.indexOf(name.split('.')[0].toUpperCase()) !== -1) {
-        return T('nameReserved', 'Windows 예약어는 쓸 수 없습니다');
+        return T('nameReserved', '예약된 이름은 사용할 수 없습니다.');
       }
       return null;
     }
@@ -2161,7 +2180,7 @@
       currentFilePath = null; currentViewerId = null; pendingViewerId = null;
       viewerRaw = ''; currentSize = 0; currentTruncated = false;
       currentWindowed = false; currentLineCount = 0;
-      fileNameEl.textContent = T('fileNone', '선택된 파일 없음');
+      fileNameEl.textContent = T('fileNone', '선택한 파일이 없습니다');
       noticeEl.classList.add('d-none');
       viewerEl.className = 'p-2';
       viewerEl.innerHTML = '<div class="text-secondary small" data-i18n="viewerEmpty"></div>';
@@ -2280,7 +2299,7 @@
         noticeEl.classList.add('d-none');
         viewerEl.className = 'p-3';
         viewerEl.innerHTML = '<div class="text-secondary small"></div>';
-        viewerEl.firstChild.textContent = T('viewerLoading', '파일을 읽는 중…');
+        viewerEl.firstChild.textContent = T('viewerLoading', '파일을 읽는 중입니다…');
       }, 150);
       send(m);
     }
@@ -2331,7 +2350,7 @@
         // 창을 쓰는 파일은 "앞부분만" 이 아니다 — 스크롤하면 이어서 읽는다.
         // 다만 **저장은 여전히 막힌다**(전체를 들고 있지 않다).
         noticeEl.textContent = (currentWindowed
-            ? T('windowed', '대용량 파일: 보는 부분만 읽습니다 (저장 불가)')
+            ? T('windowed', '대용량 파일: 보이는 부분만 읽으므로 저장할 수 없습니다')
             : T('truncated', '대용량 파일: 앞부분만 표시합니다')) +
           ' (' + formatSize(msg.size) + ')';
         noticeEl.classList.remove('d-none');
@@ -2624,7 +2643,7 @@
       // hover 시 나타나는 아이콘 액션: 편집 / 원복(시작점 삭제)
       const actions = document.createElement('div');
       actions.className = 'cp-actions';
-      actions.appendChild(cpIconBtn(CP_ICON_EDIT, T('edit', '편집'),
+      actions.appendChild(cpIconBtn(CP_ICON_EDIT, T('edit', '수정'),
           function () { enterCheckpointEdit(wrap); }));
       actions.appendChild(cpIconBtn(CP_ICON_REVERT, T('checkpointRevert', '원복'),
           function () {
@@ -2956,8 +2975,8 @@
       },
       python: {
         section: 'tools', key: 'setupMissingPython',
-        fallback: 'Python 인터프리터가 없어 도구를 실행할 수 없습니다 ' +
-          '(파일 편집·명령 실행 등 실제 작업이 불가).',
+        fallback: 'Python 인터프리터가 없어 도구를 실행할 수 없습니다. ' +
+          '파일 편집이나 명령 실행 같은 실제 작업을 하지 못합니다.',
       },
     };
     const setupWarnBtn = document.getElementById('setup-warn');
@@ -3073,7 +3092,7 @@
         if (streamingText.trim() !== '') sb.classList.remove('d-none');
       }
       if (msg.reasoning) {
-        rawAppend(T('reasoning', '추론'), msg.reasoning);
+        rawAppend(T('reasoning', '추론 보기'), msg.reasoning);
         const r = streamingEl.querySelector('.reasoning');
         const body = r.querySelector('.reasoning-body');
         body.textContent = (body.textContent || '') + msg.reasoning;
@@ -3301,10 +3320,17 @@
     // (파일에 직접 손대지 않는다는 원칙 그대로).
     let planState = null;
     let planOpen = false;
+    // 계획 파일의 절대 경로. **파일이 실제로 있을 때만** 채워진다(내용 유무와 별개).
+    let planPath = '';
 
     function onChatPlan(msg) {
       planState = msg.plan || null;
+      planPath = msg.path || '';
       renderPlan();
+      // 트리 헤더의 바로가기 버튼도 같이 맞춘다(`d-none` 이 아니라 `no-file` —
+      // 검색 토글이 `d-none` 을 일괄로 벗기기 때문. 위 CSS 주석 참고).
+      document.getElementById('tree-open-playbook')
+        .classList.toggle('no-file', !planPath);
     }
 
     function onChatSupervisor(msg) {
@@ -3332,15 +3358,23 @@
       card.classList.remove('d-none');
       document.getElementById('plan-goal').textContent =
         goal || T('planCard', '계획');
+      // BLOCKED 는 끝난 것이 아니므로 진행 개수에 넣지 않는다. 대신 하나라도 있으면
+      // 뱃지 색을 바꿔 "사용자 차례" 를 알린다.
       const done = steps.filter(function (s) {
         return s.marker === 'DONE' || s.marker === 'DROP';
       }).length;
+      const blocked = steps.some(function (s) { return s.marker === 'BLOCKED'; });
       const count = document.getElementById('plan-count');
       if (steps.length === 0) {
         count.classList.add('d-none');
       } else {
         count.classList.remove('d-none');
         count.textContent = done + '/' + steps.length;
+        count.classList.toggle('text-bg-warning', blocked);
+        count.classList.toggle('text-bg-secondary', !blocked);
+        count.title = blocked
+          ? T('planBlocked', '답변을 기다리는 단계가 있습니다')
+          : '';
       }
       const list = document.getElementById('plan-steps');
       list.innerHTML = '';
@@ -3366,6 +3400,13 @@
       renderPlan();
     });
 
+    // 계획 파일 열기 — 트리에서 `.collabo` 를 펼치지 않아도 바로 뷰어에 띄운다.
+    // 트리 행이 아직 없으면 선택 표시만 안 될 뿐 열리는 데는 지장이 없다.
+    document.getElementById('tree-open-playbook')
+      .addEventListener('click', function () {
+        if (planPath) openFile(planPath);
+      });
+
     // ===== 호출 내역(런쳐/도구) =====
     const activityLog = [];
     function recordActivity(msg) {
@@ -3384,7 +3425,7 @@
       const list = document.getElementById('activity-list');
       const badge = document.getElementById('activity-count');
       if (activityLog.length === 0) {
-        list.innerHTML = '<div class="activity-empty">' + T('activityEmpty', '아직 없음') + '</div>';
+        list.innerHTML = '<div class="activity-empty">' + T('activityEmpty', '아직 호출 내역이 없습니다') + '</div>';
         badge.classList.add('d-none');
         return;
       }

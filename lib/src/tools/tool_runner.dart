@@ -145,7 +145,7 @@ class ToolRunner {
       return ToolCallResult(
           ok: false, error: 'Tool timed out after ${timeout!.inSeconds}s');
     } catch (e) {
-      return ToolCallResult(ok: false, error: '도구 응답 파싱 실패: $e');
+      return ToolCallResult(ok: false, error: '도구 응답을 해석하지 못했습니다: $e');
     }
   }
 }

@@ -56,3 +56,17 @@ class ToolSource {
   factory ToolSource.legacy(String scriptPath) =>
       ToolSource(kind: ToolSourceKind.cli, script: scriptPath);
 }
+
+/// 기본(고정) 모듈의 소스 id. 사용자 소스의 [ToolSource.id] 와 같은 자리에 쓴다.
+///
+/// **경로가 아니라 파일명으로 만든다** — 기본 모듈은 에셋에서 `<appSupport>` 아래로
+/// 추출되므로 전체 경로가 기기·사용자마다 다르다. 설정(비활성 목록)은 그걸 넘어
+/// 유지돼야 한다.
+String baseSourceId(String scriptPath) => 'base:${p.basename(scriptPath)}';
+
+/// 도구 하나를 가리키는 저장용 키(`tool_disabled` 목록이 쓴다).
+///
+/// [toolName] 은 **모듈이 아는 원래 이름**이다 — 레지스트리가 이름 충돌 시 붙이는
+/// 접두사는 노출용이라 다른 도구가 추가되면 바뀐다. 소스 id 와 원래 이름의 짝은
+/// 그런 사정과 무관하게 그 도구를 가리킨다.
+String toolKey(String sourceId, String toolName) => '$sourceId::$toolName';

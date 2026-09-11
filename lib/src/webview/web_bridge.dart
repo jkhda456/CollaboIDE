@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -17,6 +17,7 @@ import '../fs/file_service.dart';
 import '../llm/llm_config.dart';
 import '../llm/message_shape.dart';
 import '../llm/openai_client.dart';
+import '../llm/stream_budget.dart';
 import '../llm/system_prompt.dart';
 import '../platform/mac_file_picker.dart';
 import '../tools/tool_call_log.dart';
@@ -900,6 +901,7 @@ class WebBridge {
     final transcript = buf.toString().trim();
     if (transcript.isEmpty) return '';
     final cfg = _workspace.configForConversation();
+    final presetId = _workspace.resolvedPresetIdForConversation();
     final sys =
         'You compress a conversation into a concise summary that preserves key '
         'decisions, requirements, file/code changes, and open threads, so the '
@@ -907,7 +909,7 @@ class WebBridge {
         '(~${targetTokens * 4} characters). Output ONLY the summary text.';
     try {
       final turn = await _withLlmRetry(
-        () => _runSubModelTurn(cfg, [
+        () => _runSubModelTurn(cfg, presetId, [
           {'role': 'system', 'content': sys},
           {'role': 'user', 'content': transcript},
         ], null),
@@ -1063,7 +1065,10 @@ class WebBridge {
             'Change the plan. Give `steps` to replace the whole plan (use this '
                 'when you change direction), or give `step` + `status` to move '
                 'one step along. Mark each step DONE as soon as it is actually '
-                'finished — a step left open blocks you from ending the turn.',
+                'finished — a step left TODO or DOING blocks you from ending '
+                'the turn. If you need to stop and ask the user something, mark '
+                'the step BLOCKED first: that is the only way to hand the turn '
+                'back while the step is unfinished.',
         'parameters': {
           'type': 'object',
           'properties': {
@@ -1079,9 +1084,11 @@ class WebBridge {
             },
             'status': {
               'type': 'string',
-              'enum': ['TODO', 'DOING', 'DONE', 'DROP'],
+              'enum': ['TODO', 'DOING', 'BLOCKED', 'DONE', 'DROP'],
               'description':
-                  'New status for that step. DROP means you decided not to do it.',
+                  'New status for that step. BLOCKED means you are waiting on '
+                      'an answer from the user. DROP means you decided not to '
+                      'do it.',
             },
             'note': {
               'type': 'string',
@@ -1193,6 +1200,8 @@ class WebBridge {
   /// 이미 수행한 작업을 지우지 않고 그대로 두고 종료한다.
   Future<void> _generate(ConversationStore store, int convId) async {
     final cfg = _workspace.configForConversation();
+    // 속도 실측과 시간 예산은 **프리셋 단위**로 모은다 — 서버가 다르면 속도도 다르다.
+    final presetId = _workspace.resolvedPresetIdForConversation();
     if (!cfg.isConfigured) {
       _post({
         'type': 'chat.error',
@@ -1262,15 +1271,16 @@ class WebBridge {
             if (_cancelRequested) throw const _GenerationStopped();
             final changesBeforeRound = _fileChangeSeq;
             // 실제 대기/수신 상태는 _runModelTurn 이 직접 풍선에 표시한다.
-            final turn = await _runModelTurn(store, convId, cfg, messages, tools);
+            final turn =
+                await _runModelTurn(store, convId, cfg, presetId, messages, tools);
             if (turn.toolCalls.isEmpty) {
               // **종료 차단**: 계획에 열린 단계가 남았는데 끝내려 하면 되돌려보낸다.
-              // 도구를 한 번도 안 쓴 턴(순수 대화)과 사용자에게 되묻는 답변은
-              // 검사하지 않는다 — 질문을 막아 세우면 대화형 제품이 망가진다.
+              // 판단 재료는 구조적인 것뿐이다 — 열린 단계와 "이 턴에 도구를 썼는가".
+              // 답변 본문은 보지 않는다. 사용자를 기다리며 끝내려면 모델이
+              // `update_plan` 으로 그 단계에 BLOCKED 를 찍으면 된다.
               final violations = _supervisor?.exitViolations(
                     openSteps: _playbook?.openSteps ?? const [],
                     usedTools: toolsUsed.isNotEmpty,
-                    finalText: turn.content,
                   ) ??
                   const <String>[];
               if (violations.isNotEmpty && (_supervisor?.mayReinject ?? false)) {
@@ -1324,7 +1334,7 @@ class WebBridge {
                 // 마지막 단계다. 도구를 **거두고** 한 라운드만 더 돌려 사용자에게
                 // 무엇이 막혔는지 말하게 한다. 그냥 끊으면 사용자는 이유를 모른다.
                 final closing =
-                    await _runModelTurn(store, convId, cfg, messages, null);
+                    await _runModelTurn(store, convId, cfg, presetId, messages, null);
                 _scheduleTurnSummary(
                     store, closing.id, closing.content, toolsUsed, userRequest);
                 converged = true;
@@ -1344,6 +1354,13 @@ class WebBridge {
           if (e is _GenerationStopped || _cancelRequested) {
             await _cleanupAttempt(store, convId, baselineId);
             _postStopped();
+            return;
+          }
+          // 예산 초과: 재시도하지 않는다. 같은 조건이면 또 걸리므로 토큰만 두 배로
+          // 나간다. 대신 **왜 이 시간이었는지**를 그대로 보여 준다(설정을 고치라고).
+          if (e is LlmBudgetExceeded) {
+            await _cleanupAttempt(store, convId, baselineId);
+            _post({'type': 'chat.error', 'message': e.message});
             return;
           }
           // 통신/타임아웃 등 오류는 재시도(이미 추가된 이번 시도 기록은 정리).
@@ -1387,7 +1404,8 @@ class WebBridge {
     _status('Assessing request…');
     try {
       final turn = await _withLlmRetry(
-        () => _runSubModelTurn(cfg, [
+        () => _runSubModelTurn(cfg, _workspace.resolvedPresetIdForConversation(),
+            [
           {'role': 'system', 'content': _triageSystem},
           {'role': 'user', 'content': lastUser!},
         ], null),
@@ -1711,6 +1729,8 @@ class WebBridge {
     if (prompt.trim().isEmpty) return '(empty prompt)';
     // 부모 도구 버블(tid)을 클릭하면 볼 수 있는 실시간 전사(transcript)용 식별자.
     final parentTid = tid;
+    // 이 도구가 실제로 쓰는 프리셋(도구별 지정 → 프로젝트 대화 모델 → 기본).
+    final presetId = _workspace.resolvedPresetIdForTool(toolName);
     // 위임 도구(run_subagent/verify_work)는 빼서 재귀를 막고, 계획 도구는
     // `note_write` 하나만 준다(§_subPlanToolNames — 계획의 주인은 메인이다).
     final subTools = <Map<String, Object?>>[
@@ -1803,7 +1823,7 @@ class WebBridge {
           _post({'type': 'chat.sub', 'tid': parentTid, 'turn': true});
         }
         final turn = await _withLlmRetry(
-          () => _runSubModelTurn(cfg, subMessages, subTools,
+          () => _runSubModelTurn(cfg, presetId, subMessages, subTools,
               onContent: emitProgress,
               onDelta: (t) =>
                   _post({'type': 'chat.sub', 'tid': parentTid, 'delta': t}),
@@ -1931,7 +1951,7 @@ class WebBridge {
           if (iv.halt) {
             // 도구를 거두고 한 번만 더 돌려 **부모에게 보고**하게 한다.
             final closing = await _withLlmRetry(
-              () => _runSubModelTurn(cfg, subMessages, null,
+              () => _runSubModelTurn(cfg, presetId, subMessages, null,
                   onContent: emitProgress,
                   onDelta: (t) =>
                       _post({'type': 'chat.sub', 'tid': parentTid, 'delta': t})),
@@ -2023,6 +2043,7 @@ class WebBridge {
         buf.writeln('[reply]\n$answer');
         final turn = await _runSubModelTurn(
           _workspace.configForConversation(),
+          _workspace.resolvedPresetIdForConversation(),
           [
             {'role': 'system', 'content': _turnSummarySystem},
             {'role': 'user', 'content': buf.toString()},
@@ -2243,11 +2264,16 @@ class WebBridge {
   }
 
   /// 계획 카드(웹)를 갱신한다. 계획 메모리가 꺼져 있으면 빈 것을 보내 카드를 감춘다.
+  ///
+  /// `path` 는 **파일이 실제로 있을 때만** 실린다 — 트리 헤더의 "계획 파일 열기"
+  /// 버튼이 이걸 보고 나타난다. 내용 유무(`plan`)와 별개다: `.collabo` 안에만 생기는
+  /// 파일이라 사용자가 존재 자체를 모르고 지나치는 게 이 버튼을 단 이유다.
   void _pushPlan() {
     final pb = _playbook;
     _post({
       'type': 'chat.plan',
       'plan': pb == null || pb.isEmpty ? null : pb.toJson(),
+      'path': pb != null && pb.fileExists ? pb.path : null,
     });
   }
 
@@ -2290,8 +2316,14 @@ class WebBridge {
           final steps = _asStringList(args['steps']);
           if (steps.isNotEmpty) await pb.setPlan(steps);
           _pushPlan();
+          // 결과에 파일 경로를 같이 준다 — "정말 파일로 떨어졌나" 를 도구 카드와
+          // 호출 내역에서 바로 확인할 수 있게(쓰기 실패는 아래 catch 가 잡는다).
           return _planOk(
-            {'goal': pb.goalText, 'steps': pb.openSteps.length},
+            {
+              'goal': pb.goalText,
+              'steps': pb.openSteps.length,
+              'file': kPlaybookPath,
+            },
             'goal set${steps.isEmpty ? '' : ' · ${steps.length} steps'}',
           );
 
@@ -2434,6 +2466,7 @@ class WebBridge {
   Future<({String content, List<ToolCall> toolCalls, int totalTokens})>
       _runSubModelTurn(
     LlmConfig cfg,
+    String presetId,
     List<Map<String, Object?>> messages,
     List<Map<String, Object?>>? tools, {
     void Function(int chars)? onContent,
@@ -2450,7 +2483,8 @@ class WebBridge {
     var totalTokens = 0;
     await for (final ev in _withResponseTimeout(
         _providerFor(cfg).streamChat(cfg: cfg, messages: messages, tools: tools),
-        cfg.firstResponseTimeout)) {
+        cfg,
+        presetId)) {
       switch (ev) {
         case LlmContent(:final text):
           content.write(text);
@@ -2501,18 +2535,33 @@ class WebBridge {
     }
   }
 
-  /// LLM 스트림을 **첫 응답 타임아웃**으로만 감싼다.
+  /// LLM 스트림에 **두 단계 시간 상한**을 걸고, 지나가는 김에 **속도를 잰다**.
   ///
-  /// [firstResponse] 안에 첫 이벤트가 오지 않으면 TimeoutException(=재시작 신호)을
-  /// 던진다. **일단 이벤트가 하나라도 오면 타이머를 아예 해제**하고, 그 뒤로는
-  /// 얼마나 오래 걸리든 기다린다 — 끝내는 건 서버의 스트림 종료나 사용자의 중지다.
+  /// 모든 LLM 스트림이 이 한 곳을 지난다(메인·서브·트리아지·요약·압축) — 그래서
+  /// 상한도 측정도 여기 한 군데에만 둔다.
   ///
-  /// [firstResponse] 가 null 이면 **첫 응답도 시간으로 끊지 않는다**(프리셋 설정
-  /// 0초 = 제한 없음). 그때도 중지(abort) 등록은 그대로라 사용자는 끊을 수 있다.
-  Stream<T> _withResponseTimeout<T>(Stream<T> source, Duration? firstResponse) {
-    late StreamController<T> ctrl;
-    StreamSubscription<T>? sub;
+  /// | 단계 | 언제 | 상한 |
+  /// |---|---|---|
+  /// | 프리필 | 요청 → **첫 이벤트** | `cfg.firstResponseTimeout` (**기본 없음**) |
+  /// | 생성 | 첫 이벤트 → 스트림 끝 | `토큰 예산 ÷ 실측 tok/s` (§`stream_budget.dart`) |
+  ///
+  /// **프리필에는 기본 상한이 없다.** 그 구간에서는 서버가 아무것도 내보내지 않아
+  /// "열심히 일하는 중" 과 "죽은 연결" 을 시계로 구분할 수 없다 — 구분도 못 하면서
+  /// 멀쩡한 작업을 죽이는 쪽이 훨씬 큰 피해다.
+  ///
+  /// **생성 상한은 갱신되지 않는다(총량 예산).** 이벤트가 올 때마다 다시 감는
+  /// *유휴* 타이머였다면 무한 반복 출력을 영원히 못 잡는다 — 토큰은 계속 오니까.
+  /// 총량으로 잡으면 반복은 반드시 걸리고, 정상적으로 느린 작업은 속도에 비례해
+  /// 상한이 함께 늘어나므로 걸리지 않는다.
+  Stream<LlmEvent> _withResponseTimeout(
+      Stream<LlmEvent> source, LlmConfig cfg, String presetId) {
+    late StreamController<LlmEvent> ctrl;
+    StreamSubscription<LlmEvent>? sub;
     Timer? timer;
+    DateTime? firstAt;
+    var chars = 0;
+    LlmUsage? usage;
+
     // "중지" 신호를 받으면 이 스트림을 _GenerationStopped 오류로 끊는다.
     void abort() {
       timer?.cancel();
@@ -2523,22 +2572,27 @@ class WebBridge {
       }
     }
 
-    void arm(Duration d) {
+    void fail(Object error) {
       timer?.cancel();
-      timer = Timer(d, () {
-        ctrl.addError(TimeoutException('LLM response timeout', d));
+      if (!ctrl.isClosed) {
+        ctrl.addError(error);
         sub?.cancel();
         ctrl.close();
-      });
+      }
     }
 
-    /// 첫 이벤트가 오면 타이머를 놓아 준다(이후로는 시간 제한 없음).
-    void disarm() {
-      timer?.cancel();
-      timer = null;
+    /// 이 응답의 실측치를 프리셋 속도계에 넣는다(표본 판정은 SpeedMeter 가 한다).
+    void measure() {
+      final started = firstAt;
+      if (started == null) return;
+      final ms = DateTime.now().difference(started).inMilliseconds;
+      // usage 가 오면 확정값, 아니면 길이/4 근사(§note 남은 작업 "정확한 토크나이저").
+      final tokens = usage?.completion ?? (chars / 4).round();
+      unawaited(_workspace.observeSpeed(presetId,
+          completionTokens: tokens, elapsedMs: ms));
     }
 
-    ctrl = StreamController<T>(
+    ctrl = StreamController<LlmEvent>(
       onListen: () {
         // 이미 중지 요청이 들어와 있으면 곧바로 끊는다.
         if (_cancelRequested) {
@@ -2546,10 +2600,37 @@ class WebBridge {
           return;
         }
         _streamAborters.add(abort);
-        if (firstResponse != null) arm(firstResponse);
+        final prefill = cfg.firstResponseTimeout;
+        if (prefill != null) {
+          timer = Timer(prefill,
+              () => fail(TimeoutException('LLM response timeout', prefill)));
+        }
         sub = source.listen(
           (e) {
-            disarm(); // 응답이 시작됐다 — 이후에는 시간으로 끊지 않는다
+            if (firstAt == null) {
+              // 응답이 시작됐다 — 프리필 타이머를 놓아 주고 생성 예산을 건다.
+              firstAt = DateTime.now();
+              timer?.cancel();
+              final limit = _workspace.streamingLimitFor(presetId);
+              if (limit != null) {
+                timer = Timer(
+                    limit,
+                    () => fail(LlmBudgetExceeded(
+                        _workspace.budgetReasonFor(presetId, limit))));
+              } else {
+                timer = null;
+              }
+            }
+            switch (e) {
+              case LlmContent(:final text):
+                chars += text.length;
+              case LlmReasoning(:final text):
+                chars += text.length;
+              case LlmUsage():
+                usage = e;
+              case LlmToolCalls():
+                break;
+            }
             ctrl.add(e);
           },
           onError: (Object e, StackTrace st) {
@@ -2558,6 +2639,7 @@ class WebBridge {
           },
           onDone: () {
             timer?.cancel();
+            measure(); // 정상 종료한 응답만 표본으로 쓴다
             ctrl.close();
           },
         );
@@ -2585,6 +2667,9 @@ class WebBridge {
       } catch (e) {
         // 중지 요청이면 재시도하지 않고 즉시 전파한다.
         if (e is _GenerationStopped || _cancelRequested) rethrow;
+        // 예산 초과도 재시도 대상이 아니다 — 같은 조건이면 또 같은 자리에서 걸리고,
+        // 그동안의 토큰만 두 배로 나간다. 사용자가 설정을 고치는 게 맞다.
+        if (e is LlmBudgetExceeded) rethrow;
         if (attempt >= maxAttempts) rethrow;
         await _retryDelay(attempt + 1, maxAttempts, '$reason: ${_briefErr(e)}');
       }
@@ -2621,6 +2706,7 @@ class WebBridge {
     ConversationStore store,
     int convId,
     LlmConfig cfg,
+    String presetId,
     List<Map<String, Object?>> messages,
     List<Map<String, Object?>>? tools,
   ) async {
@@ -2670,7 +2756,8 @@ class WebBridge {
     try {
       await for (final ev in _withResponseTimeout(
           _providerFor(cfg).streamChat(cfg: cfg, messages: messages, tools: tools),
-          cfg.firstResponseTimeout)) {
+          cfg,
+          presetId)) {
         switch (ev) {
           case LlmContent(:final text):
             content.write(text);
@@ -2763,7 +2850,10 @@ class WebBridge {
     );
     try {
       await registry.load(_workspace.toolSources,
-          workingDirectory: _workspace.projectPath);
+          workingDirectory: _workspace.projectPath,
+          // 설정에서 꺼 둔 도구는 목록에도 프롬프트에도 실리지 않는다
+          // (메인·서브에이전트가 같은 레지스트리를 쓰므로 한 곳이면 충분하다).
+          disabled: _workspace.disabledTools);
     } catch (_) {
       return null;
     }

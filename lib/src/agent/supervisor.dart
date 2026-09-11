@@ -244,23 +244,32 @@ class Supervisor {
 
   /// 모델이 턴을 끝내려 할 때 **정말 끝났는지** 본다. 위반 목록(비면 통과).
   ///
-  /// 대화형 IDE 라 기준을 **좁게** 잡았다. 도구를 한 번도 쓰지 않은 턴(순수 대화)과
-  /// 사용자에게 되묻는 답변은 검사하지 않는다 — 질문을 막아 세우면 제품이 망가진다.
-  /// 계획이 없으면 위반도 없다. 즉 계획을 안 쓰는 사용자에게는 아무 영향이 없다.
+  /// **입력은 전부 구조적인 것뿐이다** — 열린 계획 단계와 "이 턴에 도구를 썼는가".
+  /// 답변 본문은 보지 않는다.
+  ///
+  /// > 처음에는 "사용자에게 되묻는 답변이면 면제" 를 넣고 그 판정을 **정규식**으로
+  /// > 했다. 잘못된 설계다. 모델이 어떤 언어로 어떻게 끝맺을지 규정할 수 없으므로
+  /// > 그 정규식은 영원히 미완성이고, 문구가 늘 때마다 손대야 한다. 이 앱은 같은
+  /// > 이유로 이미 `<turn_summary>` 인라인 마커를 폐기한 적이 있다(§note 2026-08-10).
+  /// > **면제는 문장이 아니라 계획 상태로 표현한다** — 사용자를 기다리는 단계는
+  /// > `update_plan` 으로 `BLOCKED` 를 찍으면 열린 단계가 아니게 된다. 도구 호출은
+  /// > 모호하지 않고, 화면(계획 카드)에도 그대로 보인다.
+  ///
+  /// 도구를 한 번도 쓰지 않은 턴(순수 대화)은 검사하지 않는다. 계획이 없으면 위반도
+  /// 없다 — 계획을 안 쓰는 사용자에게는 아무 영향이 없다.
   List<String> exitViolations({
     required List<String> openSteps,
     required bool usedTools,
-    required String finalText,
   }) {
-    if (!enabled || !exitGuard || !usedTools || asksUser(finalText)) {
-      return const [];
-    }
+    if (!enabled || !exitGuard || !usedTools) return const [];
     if (openSteps.isEmpty) return const [];
     final shown = openSteps.take(4).join(', ');
     final more = openSteps.length > 4 ? ' (+${openSteps.length - 4} more)' : '';
     return [
-      'The plan still has unfinished steps: $shown$more. Either finish them, '
-          'or mark them DONE/DROP with `update_plan` and say why.',
+      'The plan still has unfinished steps: $shown$more. Do one of these with '
+          '`update_plan`, then answer: finish the step and mark it DONE; mark it '
+          'DROP if you decided against it; or mark it BLOCKED if you are waiting '
+          'on the user, and then ask them your question.',
     ];
   }
 
@@ -274,19 +283,5 @@ class Supervisor {
       };
 }
 
-/// 마지막 문장이 사용자에게 되묻는 형태인가.
-///
-/// 프롬프트는 영어지만 **모델은 사용자 언어로 답한다** — 한국어 종결형도 같이 본다.
-/// 종결형까지 포함해야 한다 — `알려 주세요.` 는 `알려\s*주` 로는 안 걸린다
-/// (뒤에 `세요.` 가 남아 `$` 에 닿지 못한다). 실제로 테스트에서 걸린 지점이다.
-final RegExp _questionRe = RegExp(
-  r'(\?|드릴까요|할까요|하시겠|주시겠|주세요|주십시오|어느\s*쪽|무엇을\s*할)'
-  r'\s*[.!]*\s*$',
-);
-
-bool asksUser(String? text) {
-  final t = (text ?? '').trim();
-  if (t.isEmpty) return false;
-  final tail = t.length > 160 ? t.substring(t.length - 160) : t;
-  return _questionRe.hasMatch(tail);
-}
+// 답변 본문을 읽어 의도를 판정하는 코드는 이 파일에 **두지 않는다**.
+// 모델의 문장은 언어도 문체도 규정할 수 없다 — 그런 판정은 도구 호출(구조)로만 한다.

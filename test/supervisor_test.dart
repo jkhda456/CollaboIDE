@@ -113,59 +113,42 @@ void main() {
     expect(s.roundDone(progress: false), isNull);
     expect(s.observe(const StepObs(tool: 't', errorSig: 'e')), isNull);
     expect(
-      s.exitViolations(
-          openSteps: ['남은 단계'], usedTools: true, finalText: '다 했습니다'),
+      s.exitViolations(openSteps: ['남은 단계'], usedTools: true),
       isEmpty,
     );
   });
 
-  group('종료 차단', () {
+  group('종료 차단 — 판단 재료는 구조뿐(답변 본문을 읽지 않는다)', () {
     final s = Supervisor();
 
     test('열린 단계가 남았으면 위반', () {
-      final v = s.exitViolations(
-          openSteps: ['테스트 돌리기'], usedTools: true, finalText: '다 만들었습니다');
+      final v = s.exitViolations(openSteps: ['테스트 돌리기'], usedTools: true);
       expect(v, hasLength(1));
       expect(v.first, contains('테스트 돌리기'));
     });
 
     test('열린 단계가 없으면 통과', () {
-      expect(
-        s.exitViolations(openSteps: [], usedTools: true, finalText: '다 했습니다'),
-        isEmpty,
-      );
+      expect(s.exitViolations(openSteps: [], usedTools: true), isEmpty);
     });
 
     test('도구를 안 쓴 턴(순수 대화)은 검사하지 않는다', () {
-      expect(
-        s.exitViolations(
-            openSteps: ['남은 것'], usedTools: false, finalText: '설명드리자면…'),
-        isEmpty,
-      );
-    });
-
-    test('사용자에게 되묻는 답변은 막지 않는다', () {
-      for (final q in [
-        '어느 쪽으로 할까요?',
-        '이 방식으로 진행할까요',
-        'Which approach do you prefer?',
-        '경로를 알려 주세요.',
-      ]) {
-        expect(
-          s.exitViolations(openSteps: ['남은 것'], usedTools: true, finalText: q),
-          isEmpty,
-          reason: q,
-        );
-      }
+      expect(s.exitViolations(openSteps: ['남은 것'], usedTools: false), isEmpty);
     });
 
     test('열린 단계가 많으면 앞 4개만 보여 주고 나머지는 개수로', () {
       final v = s.exitViolations(
         openSteps: ['a', 'b', 'c', 'd', 'e', 'f'],
         usedTools: true,
-        finalText: '완료',
       );
       expect(v.first, contains('+2 more'));
+    });
+
+    test('되돌려보내는 문구가 BLOCKED 탈출구를 알려 준다', () {
+      // 사용자에게 물으려면 문장이 아니라 **도구 호출**로 표시해야 한다는 것이
+      // 모델에게 전달되는 유일한 경로다.
+      final v = s.exitViolations(openSteps: ['답을 기다림'], usedTools: true);
+      expect(v.first, contains('BLOCKED'));
+      expect(v.first, contains('update_plan'));
     });
 
     test('재주입은 상한이 있다', () {
@@ -175,13 +158,5 @@ void main() {
       t.noteReinjection();
       expect(t.mayReinject, isFalse);
     });
-  });
-
-  test('asksUser: 질문이 아닌 문장은 통과시키지 않는다', () {
-    expect(asksUser('완료했습니다.'), isFalse);
-    expect(asksUser(''), isFalse);
-    expect(asksUser(null), isFalse);
-    // 문장 중간의 물음표는 끝이 아니면 질문으로 보지 않는다.
-    expect(asksUser('되나? 싶었지만 결국 고쳤습니다.'), isFalse);
   });
 }

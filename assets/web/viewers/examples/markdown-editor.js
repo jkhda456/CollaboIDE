@@ -58,7 +58,7 @@
       // 대용량 파일은 앞부분만 읽혀 있다 — 그대로 저장하면 뒷부분이 날아간다.
       if (ctx.truncated) {
         warnBar(t('editorNoSaveTruncated',
-          '앞부분만 읽은 대용량 파일입니다 — 저장하면 뒷부분이 사라지므로 저장을 막았습니다.'));
+          '앞부분만 읽은 대용량 파일입니다. 저장하면 뒷부분이 사라지므로 저장을 막았습니다.'));
         saveBtn.disabled = true;
       }
 
@@ -103,7 +103,7 @@
       function onInput() {
         var dirty = area.value !== base;
         if (dirty) drafts[ctx.path] = area.value; else delete drafts[ctx.path];
-        state.textContent = dirty ? t('unsaved', '저장 안 됨') : '';
+        state.textContent = dirty ? t('unsaved', '저장하지 않았습니다') : '';
         renderPreview();
       }
 
@@ -111,20 +111,20 @@
         if (saveBtn.disabled || area.value === base) return;
         var sent = area.value;
         saveBtn.disabled = true;
-        state.textContent = t('saving', '저장 중…');
+        state.textContent = t('saving', '저장하는 중입니다…');
         ctx.save(sent, function (ok, error) {
           saveBtn.disabled = false;
           if (!ok) {
             // 실패하면 편집분을 그대로 남긴다 — 다시 시도할 수 있어야 한다.
-            state.textContent = t('saveFailed', '저장 실패') + (error ? ': ' + error : '');
+            state.textContent = t('saveFailed', '저장하지 못했습니다') + (error ? ': ' + error : '');
             return;
           }
           base = sent;                       // 새 기준선 = 방금 디스크에 쓴 내용
           if (area.value === base) {
             delete drafts[ctx.path];
-            state.textContent = t('saved', '저장됨');
+            state.textContent = t('saved', '저장했습니다');
           } else {
-            state.textContent = t('unsaved', '저장 안 됨');   // 저장 중에 더 고쳤다
+            state.textContent = t('unsaved', '저장하지 않았습니다');   // 저장 중에 더 고쳤다
           }
         });
       }
