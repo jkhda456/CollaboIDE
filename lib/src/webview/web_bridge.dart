@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../agent/playbook.dart';
+import '../agent/supervisor.dart';
 import '../app/workspace_controller.dart';
 import '../conversation/conversation_store.dart';
 import '../conversation/models.dart';
@@ -87,6 +89,20 @@ class WebBridge {
   }
 
   bool _generating = false;
+
+  /// 지금 프로젝트의 계획 메모리(`.collabo/PLAYBOOK.md`). 프로젝트가 없으면 null.
+  ///
+  /// 파일이 정본이므로 **생성이 시작될 때마다 다시 읽는다** — 사용자가 에디터에서
+  /// 직접 고쳤을 수 있다. 생성 중에는 이 인스턴스가 유일한 창구다(계획 도구·컨텍스트
+  /// 주입·종료 차단이 전부 같은 것을 본다).
+  Playbook? _playbook;
+
+  /// 이번 생성의 감독자. 생성이 끝나면 버린다(궤적은 턴 단위로만 의미가 있다).
+  Supervisor? _supervisor;
+
+  /// 도구가 파일을 바꿀 때마다 증가한다(`_recordFileChange`).
+  /// 감독자의 "진전" 판정에만 쓴다 — 절대값은 의미가 없고 **움직였는지**만 본다.
+  int _fileChangeSeq = 0;
 
   /// 사용자가 "중지"를 눌렀을 때 true. 진행 중인 스트림을 끊고 큐를 비운다.
   bool _cancelRequested = false;
@@ -322,6 +338,9 @@ class WebBridge {
     _projectPath = path;
     await _restartWatcher(path);
     _post({'type': 'project.changed', 'path': path ?? ''});
+    // 계획은 프로젝트에 딸린 파일이다 — 프로젝트가 바뀌면 다시 읽어 카드를 갈아 끼운다.
+    await _reloadPlaybook();
+    _pushPlan();
     await _pushHistory();
   }
 
@@ -339,6 +358,8 @@ class WebBridge {
         // 웹 준비 완료 → 현재 프로젝트/대화 기록 재통지.
         _post({'type': 'project.changed', 'path': _projectPath ?? ''});
         _pushHistory();
+        // 페이지가 다시 로드되면 계획 카드도 비어 있다 → 파일에서 다시 읽어 보낸다.
+        unawaited(_reloadPlaybook().then((_) => _pushPlan()));
         // 페이지가 (다시) 로드되면 등록된 뷰어는 사라진 상태다 → 다시 얹는다.
         // 규칙을 먼저 보낸다 — 파일을 열기 전에 확장자 연결이 적용돼 있어야 한다.
         unawaited(_pushViewerRules());
@@ -941,6 +962,22 @@ class WebBridge {
   /// 네이티브로 처리하는 도구(서브 LLM 분기). 파이썬으로 보내지 않는다.
   static const Set<String> _nativeToolNames = {'run_subagent', 'verify_work'};
 
+  /// 계획 메모리(`.collabo/PLAYBOOK.md`)를 고치는 도구. 이것도 네이티브다 —
+  /// 브리지 자신이 PLAYBOOK 을 읽어 컨텍스트에 넣고 종료 차단의 근거로 쓰므로,
+  /// 파이썬 프로세스를 한 번 더 띄울 이유가 없다.
+  static const Set<String> _planToolNames = {
+    'set_goal',
+    'update_plan',
+    'note_write',
+  };
+
+  /// **서브에이전트에 주는 계획 도구는 `note_write` 하나뿐이다.**
+  ///
+  /// 목표와 계획은 오케스트레이터(메인)의 것이다. 서브에이전트는 자기 과제 하나만
+  /// 보고 있어서 전체 계획을 다시 쓰면 안 된다. 반대로 **알아낸 것·배제한 접근**은
+  /// 실제 작업이 일어나는 그 자리에서 남기는 게 가장 정확하다.
+  static const Set<String> _subPlanToolNames = {'note_write'};
+
   static const List<Map<String, Object?>> _nativeTools = [
     {
       'type': 'function',
@@ -985,6 +1022,119 @@ class WebBridge {
       },
     },
   ];
+
+  /// 계획 메모리 도구 3종. 설정에서 계획 메모리를 끄면 아예 넘기지 않는다
+  /// (모델에게 없는 도구를 보여 주지 않는다).
+  static const List<Map<String, Object?>> _planTools = [
+    {
+      'type': 'function',
+      'function': {
+        'name': 'set_goal',
+        'description':
+            'Record the goal of what the user asked for, in one sentence, and '
+                'optionally the steps to get there. Call this ONCE at the start '
+                'of a non-trivial task, before doing the work. The goal and plan '
+                'are stored in $kPlaybookPath and survive summarisation, so you '
+                'can always see what you set out to do.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'goal': {
+              'type': 'string',
+              'description': 'The goal in one sentence, in the user\'s words.',
+            },
+            'steps': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  'Optional: the steps, each a short imperative phrase. '
+                      'Same as calling update_plan with steps.',
+            },
+          },
+          'required': ['goal'],
+        },
+      },
+    },
+    {
+      'type': 'function',
+      'function': {
+        'name': 'update_plan',
+        'description':
+            'Change the plan. Give `steps` to replace the whole plan (use this '
+                'when you change direction), or give `step` + `status` to move '
+                'one step along. Mark each step DONE as soon as it is actually '
+                'finished — a step left open blocks you from ending the turn.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'steps': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description': 'Replace the whole plan with these steps.',
+            },
+            'step': {
+              'type': 'string',
+              'description':
+                  'Which step to update: its 1-based number, or part of its text.',
+            },
+            'status': {
+              'type': 'string',
+              'enum': ['TODO', 'DOING', 'DONE', 'DROP'],
+              'description':
+                  'New status for that step. DROP means you decided not to do it.',
+            },
+            'note': {
+              'type': 'string',
+              'description': 'Optional short note appended to that step.',
+            },
+          },
+        },
+      },
+    },
+    {
+      'type': 'function',
+      'function': {
+        'name': 'note_write',
+        'description':
+            'Record one thing you learned, in one line, so it survives even '
+                'after this conversation is summarised. ALWAYS mark how sure you '
+                'are: VERIFIED (you checked it with a tool just now), ASSUMED '
+                '(you believe it but have not checked), REFUTED (you tried it '
+                'and it does not work).',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'section': {
+              'type': 'string',
+              'enum': ['working_model', 'ruled_out', 'open_questions'],
+              'description':
+                  'working_model = how this project actually works; '
+                      'ruled_out = an approach you tried that failed; '
+                      'open_questions = something still unknown.',
+            },
+            'text': {
+              'type': 'string',
+              'description': 'The single line to record.',
+            },
+            'marker': {
+              'type': 'string',
+              'enum': ['VERIFIED', 'ASSUMED', 'REFUTED'],
+              'description': 'How sure you are. Defaults to ASSUMED.',
+            },
+          },
+          'required': ['section', 'text'],
+        },
+      },
+    },
+  ];
+
+  /// 서브에이전트에 주는 계획 도구(= `note_write` 하나).
+  static List<Map<String, Object?>> get _subPlanTools => [
+        for (final t in _planTools)
+          if (_subPlanToolNames
+              .contains((t['function'] as Map)['name'] as String))
+            t,
+      ];
 
   // 서브에이전트는 **사용자 편집 시스템 프롬프트를 받지 않는다**(자기 컨텍스트로
   // 분기하며 아래 문구만 system 으로 받는다). 실제 파일 작업은 여기서 일어나므로,
@@ -1058,11 +1208,17 @@ class WebBridge {
     await _awaitTurnSummaries();
     _status('Preparing…');
 
+    // 계획 메모리는 **파일이 정본**이라 생성마다 다시 읽는다(사용자가 고쳤을 수 있다).
+    // 감독자는 이번 생성 동안만 산다 — 궤적은 턴 단위로만 의미가 있다.
+    await _reloadPlaybook();
+    _supervisor = Supervisor(enabled: _workspace.supervisor);
+
     final registry = await _buildToolRegistry();
-    // 파이썬 도구 + 네이티브 서브에이전트 도구를 메인 LLM 에 제공.
+    // 파이썬 도구 + 네이티브 서브에이전트 도구 + 계획 도구를 메인 LLM 에 제공.
     final tools = <Map<String, Object?>>[
       if (registry != null) ...registry.openAiTools,
       ..._nativeTools,
+      if (_playbook != null) ..._planTools,
     ];
     final workspace = _workspace.projectPath;
 
@@ -1104,9 +1260,34 @@ class WebBridge {
           final toolsUsed = <String>[];
           for (var iter = 0; iter < _maxToolIterations; iter++) {
             if (_cancelRequested) throw const _GenerationStopped();
+            final changesBeforeRound = _fileChangeSeq;
             // 실제 대기/수신 상태는 _runModelTurn 이 직접 풍선에 표시한다.
             final turn = await _runModelTurn(store, convId, cfg, messages, tools);
             if (turn.toolCalls.isEmpty) {
+              // **종료 차단**: 계획에 열린 단계가 남았는데 끝내려 하면 되돌려보낸다.
+              // 도구를 한 번도 안 쓴 턴(순수 대화)과 사용자에게 되묻는 답변은
+              // 검사하지 않는다 — 질문을 막아 세우면 대화형 제품이 망가진다.
+              final violations = _supervisor?.exitViolations(
+                    openSteps: _playbook?.openSteps ?? const [],
+                    usedTools: toolsUsed.isNotEmpty,
+                    finalText: turn.content,
+                  ) ??
+                  const <String>[];
+              if (violations.isNotEmpty && (_supervisor?.mayReinject ?? false)) {
+                _supervisor!.noteReinjection();
+                _applyIntervention(
+                  messages,
+                  Intervention(
+                    action: 'exit_guard',
+                    reason: 'finished with open plan steps',
+                    message: '[supervisor] Not done yet.\n'
+                        '- ${violations.join('\n- ')}',
+                    level: 0,
+                    halt: false,
+                  ),
+                );
+                continue; // 같은 턴 안에서 이어서 돌린다
+              }
               converged = true;
               // 답변은 이미 확정됐다 — 요약은 기다리지 않고 뒤에서 만든다.
               _scheduleTurnSummary(
@@ -1126,13 +1307,32 @@ class WebBridge {
                   },
               ],
             });
+            Intervention? iv;
             for (final c in turn.toolCalls) {
               // 중지를 눌렀으면 남은 도구 호출은 시작하지 않는다(빠른 중지).
               if (_cancelRequested) throw const _GenerationStopped();
-              await _runToolCall(store, convId, registry, workspace, messages,
-                  attempt, iter, c, turn.id);
+              iv = await _runToolCall(store, convId, registry, workspace,
+                      messages, attempt, iter, c, turn.id) ??
+                  iv;
+            }
+            // 라운드가 끝났다 — 이 라운드에 파일이 하나도 안 바뀌었으면 진전 없음.
+            iv ??= _supervisor?.roundDone(
+                progress: _fileChangeSeq != changesBeforeRound);
+            if (iv != null) {
+              _applyIntervention(messages, iv);
+              if (iv.halt) {
+                // 마지막 단계다. 도구를 **거두고** 한 라운드만 더 돌려 사용자에게
+                // 무엇이 막혔는지 말하게 한다. 그냥 끊으면 사용자는 이유를 모른다.
+                final closing =
+                    await _runModelTurn(store, convId, cfg, messages, null);
+                _scheduleTurnSummary(
+                    store, closing.id, closing.content, toolsUsed, userRequest);
+                converged = true;
+                break;
+              }
             }
           }
+          // 계획 카드는 계획 도구가 부를 때마다 이미 갱신된다(_runPlanTool → _pushPlan).
           // 비수렴(반복 한도 초과)이어도 수행한 작업은 그대로 두고 종료한다.
           if (!converged) {
             _post({'type': 'chat.notice', 'text': 'reached step limit ($_maxToolIterations)'});
@@ -1158,6 +1358,7 @@ class WebBridge {
       }
     } finally {
       _generating = false;
+      _supervisor = null; // 궤적은 턴 단위 — 다음 생성은 깨끗한 상태로 시작한다
       // 중지로 끝났다면 어느 경로로 빠져나왔든 여기서 통지가 보장된다.
       // (예: 시도 루프 맨 위의 `if (_cancelRequested) return;` — 예전에는 이 길로
       //  나가면 `chat.stopped` 가 없어 웹이 "중지 중…" 에 갇혔다.)
@@ -1253,6 +1454,13 @@ class WebBridge {
         // 프롬프트를 편집해 저장하면 그 문단이 통째로 사라질 수 있다 — 그러면
         // 컨텍스트에 남은 `[delegated]` 줄이 정체불명의 텍스트가 된다.
         if (!prompt.contains(kDelegationMarker)) kDelegationMarkerNote,
+        // 계획 규율도 마커 설명과 같은 이유로 보강한다 — 사용자가 프롬프트를 편집해
+        // 저장했으면 이 문단이 통째로 없다. 계획 메모리가 꺼져 있으면 넣지 않는다
+        // (`_playbook == null`) — 없는 도구를 설명하지 않는다.
+        if (_playbook != null && !prompt.contains(kPlaybookPath)) kPlanningNote,
+        // 계획은 상태보다 **먼저** 온다 — "무엇을 하려는가" 를 읽고 나서 "지금 어떤
+        // 상태인가" 를 읽는 순서가 자연스럽다.
+        _planContext(forSubAgent: false),
         state,
         // 사전 평가(트리아지)도 여기 합친다. 예전에는 **맨 뒤**에 system 으로 붙였는데,
         // 그러면 배열이 system 으로 끝나 대부분의 템플릿이 생성 프롬프트를 못 붙인다.
@@ -1330,8 +1538,12 @@ class WebBridge {
   }
 
   /// 도구 한 건 실행: 화면 표시(running→done) + DB 기록 + 컨텍스트에 결과 추가.
-  /// 네이티브 도구(run_subagent/verify_work)는 서브 LLM 으로 처리한다.
-  Future<void> _runToolCall(
+  /// 네이티브 도구(run_subagent/verify_work)는 서브 LLM 으로, 계획 도구는
+  /// PLAYBOOK 으로 간다(둘 다 파이썬을 거치지 않는다).
+  ///
+  /// 감독자가 켜져 있으면 이 호출을 관측하고, 정체로 판단되면 [Intervention] 을
+  /// 돌려준다 — 실제 주입은 호출자(`_generate`)가 한다.
+  Future<Intervention?> _runToolCall(
     ConversationStore store,
     int convId,
     ToolRegistry? registry,
@@ -1363,6 +1575,10 @@ class WebBridge {
     String summary;
     String? diff;
     String? path;
+    // 감독자 관측치. **진전**은 파일·계획이 실제로 바뀐 것만 센다(읽기·검색은 아니다).
+    var progress = false;
+    var errorSig = '';
+    final changesBefore = _fileChangeSeq;
     // 호출 내역(네이티브 창)에 남길 기록. 결과 원문은 아래에서 채운다.
     final logRec = toolCalls.start(
       id: tid,
@@ -1370,7 +1586,16 @@ class WebBridge {
       name: c.name,
       args: c.arguments,
     );
-    if (_nativeToolNames.contains(c.name)) {
+    if (_planToolNames.contains(c.name)) {
+      _status('Plan: ${c.name}…');
+      final res = await _runPlanTool(c.name, argMap);
+      ok = res.ok;
+      resultStr = res.result;
+      summary = res.summary;
+      // 계획을 실제로 고쳤으면 진전이다 — 방향을 바꾸는 것도 전진이기 때문이다.
+      progress = res.ok;
+      if (!res.ok) errorSig = errorSignature(res.summary);
+    } else if (_nativeToolNames.contains(c.name)) {
       final verify = c.name == 'verify_work';
       _status(verify ? 'Sub-agent: verifying…' : 'Sub-agent: working…');
       final prompt = (argMap['prompt'] as String?) ?? '';
@@ -1396,6 +1621,9 @@ class WebBridge {
           task: _clip(prompt, 160),
         );
       }
+      // 위임은 그 자체로는 진전이 아니다 — **서브에이전트가 실제로 무언가를 바꿨을
+      // 때만** 진전으로 센다. 같은 프롬프트를 반복 위임하는 것은 반복 탐지가 잡는다.
+      progress = _fileChangeSeq != changesBefore;
     } else {
       _status('Tool: ${c.name}…');
       final res = registry == null
@@ -1407,6 +1635,8 @@ class WebBridge {
       ok = res.ok;
       resultStr = _toolResultString(res);
       summary = _toolSummary(res);
+      progress = res.ok && _fileChangeSeq != changesBefore;
+      if (!res.ok) errorSig = errorSignature(res.error ?? res.reason ?? summary);
       // 변경 도구(edit/replace/write/create)의 diff 를 추출해 카드에 표시.
       if (res.ok && res.result is Map) {
         final r = (res.result as Map).cast<String, Object?>();
@@ -1435,6 +1665,32 @@ class WebBridge {
     if (diff != null) donePayload['diff'] = diff;
     if (path != null) donePayload['path'] = path;
     _post(donePayload);
+
+    return _supervisor?.observe(StepObs(
+      tool: c.name,
+      args: c.arguments,
+      errorSig: errorSig,
+      progress: progress,
+    ));
+  }
+
+  /// 감독자 개입을 대화에 알리고, 모델에 주입할 user 메시지를 [messages] 에 넣는다.
+  ///
+  /// **왜 user 인가**: 대화 중간의 system 은 로컬 템플릿이 거부한다
+  /// (§`message_shape.dart`). 도구 결과 뒤에 user 를 붙이는 것은 규격에 맞는다.
+  /// 화면에는 한 줄만 남긴다 — 모델이 갑자기 방향을 바꾸는 이유가 보이지 않으면
+  /// 사용자는 그걸 오작동으로 읽는다.
+  void _applyIntervention(
+      List<Map<String, Object?>> messages, Intervention iv) {
+    messages.add({'role': 'user', 'content': iv.message});
+    _post({
+      'type': 'chat.supervisor',
+      'action': iv.action,
+      'level': iv.level,
+      'reason': iv.reason,
+      'message': iv.message,
+      'halt': iv.halt,
+    });
   }
 
   /// 서브 LLM 분기: 별도 컨텍스트로 프롬프트를 처리한다(메인 대화창에 미표시).
@@ -1455,7 +1711,15 @@ class WebBridge {
     if (prompt.trim().isEmpty) return '(empty prompt)';
     // 부모 도구 버블(tid)을 클릭하면 볼 수 있는 실시간 전사(transcript)용 식별자.
     final parentTid = tid;
-    final subTools = registry?.openAiTools;
+    // 위임 도구(run_subagent/verify_work)는 빼서 재귀를 막고, 계획 도구는
+    // `note_write` 하나만 준다(§_subPlanToolNames — 계획의 주인은 메인이다).
+    final subTools = <Map<String, Object?>>[
+      ...?registry?.openAiTools,
+      if (_playbook != null) ..._subPlanTools,
+    ];
+    // 이 서브에이전트만의 감독자. 마지막 단계는 "사용자에게 묻기" 가 아니라
+    // **부모에게 보고하기** 다 — 서브에이전트 앞에는 사용자가 없다.
+    final subSup = Supervisor.forSubAgent(enabled: _workspace.supervisor);
     final procCtx = _runningProcessContext();
     // 서브에이전트는 매번 빈 컨텍스트로 시작한다 — 이미 만들어 둔 파일을 다시
     // 만들거나 같은 조사를 반복하지 않도록 프로젝트 상태를 함께 넣어 준다.
@@ -1477,6 +1741,9 @@ class WebBridge {
       // 여기도 system 을 여러 개 쌓지 않는다(§systemHead — 로컬 템플릿이 거부한다).
       ...systemHead([
         verify ? _verifySystemFor(registry) : _subAgentSystemFor(registry),
+        // 서브에이전트는 매번 빈 컨텍스트로 시작하므로 계획이 **여기서 더 중요하다**.
+        if (_playbook != null) kSubAgentPlanningNote,
+        _planContext(forSubAgent: true),
         stateCtx,
         procCtx,
         attCtx,
@@ -1560,6 +1827,8 @@ class WebBridge {
               },
           ],
         });
+        Intervention? iv;
+        final changesBeforeRound = _fileChangeSeq;
         for (final c in turn.toolCalls) {
           // 중지를 눌렀으면 남은 도구 호출은 시작하지 않는다(빠른 중지).
           if (_cancelRequested) throw const _GenerationStopped();
@@ -1586,15 +1855,36 @@ class WebBridge {
           } catch (_) {
             argMap = {};
           }
-          final res = registry == null
-              ? const ToolCallResult(ok: false, error: 'No tools available')
-              : await registry.call(c.name, argMap,
-                  workspace: workspace, workingDirectory: workspace);
-          // 실제 파일 작업은 대부분 여기(서브에이전트)서 일어난다 — 반드시 기록.
-          await _recordFileChange(c.name, argMap, res);
-          final subResultStr = _toolResultString(res);
+          final bool subOk;
+          final String subResultStr;
+          final String subSummary;
+          var subProgress = false;
+          var subErrorSig = '';
+          if (_planToolNames.contains(c.name)) {
+            // 계획 도구(= note_write)는 PLAYBOOK 으로 간다. 파이썬을 거치지 않는다.
+            final r = await _runPlanTool(c.name, argMap);
+            subOk = r.ok;
+            subResultStr = r.result;
+            subSummary = r.summary;
+            subProgress = r.ok;
+            if (!r.ok) subErrorSig = errorSignature(r.summary);
+          } else {
+            final res = registry == null
+                ? const ToolCallResult(ok: false, error: 'No tools available')
+                : await registry.call(c.name, argMap,
+                    workspace: workspace, workingDirectory: workspace);
+            // 실제 파일 작업은 대부분 여기(서브에이전트)서 일어난다 — 반드시 기록.
+            await _recordFileChange(c.name, argMap, res);
+            subOk = res.ok;
+            subResultStr = _toolResultString(res);
+            subSummary = _toolSummary(res);
+            subProgress = res.ok && _fileChangeSeq != changesBeforeRound;
+            if (!res.ok) {
+              subErrorSig = errorSignature(res.error ?? res.reason ?? subSummary);
+            }
+          }
           toolCalls.finish(logRec,
-              ok: res.ok, result: subResultStr, summary: _toolSummary(res));
+              ok: subOk, result: subResultStr, summary: subSummary);
           subMessages.add({
             'role': 'tool',
             'tool_call_id': c.id,
@@ -1605,8 +1895,8 @@ class WebBridge {
             'tid': tid,
             'name': c.name,
             'status': 'done',
-            'ok': res.ok,
-            'summary': _toolSummary(res),
+            'ok': subOk,
+            'summary': subSummary,
           });
           // 실시간 전사에도 이 도구 호출/결과를 한 줄로 남긴다.
           _post({
@@ -1614,9 +1904,43 @@ class WebBridge {
             'tid': parentTid,
             'role': 'tool',
             'name': c.name,
-            'ok': res.ok,
-            'summary': _toolSummary(res),
+            'ok': subOk,
+            'summary': subSummary,
           });
+          iv = subSup.observe(StepObs(
+                tool: c.name,
+                args: c.arguments,
+                errorSig: subErrorSig,
+                progress: subProgress,
+              )) ??
+              iv;
+        }
+        iv ??=
+            subSup.roundDone(progress: _fileChangeSeq != changesBeforeRound);
+        if (iv != null) {
+          // 서브에이전트의 개입은 대화창에 카드로 남기지 않는다 — 전사(chat.sub)에만
+          // 한 줄 남긴다. 메인 대화에 서브의 내부 사정을 흘리지 않는다는 기존 원칙 그대로.
+          subMessages.add({'role': 'user', 'content': iv.message});
+          _post({
+            'type': 'chat.sub',
+            'tid': parentTid,
+            'role': 'supervisor',
+            'name': iv.action,
+            'summary': iv.reason,
+          });
+          if (iv.halt) {
+            // 도구를 거두고 한 번만 더 돌려 **부모에게 보고**하게 한다.
+            final closing = await _withLlmRetry(
+              () => _runSubModelTurn(cfg, subMessages, null,
+                  onContent: emitProgress,
+                  onDelta: (t) =>
+                      _post({'type': 'chat.sub', 'tid': parentTid, 'delta': t})),
+              reason: 'Sub-agent connection issue',
+            );
+            finalText = closing.content;
+            subTokens += closing.totalTokens;
+            break;
+          }
         }
       }
     } on _GenerationStopped {
@@ -1807,6 +2131,10 @@ class WebBridge {
     try {
       await store.recordFileChange(
           path: _relPath(raw), action: action, tool: toolName);
+      // 감독자의 "진전" 판정 재료. 위임(run_subagent)이 실제로 무언가를 바꿨는지는
+      // 이 값이 호출 전후로 움직였는지로 본다 — 서브에이전트 안에서도 같은 함수를
+      // 지나므로 한 곳만 세면 된다.
+      _fileChangeSeq++;
       if (toolName == 'move_path') {
         // 원본 경로는 사라졌다는 사실도 남긴다.
         final src = (r['src'] ?? args['src']);
@@ -1894,6 +2222,162 @@ class WebBridge {
       text = '${text.substring(0, _maxStateChars)}\n… (state truncated)';
     }
     return text;
+  }
+
+  // ======================================================= 계획 메모리(하니스)
+
+  /// 계획 메모리를 디스크에서 다시 읽는다(꺼져 있거나 프로젝트가 없으면 null).
+  ///
+  /// **매 생성마다 다시 읽는 것이 중요하다** — 파일이 정본이고, 사용자가 에디터에서
+  /// 직접 고쳤을 수 있다(그러라고 파일로 뒀다).
+  Future<Playbook?> _reloadPlaybook() async {
+    final root = _workspace.projectPath;
+    if (!_workspace.planMemory || root == null || root.isEmpty) {
+      _playbook = null;
+      return null;
+    }
+    final pb = Playbook.forProject(root);
+    await pb.load();
+    _playbook = pb;
+    return pb;
+  }
+
+  /// 계획 카드(웹)를 갱신한다. 계획 메모리가 꺼져 있으면 빈 것을 보내 카드를 감춘다.
+  void _pushPlan() {
+    final pb = _playbook;
+    _post({
+      'type': 'chat.plan',
+      'plan': pb == null || pb.isEmpty ? null : pb.toJson(),
+    });
+  }
+
+  /// 매 턴 컨텍스트에 고정할 계획 블록(비었으면 null).
+  ///
+  /// 메인은 `_buildContextMessages`, 서브에이전트는 `_runSubAgent` 가 이걸 쓴다.
+  /// 서브에이전트는 **매번 빈 컨텍스트로 시작**하므로 오히려 여기가 더 중요하다.
+  String? _planContext({required bool forSubAgent}) {
+    final digest = _playbook?.digest();
+    if (digest == null) return null;
+    final head = forSubAgent
+        ? 'The main agent is working to this plan. Your task is one part of it. '
+            'Do not restate or rewrite the plan — if you learn something worth '
+            'keeping, record it with `note_write`.'
+        : 'Your goal and plan for this task (file: $kPlaybookPath — it survives '
+            'summarisation, so trust it over your memory of earlier turns). '
+            'Keep it current with `update_plan` as you go.';
+    return '$head\n\n$digest';
+  }
+
+  /// 계획 도구 한 건 실행(네이티브 — 파이썬으로 가지 않는다).
+  Future<({bool ok, String result, String summary})> _runPlanTool(
+      String name, Map<String, Object?> args) async {
+    final pb = _playbook;
+    if (pb == null) {
+      return (
+        ok: false,
+        result: jsonEncode({'ok': false, 'error': 'Plan memory is off.'}),
+        summary: 'plan memory off',
+      );
+    }
+    try {
+      switch (name) {
+        case 'set_goal':
+          final goal = (args['goal'] as String?)?.trim() ?? '';
+          if (goal.isEmpty) {
+            return _planErr('`goal` is required (one sentence).');
+          }
+          await pb.setGoal(goal);
+          final steps = _asStringList(args['steps']);
+          if (steps.isNotEmpty) await pb.setPlan(steps);
+          _pushPlan();
+          return _planOk(
+            {'goal': pb.goalText, 'steps': pb.openSteps.length},
+            'goal set${steps.isEmpty ? '' : ' · ${steps.length} steps'}',
+          );
+
+        case 'update_plan':
+          final steps = _asStringList(args['steps']);
+          if (steps.isNotEmpty) {
+            await pb.setPlan(steps);
+            _pushPlan();
+            return _planOk({'steps': steps.length}, '${steps.length} steps');
+          }
+          final ref = (args['step'] ?? args['ref'] ?? '').toString().trim();
+          if (ref.isEmpty) {
+            return _planErr(
+                'Give either `steps` (replace the plan) or `step` + `status`.');
+          }
+          final item = await pb.updateStep(
+            ref,
+            (args['status'] as String?) ?? 'DONE',
+            note: (args['note'] as String?) ?? '',
+          );
+          if (item == null) {
+            return _planErr(
+                'No plan step matches "$ref". Current steps: ${pb.openSteps}');
+          }
+          _pushPlan();
+          return _planOk(
+            {'step': item.text, 'status': item.marker, 'open': pb.openSteps},
+            '${item.marker}: ${_clip(item.text, 40)}',
+          );
+
+        case 'note_write':
+          final text = (args['text'] as String?)?.trim() ?? '';
+          if (text.isEmpty) return _planErr('`text` is required (one line).');
+          final item = await pb.note(
+            (args['section'] as String?) ?? 'working_model',
+            text,
+            marker: (args['marker'] as String?) ?? '',
+          );
+          if (item == null) return _planErr('Nothing to record.');
+          _pushPlan();
+          return _planOk(
+            {'marker': item.marker, 'text': item.text},
+            '[${item.marker}] ${_clip(item.text, 40)}',
+          );
+      }
+    } catch (e) {
+      return _planErr('$e');
+    }
+    return _planErr('Unknown plan tool: $name');
+  }
+
+  ({bool ok, String result, String summary}) _planOk(
+          Map<String, Object?> result, String summary) =>
+      (ok: true, result: jsonEncode({'ok': true, 'result': result}), summary: summary);
+
+  ({bool ok, String result, String summary}) _planErr(String error) =>
+      (ok: false, result: jsonEncode({'ok': false, 'error': error}), summary: error);
+
+  /// 배열 인자를 관대하게 읽는다 — 모델이 JSON 문자열이나 문자열 하나로 보내는 일이
+  /// 잦다(§note 2026-08-14 "문자열로 보내는 모델 받아 주기" 와 같은 노선).
+  List<String> _asStringList(Object? raw) {
+    if (raw == null) return const [];
+    if (raw is List) {
+      return [
+        for (final e in raw)
+          if (e != null && e.toString().trim().isNotEmpty) e.toString().trim(),
+      ];
+    }
+    if (raw is String) {
+      final s = raw.trim();
+      if (s.isEmpty) return const [];
+      if (s.startsWith('[')) {
+        try {
+          return _asStringList(jsonDecode(s));
+        } catch (_) {
+          // 배열처럼 생겼지만 JSON 이 아니면 아래 줄 단위 해석으로 떨어진다.
+        }
+      }
+      // 줄바꿈으로 나눠 온 경우도 받는다(한 줄이면 항목 하나).
+      return [
+        for (final line in s.split('\n'))
+          if (line.trim().isNotEmpty)
+            line.trim().replaceFirst(RegExp(r'^\s*(?:[-*]|\d+[.)])\s*'), ''),
+      ];
+    }
+    return const [];
   }
 
   /// 부모 대화에서 **가장 최근 사용자 메시지**의 첨부 목록을 꺼낸다.

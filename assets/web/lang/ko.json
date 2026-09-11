@@ -117,5 +117,9 @@
   "rawTitle": "받는 중인 토큰",
   "rawEmpty": "아직 받은 토큰이 없습니다.",
   "rawAnswer": "답변",
-  "rawTool": "도구"
+  "rawTool": "도구",
+  "planCard": "계획",
+  "planToggleTitle": "계획 단계 펼치기/접기",
+  "supervisorStep": "감독자 개입",
+  "supervisorExit": "감독자: 계획에 남은 단계가 있어 되돌려보냈습니다"
 }

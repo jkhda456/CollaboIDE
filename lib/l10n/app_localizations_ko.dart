@@ -65,6 +65,23 @@ class AppLocalizationsKo extends AppLocalizations {
       '폴더 구조와 도구가 바꾼 파일 목록을 요약해 에이전트에게 함께 전달합니다. 이미 끝난 작업을 다시 시도하는 낭비를 줄입니다(길이 제한 적용).';
 
   @override
+  String get usePlanMemory => '계획 메모리 사용하기';
+
+  @override
+  String get usePlanMemoryDesc =>
+      '목표와 계획을 프로젝트의 .collabo/PLAYBOOK.md 에 남기고 매 턴 함께 전달합니다. 대화가 요약되거나 잘려도 계획이 남습니다. 목표·계획·메모 도구 3종이 에이전트에게 열립니다.';
+
+  @override
+  String get useSupervisor => '감독자 사용하기';
+
+  @override
+  String get useSupervisorDesc =>
+      '같은 도구·같은 오류를 반복하거나 진전 없이 도는 것을 감지해 단계적으로 개입하고, 마지막에는 사용자에게 묻게 합니다. 계획에 남은 단계가 있는데 끝내려 하면 되돌려보냅니다.';
+
+  @override
+  String get planCard => '계획';
+
+  @override
   String get resetDefault => '기본값으로 되돌리기';
 
   @override

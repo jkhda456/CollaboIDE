@@ -117,5 +117,9 @@
   "rawTitle": "Incoming tokens",
   "rawEmpty": "No tokens received yet.",
   "rawAnswer": "answer",
-  "rawTool": "tool"
+  "rawTool": "tool",
+  "planCard": "Plan",
+  "planToggleTitle": "Expand/collapse the plan steps",
+  "supervisorStep": "Supervisor stepped in",
+  "supervisorExit": "Supervisor: sent back — the plan still has open steps"
 }

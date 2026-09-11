@@ -909,6 +909,30 @@ class _PromptTabState extends State<_PromptTab> {
               onChanged: widget.workspace.setProjectState,
             ),
           ),
+          ListenableBuilder(
+            listenable: widget.workspace,
+            builder: (context, _) => SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(l.usePlanMemory),
+              subtitle:
+                  Text(l.usePlanMemoryDesc, style: theme.textTheme.bodySmall),
+              value: widget.workspace.planMemory,
+              onChanged: widget.workspace.setPlanMemory,
+            ),
+          ),
+          ListenableBuilder(
+            listenable: widget.workspace,
+            builder: (context, _) => SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: Text(l.useSupervisor),
+              subtitle:
+                  Text(l.useSupervisorDesc, style: theme.textTheme.bodySmall),
+              value: widget.workspace.supervisor,
+              onChanged: widget.workspace.setSupervisor,
+            ),
+          ),
           const Divider(height: 16),
           Text(l.systemPromptDesc, style: theme.textTheme.bodySmall),
           const SizedBox(height: 12),

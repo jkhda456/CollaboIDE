@@ -1,3 +1,5 @@
+import '../agent/playbook.dart' show kPlaybookPath;
+
 /// 에이전트가 만드는 **일회성 작업 스크립트**를 두는 위치(프로젝트 상대 경로).
 ///
 /// 앱 작업 폴더 `.collabo` 안이라 프로젝트 전체 검색에서 제외된다
@@ -31,11 +33,52 @@ Markers used in this conversation
   project state. If you need details of that work, inspect the project with your
   tools instead of guessing or redoing it.''';
 
+/// 계획 메모리(`$kPlaybookPath`)를 쓰는 규율.
+///
+/// **세 프롬프트가 같은 문구를 써야 하므로 여기 한 번만 적는다** — 기본 프롬프트,
+/// 그리고 사용자가 프롬프트를 편집해 이 문단이 사라졌을 때 별도로 주입하는 경로
+/// (`WebBridge._buildContextMessages`). 계획 메모리가 꺼져 있으면 어디에도 넣지 않는다
+/// (없는 도구를 설명하지 않는다).
+///
+/// 요점은 **계획이 대화 밖에 있다**는 것이다. 이 앱의 어시스턴트 본문은 다음 턴에
+/// 턴 요약으로 대체되고 시작점 앞은 통째로 사라진다 — 계획이 답변 안에만 있으면
+/// 계획도 같이 사라진다.
+const String kPlanningNote = '''
+Planning (the plan lives in a file, not in this chat)
+- For anything past a one-step answer, START by calling `set_goal` with the goal
+  in one sentence and the steps you intend to take. Do this BEFORE the work, not
+  as a summary afterwards.
+- The goal and plan are stored in `$kPlaybookPath`, outside this conversation.
+  Earlier turns here get replaced by short summaries as the chat grows, so that
+  file — not your memory of the chat — is the record of what you set out to do.
+  Trust it when the two disagree.
+- Move each step along with `update_plan` as you go: DOING when you start it,
+  DONE the moment it is genuinely finished, DROP if you decide against it (say
+  why). Do not batch these updates up at the end.
+- Do not end your turn with steps still open. If you are stopping early, mark
+  what remains DROP and tell the user what is left and why.
+- Use `note_write` for anything you would hate to rediscover: how this project
+  actually works (working_model), an approach you tried that failed (ruled_out),
+  or something still unknown (open_questions). Mark each one VERIFIED (you just
+  checked it with a tool), ASSUMED (you believe it but have not checked) or
+  REFUTED (you tried it and it does not work). Recording an assumption as
+  VERIFIED poisons every decision that follows it.
+- Do not plan trivia. A single question or one file read needs no plan.''';
+
+/// 서브에이전트에 붙이는 계획 규율(한 문단). 서브는 계획의 **주인이 아니다**.
+const String kSubAgentPlanningNote =
+    'You are one part of a larger plan that the main agent owns — do not rewrite '
+    'it. If you learn something worth keeping (how this project really works, or '
+    'an approach that turned out not to work), record it as one line with '
+    '`note_write` and mark it VERIFIED, ASSUMED or REFUTED honestly.';
+
 /// 기본 시스템 프롬프트(영어). 사용자가 설정에서 편집할 수 있으며,
 /// 비워두거나 초기화하면 이 기본값이 쓰인다.
 const String kDefaultSystemPrompt = '''
 You are a coding agent inside Collabo IDE. You help the user build and modify
 software by conversing with them in the main conversation.
+
+$kPlanningNote
 
 Execution strategy
 - Treat the main conversation as the primary context and keep it concise. Your

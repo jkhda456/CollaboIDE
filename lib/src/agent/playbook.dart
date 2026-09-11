@@ -1,0 +1,312 @@
+/// 목표·계획·알아낸 것을 담는 **파일 하나** (`<project>/.collabo/PLAYBOOK.md`).
+///
+/// 요점은 **기억의 단위를 대화가 아니라 파일로 옮기는 것**이다. 이 앱의 대화 컨텍스트는
+/// 오래 살지 못한다 — 어시스턴트 본문은 다음 턴에 **턴 요약으로 대체**되고, 시작점
+/// (체크포인트)을 만들면 그 앞은 통째로 사라지며, 사용자가 위를 고치면 아래가 잘린다.
+/// 계획이 답변 본문에만 있으면 계획도 같이 사라진다. 파일에 있으면 남는다.
+///
+/// 설계 출처는 `avo-arc-agi` 조사의 패턴 카탈로그(`harness.md` 7장)다 —
+/// **영속 메모리 파일**(Retrodict `playbook.md`)과 **검증됨 vs 가정임 표기**
+/// (Retrodict working model). `expcode` 의 `app/services/harness.py` 가 같은 패턴을
+/// 파이썬으로 먼저 옮겼고, 이 파일은 그 구조를 Dart 로 다시 쓴 것이다.
+///
+/// 섹션 제목과 마커는 **영어로 고정**한다. 모델이 읽고 다시 쓰는 규격이라 UI 언어를
+/// 따라가면 안 된다(한국어로 쓰면 영어 프롬프트와 어긋난다).
+library;
+
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
+/// 프로젝트 루트 기준 PLAYBOOK 경로. 프롬프트에서도 이 상수를 인용한다.
+const String kPlaybookPath = '.collabo/PLAYBOOK.md';
+
+/// 계획 항목의 상태. **열린 항목(TODO/DOING)이 남았는지**가 종료 차단의 근거가 된다.
+const List<String> kStepMarkers = ['TODO', 'DOING', 'DONE', 'DROP'];
+
+/// 지식에 붙이는 신뢰 수준. 가정이 사실로 슬쩍 승격되는 것을 막지 못하면
+/// 그 뒤의 모든 추론이 오염된다.
+const List<String> kKnowledgeMarkers = ['ASSUMED', 'VERIFIED', 'REFUTED'];
+
+const String kSecGoal = 'GOAL';
+const String kSecPlan = 'PLAN';
+const String kSecWorkingModel = 'WORKING MODEL';
+const String kSecRuledOut = 'RULED OUT';
+const String kSecOpenQuestions = 'OPEN QUESTIONS';
+
+const List<String> kPlaybookSections = [
+  kSecGoal,
+  kSecPlan,
+  kSecWorkingModel,
+  kSecRuledOut,
+  kSecOpenQuestions,
+];
+
+/// `note_write` 의 section 인자로 받는 이름 → 실제 섹션.
+/// 모델이 `working_model`·`WORKING MODEL`·`ruled out` 중 무엇으로 불러도 받는다.
+const Map<String, String> kNoteSectionAliases = {
+  'working_model': kSecWorkingModel,
+  'workingmodel': kSecWorkingModel,
+  'working model': kSecWorkingModel,
+  'ruled_out': kSecRuledOut,
+  'ruledout': kSecRuledOut,
+  'ruled out': kSecRuledOut,
+  'open_questions': kSecOpenQuestions,
+  'openquestions': kSecOpenQuestions,
+  'open questions': kSecOpenQuestions,
+};
+
+final RegExp _itemRe = RegExp(r'^\s*-\s*\[([A-Z_ ]+)\]\s*(.+?)\s*$');
+
+/// 그 섹션에서 허용되는 마커. **첫 값이 가장 약한 값**이다(강등 대상).
+List<String> markersFor(String section) =>
+    section == kSecPlan ? kStepMarkers : kKnowledgeMarkers;
+
+class PlaybookItem {
+  PlaybookItem(this.text, this.marker);
+  String text;
+  String marker;
+
+  String render() => '- [$marker] $text';
+  Map<String, Object?> toJson() => {'text': text, 'marker': marker};
+}
+
+/// PLAYBOOK 파일 하나. 읽기·쓰기 실패는 **삼킨다** — 메모리를 못 써도 대화는 계속된다.
+class Playbook {
+  Playbook(this.file, {this.maxChars = 6000});
+
+  /// 프로젝트 경로에서 만든다.
+  factory Playbook.forProject(String projectPath) =>
+      Playbook(File(p.join(projectPath, '.collabo', 'PLAYBOOK.md')));
+
+  final File file;
+
+  /// 이 길이를 넘으면 [curate] 가 가정부터 접는다.
+  final int maxChars;
+
+  final Map<String, List<PlaybookItem>> _data = {
+    for (final s in kPlaybookSections) s: <PlaybookItem>[],
+  };
+
+  /// 파일에서 읽는다. 파일이 없으면 빈 상태로 둔다(오류가 아니다).
+  Future<void> load() async {
+    for (final s in kPlaybookSections) {
+      _data[s] = <PlaybookItem>[];
+    }
+    String text;
+    try {
+      if (!await file.exists()) return;
+      text = await file.readAsString();
+    } catch (_) {
+      return;
+    }
+    String? current;
+    // CRLF/CR 도 같이 가른다 — 사용자가 다른 편집기로 고쳤을 수 있다.
+    for (final line in text.split(RegExp(r'\r\n|\r|\n'))) {
+      if (line.startsWith('## ')) {
+        current = line.substring(3).trim();
+        _data.putIfAbsent(current, () => <PlaybookItem>[]);
+        continue;
+      }
+      if (current == null) continue;
+      final allowed = markersFor(current);
+      final m = _itemRe.firstMatch(line);
+      if (m != null) {
+        final marker = m.group(1)!.trim();
+        // 규격 밖 마커는 **가장 약한 값으로 강등**한다. 모르는 표시를 그대로 두면
+        // 그 항목이 확인된 것인지 아닌지 판단할 수 없어진다(사용자가 손으로
+        // 고쳤거나 모델이 지어낸 마커를 쓴 경우).
+        _data[current]!.add(PlaybookItem(
+            m.group(2)!, allowed.contains(marker) ? marker : allowed.first));
+      } else if (line.trimLeft().startsWith('- ')) {
+        // 마커 없는 줄도 버리지 않는다 — 사람이 손으로 적은 항목이다.
+        _data[current]!
+            .add(PlaybookItem(line.trim().substring(2).trim(), allowed.first));
+      }
+    }
+  }
+
+  Future<void> save() async {
+    final out = <String>[
+      '# PLAYBOOK',
+      '',
+      '<!-- Collabo IDE 하니스가 관리하는 파일. 목표·계획·알아낸 것이 여기 남아',
+      '     대화가 요약되거나 잘려도 살아남는다. 직접 고쳐도 된다 —',
+      '     규격 밖 마커는 다음에 읽을 때 가장 약한 값으로 강등된다. -->',
+      '',
+    ];
+    for (final section in kPlaybookSections) {
+      out.add('## $section');
+      out.addAll((_data[section] ?? const []).map((i) => i.render()));
+      out.add('');
+    }
+    try {
+      await file.parent.create(recursive: true);
+      await file.writeAsString(out.join('\n'));
+    } catch (_) {
+      // 쓰기 실패는 무시한다(권한·디스크). 이번 턴의 메모리는 in-memory 로 남는다.
+    }
+  }
+
+  // ------------------------------------------------------------------ 조작
+
+  Future<void> setGoal(String goal) async {
+    final g = goal.trim();
+    if (g.isEmpty) return;
+    _data[kSecGoal] = [PlaybookItem(g, 'ASSUMED')];
+    await save();
+  }
+
+  /// 계획을 통째로 갈아 끼운다. 기존 항목의 상태는 남지 않는다 —
+  /// "다른 방향으로 다시 세운다" 가 이 함수를 부르는 이유이기 때문이다.
+  Future<void> setPlan(List<String> steps) async {
+    _data[kSecPlan] = [
+      for (final s in steps)
+        if (s.trim().isNotEmpty) PlaybookItem(s.trim(), 'TODO'),
+    ];
+    await save();
+  }
+
+  /// 계획 항목 하나의 상태를 바꾼다.
+  /// [ref] 는 **번호(1부터)** 또는 항목 텍스트의 일부.
+  Future<PlaybookItem?> updateStep(String ref, String marker,
+      {String note = ''}) async {
+    final steps = _data[kSecPlan] ?? const <PlaybookItem>[];
+    if (steps.isEmpty) return null;
+    var mk = marker.trim().toUpperCase();
+    if (!kStepMarkers.contains(mk)) mk = 'DONE';
+
+    final r = ref.trim();
+    PlaybookItem? target;
+    final n = int.tryParse(r);
+    if (n != null && n >= 1 && n <= steps.length) target = steps[n - 1];
+    if (target == null && r.isNotEmpty) {
+      final lowered = r.toLowerCase();
+      for (final s in steps) {
+        if (s.text.toLowerCase().contains(lowered)) {
+          target = s;
+          break;
+        }
+      }
+    }
+    if (target == null) return null;
+
+    target.marker = mk;
+    if (note.trim().isNotEmpty) target.text = '${target.text} — ${note.trim()}';
+    await save();
+    return target;
+  }
+
+  /// 메모 한 줄. 같은 문장이 이미 있으면 **마커만 갱신**한다(같은 말을 쌓지 않는다).
+  Future<PlaybookItem?> note(String section, String text,
+      {String marker = ''}) async {
+    final key = section.trim().toLowerCase();
+    var sec = kNoteSectionAliases[key] ?? section.trim().toUpperCase();
+    if (!_data.containsKey(sec) || sec == kSecGoal || sec == kSecPlan) {
+      // 목표·계획은 전용 도구로만 바꾼다. 그 밖의 이름은 WORKING MODEL 로 모은다.
+      sec = kSecWorkingModel;
+    }
+    final t = text.trim();
+    if (t.isEmpty) return null;
+
+    final allowed = markersFor(sec);
+    var mk = marker.trim().toUpperCase();
+    if (!allowed.contains(mk)) {
+      // RULED OUT 에 들어오는 것은 기본이 REFUTED 다 — 배제했다는 뜻이니까.
+      mk = sec == kSecRuledOut ? 'REFUTED' : allowed.first;
+    }
+
+    for (final existing in _data[sec]!) {
+      if (existing.text == t) {
+        existing.marker = mk;
+        await save();
+        return existing;
+      }
+    }
+    final item = PlaybookItem(t, mk);
+    _data[sec]!.add(item);
+    curate();
+    await save();
+    return item;
+  }
+
+  // ------------------------------------------------------------------ 조회
+
+  List<String> get openSteps => [
+        for (final i in _data[kSecPlan] ?? const <PlaybookItem>[])
+          if (i.marker == 'TODO' || i.marker == 'DOING') i.text,
+      ];
+
+  bool get hasPlan => (_data[kSecPlan] ?? const []).isNotEmpty;
+
+  String get goalText {
+    final items = _data[kSecGoal] ?? const <PlaybookItem>[];
+    return items.isEmpty ? '' : items.first.text;
+  }
+
+  bool get isEmpty =>
+      kPlaybookSections.every((s) => (_data[s] ?? const []).isEmpty);
+
+  List<PlaybookItem> section(String name) =>
+      List.unmodifiable(_data[name] ?? const <PlaybookItem>[]);
+
+  /// 웹(계획 카드)으로 보낼 형태.
+  Map<String, Object?> toJson() => {
+        'goal': goalText,
+        'steps': [
+          for (final i in _data[kSecPlan] ?? const <PlaybookItem>[]) i.toJson(),
+        ],
+        'notes': {
+          'working_model': [
+            for (final i in _data[kSecWorkingModel] ?? const <PlaybookItem>[])
+              i.toJson(),
+          ],
+          'ruled_out': [
+            for (final i in _data[kSecRuledOut] ?? const <PlaybookItem>[])
+              i.toJson(),
+          ],
+          'open_questions': [
+            for (final i in _data[kSecOpenQuestions] ?? const <PlaybookItem>[])
+              i.toJson(),
+          ],
+        },
+      };
+
+  String render() {
+    final blocks = <String>[];
+    for (final section in kPlaybookSections) {
+      final items = _data[section] ?? const <PlaybookItem>[];
+      if (items.isEmpty) continue;
+      blocks.add('## $section\n${items.map((i) => i.render()).join('\n')}');
+    }
+    return blocks.join('\n\n');
+  }
+
+  /// 매 턴 컨텍스트에 고정할 요약. 비어 있으면 null(아무것도 주입하지 않는다).
+  String? digest({int limit = 1800}) {
+    final text = render();
+    if (text.isEmpty) return null;
+    if (text.length <= limit) return text;
+    return '${text.substring(0, limit)}\n…(전문은 $kPlaybookPath)';
+  }
+
+  /// 넘치면 **VERIFIED 는 남기고 가정부터 접는다**.
+  ///
+  /// 저널처럼 계속 쌓으면 결국 컨텍스트를 다시 잡아먹는다. 쌓지 말고 큐레이션된
+  /// 브리핑으로 유지하는 것이 Retrodict playbook 의 요점이었다.
+  /// 목표·계획은 건드리지 않는다(그건 짧고, 짧아야 한다).
+  bool curate() {
+    if (render().length <= maxChars) return false;
+    for (final section in [kSecWorkingModel, kSecRuledOut, kSecOpenQuestions]) {
+      final items = _data[section] ?? const <PlaybookItem>[];
+      if (items.length <= 6) continue;
+      final verified = items.where((i) => i.marker == 'VERIFIED').toList();
+      final rest = items.where((i) => i.marker != 'VERIFIED').toList();
+      _data[section] = [
+        ...verified.length > 20 ? verified.sublist(verified.length - 20) : verified,
+        ...rest.length > 6 ? rest.sublist(rest.length - 6) : rest,
+      ];
+    }
+    return true;
+  }
+}

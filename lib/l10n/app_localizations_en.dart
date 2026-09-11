@@ -66,6 +66,23 @@ class AppLocalizationsEn extends AppLocalizations {
       'Give the agent a short summary of the folder structure and the files tools have changed, so it does not redo work that is already done (length-limited).';
 
   @override
+  String get usePlanMemory => 'Use plan memory';
+
+  @override
+  String get usePlanMemoryDesc =>
+      'Keep the goal and plan in the project\'s .collabo/PLAYBOOK.md and send it with every turn, so the plan survives when the conversation is summarised or trimmed. Opens three tools to the agent: goal, plan and notes.';
+
+  @override
+  String get useSupervisor => 'Use supervisor';
+
+  @override
+  String get useSupervisorDesc =>
+      'Detect going in circles (the same tool or the same error repeated, rounds with no progress) and step in with stronger nudges, ending by asking you. Also sends the agent back if it tries to finish with plan steps still open.';
+
+  @override
+  String get planCard => 'Plan';
+
+  @override
   String get resetDefault => 'Reset to default';
 
   @override

@@ -200,6 +200,36 @@ abstract class AppLocalizations {
   /// **'Give the agent a short summary of the folder structure and the files tools have changed, so it does not redo work that is already done (length-limited).'**
   String get useProjectStateDesc;
 
+  /// No description provided for @usePlanMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Use plan memory'**
+  String get usePlanMemory;
+
+  /// No description provided for @usePlanMemoryDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the goal and plan in the project\'s .collabo/PLAYBOOK.md and send it with every turn, so the plan survives when the conversation is summarised or trimmed. Opens three tools to the agent: goal, plan and notes.'**
+  String get usePlanMemoryDesc;
+
+  /// No description provided for @useSupervisor.
+  ///
+  /// In en, this message translates to:
+  /// **'Use supervisor'**
+  String get useSupervisor;
+
+  /// No description provided for @useSupervisorDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Detect going in circles (the same tool or the same error repeated, rounds with no progress) and step in with stronger nudges, ending by asking you. Also sends the agent back if it tries to finish with plan steps still open.'**
+  String get useSupervisorDesc;
+
+  /// No description provided for @planCard.
+  ///
+  /// In en, this message translates to:
+  /// **'Plan'**
+  String get planCard;
+
   /// No description provided for @resetDefault.
   ///
   /// In en, this message translates to:

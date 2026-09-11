@@ -296,6 +296,24 @@
                       font-style: italic; padding: .15rem 0 !important; }
     .msg.notice { font-size: .75rem; text-align: center; color: var(--bs-secondary-color);
                   margin-bottom: 10px; }
+    /* 감독자 개입 — 모델이 갑자기 방향을 바꾸는 이유가 화면에 보여야 오작동으로
+       오해받지 않는다. 주입된 지시문 전문은 title(툴팁)에 둔다. */
+    .msg.notice.supervisor { color: var(--bs-warning-text-emphasis); cursor: help; }
+    .msg.notice.supervisor::before { content: '⚑ '; }
+
+    /* 계획 카드(헤더 바로 아래). 계획이 없으면 통째로 숨는다. */
+    #plan-card { flex: 0 0 auto; background: var(--bs-tertiary-bg); }
+    #plan-head { cursor: pointer; }
+    #plan-steps { list-style: none; padding-left: 0; }
+    #plan-steps li { display: flex; gap: .4rem; padding: .1rem 0;
+                     color: var(--bs-secondary-color); }
+    #plan-steps li .pm { flex: 0 0 auto; font-size: .65rem; opacity: .75;
+                         min-width: 3.2em; }
+    #plan-steps li.done .pt, #plan-steps li.drop .pt { text-decoration: line-through; }
+    #plan-steps li.drop { opacity: .55; }
+    #plan-steps li.doing { color: var(--bs-body-color); font-weight: 600; }
+    #plan-caret { transition: transform .15s; }
+    #plan-card.open #plan-caret { transform: rotate(180deg); }
 
     /* 진행 상태 말풍선(대화 흐름 안, 작업 중 표시 → 완료 시 제거) */
     .msg.status { display: flex; align-items: center; gap: 8px; }
@@ -450,6 +468,25 @@
             <path d="M0 3a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2zm10-1v12h4a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM9 2H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7z"/>
           </svg>
         </button>
+      </div>
+      <!-- 계획 카드: 지금 무엇을 하는 중인지. 대화를 거슬러 읽지 않아도 보이게 한다.
+           내용은 네이티브가 `.collabo/PLAYBOOK.md` 에서 읽어 chat.plan 으로 보낸다. -->
+      <div id="plan-card" class="border-bottom px-3 py-2 d-none">
+        <div id="plan-head" class="d-flex align-items-center gap-2"
+             data-i18n-title="planToggleTitle" title="계획 단계 펼치기/접기">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13"
+               fill="currentColor" viewBox="0 0 16 16" class="text-secondary flex-shrink-0">
+            <path d="M5 11.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5M3.854 2.146a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 3.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 7.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 0 1 .708-.708l.146.147 1.146-1.147a.5.5 0 0 1 .708 0"/>
+          </svg>
+          <span id="plan-goal" class="small text-truncate flex-grow-1" style="min-width:0"></span>
+          <span id="plan-count" class="badge rounded-pill text-bg-secondary"
+                style="font-size:.6rem"></span>
+          <svg id="plan-caret" width="10" height="10" fill="currentColor" viewBox="0 0 16 16"
+               class="opacity-75 flex-shrink-0">
+            <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"/>
+          </svg>
+        </div>
+        <ul id="plan-steps" class="small mb-0 mt-2 d-none"></ul>
       </div>
       <div id="messages" class="p-3">
         <div class="text-secondary small" data-i18n="messagesEmpty">대화 내용이 여기에 표시됩니다.</div>
@@ -825,6 +862,8 @@
         case 'chat.activity': recordActivity(msg); break;
         case 'chat.sub': onChatSub(msg); break;
         case 'chat.notice': onChatNotice(msg); break;
+        case 'chat.plan': onChatPlan(msg); break;
+        case 'chat.supervisor': onChatSupervisor(msg); break;
         case 'status': onStatus(msg); break;
         case 'chat.queue': onQueue(msg); break;
         case 'checkpoint.preview': onCheckpointPreview(msg); break;
@@ -3256,6 +3295,76 @@
       messagesEl.appendChild(w);
       scrollMessages();
     }
+
+    // ===== 계획 카드 =====
+    // 네이티브가 `.collabo/PLAYBOOK.md` 를 읽어 보내 준다. 웹은 그리기만 한다
+    // (파일에 직접 손대지 않는다는 원칙 그대로).
+    let planState = null;
+    let planOpen = false;
+
+    function onChatPlan(msg) {
+      planState = msg.plan || null;
+      renderPlan();
+    }
+
+    function onChatSupervisor(msg) {
+      const w = document.createElement('div');
+      w.className = 'msg notice supervisor';
+      const reason = msg.reason || '';
+      w.textContent = msg.action === 'exit_guard'
+        ? T('supervisorExit', '감독자: 계획에 남은 단계가 있어 되돌려보냈습니다')
+        : T('supervisorStep', '감독자 개입') + ' ' + (msg.level || '') +
+          (reason ? ' — ' + reason : '');
+      // 주입한 지시문 전문은 툴팁에. 대화창을 길게 만들지 않으면서 확인은 가능하게.
+      if (msg.message) w.title = msg.message;
+      messagesEl.appendChild(w);
+      scrollMessages();
+    }
+
+    function renderPlan() {
+      const card = document.getElementById('plan-card');
+      const steps = (planState && planState.steps) || [];
+      const goal = (planState && planState.goal) || '';
+      if (!planState || (!goal && steps.length === 0)) {
+        card.classList.add('d-none');
+        return;
+      }
+      card.classList.remove('d-none');
+      document.getElementById('plan-goal').textContent =
+        goal || T('planCard', '계획');
+      const done = steps.filter(function (s) {
+        return s.marker === 'DONE' || s.marker === 'DROP';
+      }).length;
+      const count = document.getElementById('plan-count');
+      if (steps.length === 0) {
+        count.classList.add('d-none');
+      } else {
+        count.classList.remove('d-none');
+        count.textContent = done + '/' + steps.length;
+      }
+      const list = document.getElementById('plan-steps');
+      list.innerHTML = '';
+      steps.forEach(function (s) {
+        const li = document.createElement('li');
+        li.className = (s.marker || 'TODO').toLowerCase();
+        const mk = document.createElement('span');
+        mk.className = 'pm';
+        mk.textContent = s.marker || 'TODO';
+        const tx = document.createElement('span');
+        tx.className = 'pt';
+        tx.textContent = s.text || '';
+        li.appendChild(mk);
+        li.appendChild(tx);
+        list.appendChild(li);
+      });
+      list.classList.toggle('d-none', !planOpen || steps.length === 0);
+      card.classList.toggle('open', planOpen && steps.length > 0);
+    }
+
+    document.getElementById('plan-head').addEventListener('click', function () {
+      planOpen = !planOpen;
+      renderPlan();
+    });
 
     // ===== 호출 내역(런쳐/도구) =====
     const activityLog = [];

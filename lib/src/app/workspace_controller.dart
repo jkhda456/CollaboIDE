@@ -110,6 +110,16 @@ class WorkspaceController extends ChangeNotifier {
   /// (설정 → 프롬프트에서 토글)
   bool _projectState = true;
 
+  /// 계획 메모리(`.collabo/PLAYBOOK.md`) 사용 여부. 켜면 목표·계획 도구 3종이
+  /// 모델에게 열리고, 매 턴 컨텍스트에 지금 계획이 실린다. 기본 켜짐.
+  /// (설정 → 프롬프트에서 토글)
+  bool _planMemory = true;
+
+  /// 감독자(정체 탐지 + 에스컬레이션 사다리 + 종료 차단) 사용 여부. 기본 켜짐.
+  /// 끄면 예전 동작 — 반복 상한에 닿을 때까지 아무도 개입하지 않는다.
+  /// (설정 → 프롬프트에서 토글)
+  bool _supervisor = true;
+
   /// 초기 설정 마법사 완료(또는 건너뜀) 여부. 메인 DB 에 영구 저장.
   bool _setupDone = false;
 
@@ -141,6 +151,8 @@ class WorkspaceController extends ChangeNotifier {
   static const String _workspaceDirKey = 'workspace_dir';
   static const String _preAssessmentKey = 'pre_assessment';
   static const String _projectStateKey = 'project_state';
+  static const String _planMemoryKey = 'plan_memory';
+  static const String _supervisorKey = 'supervisor';
 
   String? get projectPath => _projectPath;
   bool get hasProject => _projectPath != null;
@@ -442,6 +454,8 @@ class WorkspaceController extends ChangeNotifier {
         (await _appDb!.getSetting(_preAssessmentKey) as bool?) ?? true;
     _projectState =
         (await _appDb!.getSetting(_projectStateKey) as bool?) ?? true;
+    _planMemory = (await _appDb!.getSetting(_planMemoryKey) as bool?) ?? true;
+    _supervisor = (await _appDb!.getSetting(_supervisorKey) as bool?) ?? true;
 
     final env = PythonEnvironment(_pythonInterpreterPath);
     _pythonEnv = env;
@@ -483,6 +497,28 @@ class WorkspaceController extends ChangeNotifier {
     _preAssessment = value;
     notifyListeners();
     await _appDb?.setSetting(_preAssessmentKey, value);
+  }
+
+  /// 계획 메모리(PLAYBOOK) 사용 여부.
+  bool get planMemory => _planMemory;
+
+  /// 계획 메모리 사용 여부를 변경/저장한다(설정 → 프롬프트 토글).
+  Future<void> setPlanMemory(bool value) async {
+    if (value == _planMemory) return;
+    _planMemory = value;
+    notifyListeners();
+    await _appDb?.setSetting(_planMemoryKey, value);
+  }
+
+  /// 감독자 사용 여부.
+  bool get supervisor => _supervisor;
+
+  /// 감독자 사용 여부를 변경/저장한다(설정 → 프롬프트 토글).
+  Future<void> setSupervisor(bool value) async {
+    if (value == _supervisor) return;
+    _supervisor = value;
+    notifyListeners();
+    await _appDb?.setSetting(_supervisorKey, value);
   }
 
   /// 초기 설정 마법사를 완료(또는 건너뜀)로 표시한다(이후 자동 표시 안 함).
