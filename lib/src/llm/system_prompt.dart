@@ -21,7 +21,7 @@ const String kDelegationMarker = '[delegated]';
 ///
 /// **세 프롬프트가 같은 문구를 쓰도록** 여기 한 번만 적는다. 사용자가 메인 프롬프트를
 /// 편집해 저장했더라도 이 설명이 사라지지 않게, 메인 컨텍스트에는 별도 system 메시지로도
-/// 넣는다(`WebBridge._buildContextMessages`).
+/// 넣는다(`AgentLoop._buildContextMessages`).
 const String kDelegationMarkerNote = '''
 Markers used in this conversation
 - A tool result containing `delegated_to` was produced by a separate sub-agent
@@ -37,7 +37,7 @@ Markers used in this conversation
 ///
 /// **세 프롬프트가 같은 문구를 써야 하므로 여기 한 번만 적는다** — 기본 프롬프트,
 /// 그리고 사용자가 프롬프트를 편집해 이 문단이 사라졌을 때 별도로 주입하는 경로
-/// (`WebBridge._buildContextMessages`). 계획 메모리가 꺼져 있으면 어디에도 넣지 않는다
+/// (`AgentLoop._buildContextMessages`). 계획 메모리가 꺼져 있으면 어디에도 넣지 않는다
 /// (없는 도구를 설명하지 않는다).
 ///
 /// 요점은 **계획이 대화 밖에 있다**는 것이다. 이 앱의 어시스턴트 본문은 다음 턴에
@@ -129,6 +129,20 @@ Long-running commands
   up (it hangs, or its result is no longer needed) either call `stop_command`
   to terminate it, or leave it running and tell the user — the user can
   inspect and stop any background command from the process viewer at any time.
+
+Terminal sessions
+- `run_command` has no memory: each call is a fresh process. When the work
+  needs STATE — a REPL, `ssh`, a database shell, a dev server you want to watch,
+  or any program that draws a screen — open a terminal with `term_open` and
+  drive it with `term_send` / `term_read`. It stays alive between calls and the
+  user can watch and type into it in the process viewer.
+- `term_read` gives you the SCREEN as a person sees it, not every frame that was
+  drawn, so progress bars and full-screen programs cost almost no context. For a
+  long session use `term_search` to find what you need instead of reading it all
+  back.
+- Reuse an open session rather than opening another, and `term_close` only when
+  the work in it is done. To interrupt a command running INSIDE a terminal, send
+  ctrl-c with `term_send` — that is not the same as closing the session.
 
 Tools and safety
 - Perform every concrete action (reading/creating/saving/editing files and

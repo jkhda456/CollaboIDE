@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collabo_ide/src/app/project_session.dart';
 import 'package:collabo_ide/src/app/workspace_controller.dart';
+import 'package:collabo_ide/src/browser/browser_controller.dart';
+import 'package:collabo_ide/src/data/sqlite_init.dart';
 import 'package:collabo_ide/src/llm/llm_config.dart';
 import 'package:collabo_ide/src/llm/llm_provider.dart';
 import 'package:collabo_ide/src/webview/platform_web_view.dart';
@@ -80,6 +83,7 @@ void main() {
   late Directory project;
   late _FakeWebView view;
   late WorkspaceController wc;
+  late ProjectSession session;
   late WebBridge bridge;
 
   /// 웹이 보내는 저장 요청. 결과가 올 때까지 이벤트 큐를 돌린다.
@@ -90,22 +94,32 @@ void main() {
     return _lastSaved(view.posted);
   }
 
+  setUpAll(initSqliteFfi);
+
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('collabo_save_');
     project = Directory(p.join(tmp.path, 'proj'));
     await project.create();
     view = _FakeWebView();
     wc = WorkspaceController();
+    session = await ProjectSession.open(
+      project.path,
+      browser: BrowserController(),
+      firstConversationTitle: 'test',
+    );
     bridge = WebBridge(
-      view,
       wc,
+      session,
       llmClient: _StubProvider(),
       viewerStager: (_) async => const [],
-    )..start();
+    );
+    session.bridge = bridge;
+    await bridge.start();
+    await bridge.attachView(view);
   });
 
   tearDown(() async {
-    await bridge.dispose();
+    await session.close();
     await view.dispose();
     if (await tmp.exists()) await tmp.delete(recursive: true);
   });
@@ -113,7 +127,6 @@ void main() {
   test('프로젝트 안의 파일을 저장한다', () async {
     final f = File(p.join(project.path, 'note.md'));
     await f.writeAsString('old');
-    await bridge.setProject(project.path);
 
     final result = await save(f.path, '새 내용\n둘째 줄');
 
@@ -124,7 +137,6 @@ void main() {
   test('프로젝트 밖 경로는 거부하고 파일을 건드리지 않는다', () async {
     final outside = File(p.join(tmp.path, 'outside.md'));
     await outside.writeAsString('원본');
-    await bridge.setProject(project.path);
 
     final result = await save(outside.path, '덮어쓰기');
 
@@ -137,7 +149,6 @@ void main() {
     await sibling.create();
     final f = File(p.join(sibling.path, 'note.md'));
     await f.writeAsString('원본');
-    await bridge.setProject(project.path);
 
     final result = await save(f.path, '덮어쓰기');
 
@@ -146,7 +157,6 @@ void main() {
   });
 
   test('없는 파일은 만들지 않는다 (뷰어는 열려 있는 파일만 저장한다)', () async {
-    await bridge.setProject(project.path);
     final missing = p.join(project.path, 'nope.md');
 
     final result = await save(missing, 'x');
@@ -155,8 +165,14 @@ void main() {
     expect(File(missing).existsSync(), isFalse);
   });
 
-  test('프로젝트가 열려 있지 않으면 거부한다', () async {
-    final f = File(p.join(project.path, 'note.md'));
+  // 예전에는 "프로젝트가 열려 있지 않으면 거부한다" 를 여기서 봤다. 브리지가
+  // 세션의 것이 된 뒤로는 프로젝트 없는 브리지를 만들 수 없어 그 경우가 사라졌다.
+  // 대신 **다른 프로젝트의 파일**은 여전히 남이라는 것을 본다 — 여러 프로젝트가
+  // 동시에 열려 있으므로 이쪽이 실제로 일어나는 상황이다.
+  test('다른 프로젝트의 파일은 저장하지 않는다', () async {
+    final other = Directory(p.join(tmp.path, 'other'));
+    await other.create();
+    final f = File(p.join(other.path, 'note.md'));
     await f.writeAsString('원본');
 
     final result = await save(f.path, '덮어쓰기');

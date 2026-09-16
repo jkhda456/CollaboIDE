@@ -19,13 +19,17 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 TOOLS_DIR = os.path.join(REPO, "assets", "python")
 DOCS_TOOL = os.path.join(TOOLS_DIR, "collabo_docs.py")
 BASE_TOOL = os.path.join(TOOLS_DIR, "collabo_tools.py")
+WEB_TOOL = os.path.join(TOOLS_DIR, "collabo_web.py")
+TERM_TOOL = os.path.join(TOOLS_DIR, "collabo_term.py")
 
 
-def call(tool, args, workspace, script=DOCS_TOOL):
+def call(tool, args, workspace, script=DOCS_TOOL, env_extra=None):
     """도구 하나를 부르고 `{"ok":…}` 응답을 그대로 돌려준다."""
     env = dict(os.environ)
     env["COLLABO_WORKSPACE"] = workspace
     env["PYTHONIOENCODING"] = "utf-8"
+    if env_extra:
+        env.update(env_extra)
     proc = subprocess.run(
         [sys.executable, script, "call", tool],
         input=json.dumps(args),
@@ -87,15 +91,15 @@ class Suite(object):
     def equal(self, title, got, want):
         return self.check(title, got == want, "got %r, want %r" % (got, want))
 
-    def call_ok(self, title, tool, args, script=DOCS_TOOL):
+    def call_ok(self, title, tool, args, script=DOCS_TOOL, env_extra=None):
         """호출이 성공하기를 기대한다. 성공하면 result 를, 아니면 None 을 준다."""
-        out = call(tool, args, self.ws, script=script)
+        out = call(tool, args, self.ws, script=script, env_extra=env_extra)
         if not self.check(title, out.get("ok"), out.get("error", "")):
             return None
         return out.get("result") or {}
 
-    def call_fails(self, title, tool, args, script=DOCS_TOOL):
-        out = call(tool, args, self.ws, script=script)
+    def call_fails(self, title, tool, args, script=DOCS_TOOL, env_extra=None):
+        out = call(tool, args, self.ws, script=script, env_extra=env_extra)
         self.check(title, not out.get("ok"), "성공해 버렸다: %r" % (out.get("result"),))
         return out.get("error") or ""
 

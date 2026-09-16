@@ -13,10 +13,18 @@ import 'tool_source.dart';
 ///   `<python> <script> describe`        → 도구 스키마(JSON)
 ///   `<python> <script> call <tool>`     → stdin(JSON 인자) → stdout(JSON 결과)
 class ToolRunner {
-  const ToolRunner(this.interpreter, {this.onProcessStart});
+  const ToolRunner(this.interpreter,
+      {this.onProcessStart, this.baseEnv = const {}});
 
   /// Python 인터프리터 경로(포터블 환경).
   final String interpreter;
+
+  /// **모든** describe/call 에 함께 실리는 환경변수(앱 설정에서 온다).
+  ///
+  /// 지금 담기는 것: `COLLABO_LANG`(도구가 사람에게 보일 문구를 낼 때),
+  /// `COLLABO_SEARCH_ENGINE`(기본 검색엔진). 여기 한 곳에서 넣어야 기본 모듈과
+  /// 사용자 소스가 같은 환경을 본다.
+  final Map<String, String> baseEnv;
 
   /// 도구 프로세스를 띄울 때마다 호출된다(호출측이 추적해 **중지 시 죽이려는** 용도).
   ///
@@ -38,7 +46,7 @@ class ToolRunner {
       final res = await Process.run(
         interpreter,
         [scriptPath, 'describe'],
-        environment: {'PYTHONIOENCODING': 'utf-8', ...?env},
+        environment: {'PYTHONIOENCODING': 'utf-8', ...baseEnv, ...?env},
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
         workingDirectory: workingDirectory,
@@ -115,7 +123,7 @@ class ToolRunner {
     String? workingDirectory,
     Duration? timeout,
   }) async {
-    final env = <String, String>{'PYTHONIOENCODING': 'utf-8'};
+    final env = <String, String>{'PYTHONIOENCODING': 'utf-8', ...baseEnv};
     if (workspace != null) env['COLLABO_WORKSPACE'] = workspace;
     if (elevated) env['COLLABO_ELEVATED'] = '1';
     if (extraEnv != null) env.addAll(extraEnv);

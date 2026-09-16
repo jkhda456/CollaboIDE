@@ -15,8 +15,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import test_document_args      # noqa: E402
 import test_shapes             # noqa: E402
+import test_term               # noqa: E402
+import test_vt                 # noqa: E402
+import test_web                # noqa: E402
 
-SUITES = [test_document_args, test_shapes]
+SUITES = [test_document_args, test_shapes, test_web, test_vt, test_term]
 
 
 def main():

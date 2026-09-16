@@ -8,10 +8,23 @@ import 'package:path/path.dart' as p;
 /// 백그라운드 명령의 상태.
 enum BackgroundStatus { running, exited, killed, unknown }
 
+/// 레지스트리에 들어오는 두 종류.
+///
+/// 같은 폴더(`.collabo/proc`)를 쓰는 이유는 **사용자에게 둘 다 "돌고 있는 것"**
+/// 이기 때문이다 — 좌측 배지도 진행 상태 화면도 합쳐서 보여 주는 편이 맞다.
+/// 다른 것은 안을 들여다보는 방법뿐이다(로그 꼬리 ↔ 렌더된 화면).
+enum BackgroundKind {
+  /// `run_command` — `proc_runner.py` 가 stdout/stderr 를 로그로 흘린다.
+  command,
+
+  /// `term_open` — `term_runner.py` 가 PTY 를 열고 화면을 렌더한다.
+  terminal,
+}
+
 /// `.collabo/proc/<id>/meta.json` 한 건을 표현하는 백그라운드 프로세스.
 ///
-/// 실제 실행/로깅은 Python `proc_runner.py` 가 담당하고, 여기서는 그 파일
-/// 레지스트리를 읽기만 한다(단일 진실원은 디스크의 meta.json/로그 파일).
+/// 실제 실행/로깅은 Python (`proc_runner.py` / `term_runner.py`)이 담당하고,
+/// 여기서는 그 파일 레지스트리를 읽기만 한다(단일 진실원은 디스크의 meta.json).
 class BackgroundProcess {
   const BackgroundProcess({
     required this.id,
@@ -20,6 +33,9 @@ class BackgroundProcess {
     required this.command,
     required this.cwd,
     required this.status,
+    this.kind = BackgroundKind.command,
+    this.name = '',
+    this.hasPty = true,
     this.startedAt,
     this.exitCode,
     this.endedAt,
@@ -33,15 +49,38 @@ class BackgroundProcess {
   final String command;
   final String cwd;
   final BackgroundStatus status;
+
+  /// 명령인가 터미널인가(meta.json 의 `kind`).
+  final BackgroundKind kind;
+
+  /// 터미널에 붙인 짧은 이름(`term_open(name:)`). 없으면 빈 문자열.
+  final String name;
+
+  /// 터미널이 진짜 PTY 위에서 도는지. false 면 파이프 폴백이라 대화형이 안 된다.
+  final bool hasPty;
+
   final DateTime? startedAt;
   final int? exitCode;
   final DateTime? endedAt;
 
   bool get isRunning => status == BackgroundStatus.running;
+  bool get isTerminal => kind == BackgroundKind.terminal;
+
+  /// 목록에 보일 이름(터미널은 붙여 둔 이름을 우선한다).
+  String get label => name.isNotEmpty ? name : command;
 
   String get stdoutPath => p.join(dir, 'stdout.log');
   String get stderrPath => p.join(dir, 'stderr.log');
   String get stdinPath => p.join(dir, 'stdin');
+
+  /// 터미널의 렌더된 화면(`term_runner.py` 가 주기적으로 다시 쓴다).
+  String get screenPath => p.join(dir, 'screen.json');
+
+  /// 터미널에서 위로 밀려난 줄(ANSI 제거됨).
+  String get scrollbackPath => p.join(dir, 'scrollback.txt');
+
+  /// 터미널 제어 통로(줄 단위 JSON — 지금은 `{"resize":[cols,rows]}` 뿐).
+  String get ctrlPath => p.join(dir, 'ctrl');
 
   /// procdir 의 meta.json 을 파싱한다. 없거나 손상됐으면 null.
   static BackgroundProcess? fromDir(String dir) {
@@ -56,6 +95,12 @@ class BackgroundProcess {
         command: (m['command'] as String?) ?? '',
         cwd: (m['cwd'] as String?) ?? '',
         status: _parseStatus(m['status'] as String?),
+        // 예전 기록에는 `kind` 가 없다 — 없으면 명령으로 읽는다.
+        kind: m['kind'] == 'terminal'
+            ? BackgroundKind.terminal
+            : BackgroundKind.command,
+        name: (m['name'] as String?) ?? '',
+        hasPty: m['pty'] != false,
         startedAt: _epoch(m['started_at']),
         exitCode: (m['exit_code'] as num?)?.toInt(),
         endedAt: _epoch(m['ended_at']),
@@ -188,14 +233,41 @@ class BackgroundProcessRegistry extends ChangeNotifier {
     _scheduleRefresh();
   }
 
-  /// 실행 중 프로세스의 stdin 파일에 입력을 append 한다(proc_runner 가 tail 해 전달).
+  /// 실행 중 프로세스의 stdin 파일에 한 줄을 append 한다(러너가 tail 해 전달).
+  ///
+  /// 터미널이면 줄 끝을 **CR**(`\r`)로 보낸다 — 터미널에서 Enter 는 CR 이고,
+  /// LF 를 보내면 셸이 줄을 실행하지 않고 그대로 앉아 있는 것처럼 보인다.
   Future<void> sendInput(String id, String text) async {
     final proc = _byId(id);
     if (proc == null) return;
-    final data = text.endsWith('\n') ? text : '$text\n';
+    final eol = proc.isTerminal ? '\r' : '\n';
+    final data = text.endsWith('\n') || text.endsWith('\r') ? text : '$text$eol';
+    await sendRaw(id, data);
+  }
+
+  /// 줄바꿈을 **붙이지 않고** 그대로 보낸다(터미널의 ctrl-c·방향키·ESC 용).
+  Future<void> sendRaw(String id, String data) async {
+    final proc = _byId(id);
+    if (proc == null) return;
     try {
       await File(proc.stdinPath)
           .writeAsString(data, mode: FileMode.append, flush: true);
+    } catch (_) {}
+  }
+
+  /// 터미널의 창 크기를 바꾼다(제어 통로 `ctrl` 에 줄 단위 JSON 으로 붙인다).
+  ///
+  /// 화면 폭이 달라지면 셸의 줄바꿈 계산이 어긋나므로, 패널이 크기를 알게 되면
+  /// 알려 준다. 명령(터미널 아님)에는 창 크기라는 것이 없어 아무것도 하지 않는다.
+  Future<void> resizeTerminal(String id, int cols, int rows) async {
+    final proc = _byId(id);
+    if (proc == null || !proc.isTerminal || !proc.isRunning) return;
+    final line = jsonEncode({
+      'resize': [cols, rows],
+    });
+    try {
+      await File(proc.ctrlPath)
+          .writeAsString('$line\n', mode: FileMode.append, flush: true);
     } catch (_) {}
   }
 

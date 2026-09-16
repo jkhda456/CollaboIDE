@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collabo_ide/src/app/project_session.dart';
 import 'package:collabo_ide/src/app/workspace_controller.dart';
+import 'package:collabo_ide/src/browser/browser_controller.dart';
 import 'package:collabo_ide/src/data/app_database.dart';
 import 'package:collabo_ide/src/data/sqlite_init.dart';
 import 'package:collabo_ide/src/llm/llm_config.dart';
@@ -93,6 +95,7 @@ void main() {
   late AppDatabase db;
   late _FakeWebView view;
   late WorkspaceController wc;
+  late ProjectSession session;
   late WebBridge bridge;
 
   setUpAll(initSqliteFfi);
@@ -103,13 +106,18 @@ void main() {
     wc = WorkspaceController();
     await wc.loadLlmForTest(db);
     view = _FakeWebView();
-    bridge = WebBridge(view, wc, llmClient: _StubProvider())..start();
+    session = await ProjectSession.open(tmp.path,
+        browser: BrowserController(), firstConversationTitle: 'test');
+    bridge = WebBridge(wc, session, llmClient: _StubProvider());
+    session.bridge = bridge;
+    await bridge.start();
+    await bridge.attachView(view);
     // 구독 시작 이후의 전송만 보기 위해 초기 상태를 비운다.
     view.posted.clear();
   });
 
   tearDown(() async {
-    await bridge.dispose();
+    await session.close(); // 브리지도 여기서 같이 정리된다.
     await view.dispose();
     await db.close();
     if (await tmp.exists()) await tmp.delete(recursive: true);
@@ -202,12 +210,29 @@ void main() {
     expect(meta['setup'], contains('python'));
   });
 
+  /// ★ 좌측 메뉴의 스피너는 `session.isBusy` 를 본다. 그 값이 바뀌었다고
+  /// **아무도 말해 주지 않으면** 메뉴가 다시 그려지지 않아, 생성이 끝났는데도
+  /// 스피너가 계속 돌았다(2026-09-13). 시작·종료 양쪽 다 알려야 한다.
+  test('생성 시작과 종료를 세션에 알린다', () async {
+    var notifications = 0;
+    session.addListener(() => notifications++);
+
+    // 시작점 미리보기는 생성 플래그를 세우고 finally 에서 내리는 가장 짧은 경로다.
+    view.emit(jsonEncode({'type': 'chat.checkpoint.preview', 'size': 200}));
+    await pumpEventQueue();
+
+    expect(session.isBusy, isFalse, reason: '끝났으면 내려가 있어야 한다');
+    expect(notifications, greaterThanOrEqualTo(2),
+        reason: '켜짐·꺼짐을 둘 다 알려야 스피너가 멎는다 (받은 알림: $notifications)');
+  });
+
   test('웹의 settings.open 은 섹션과 함께 네이티브로 전달된다', () async {
     final v = _FakeWebView();
     String? section;
-    final b = WebBridge(v, wc,
-        llmClient: _StubProvider(), onOpenSettings: (s) => section = s)
-      ..start();
+    final b = WebBridge(wc, session,
+        llmClient: _StubProvider(), onOpenSettings: (s) => section = s);
+    await b.start();
+    await b.attachView(v);
 
     v.emit(jsonEncode({'type': 'settings.open', 'section': 'tools'}));
     await pumpEventQueue();

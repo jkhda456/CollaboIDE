@@ -24,6 +24,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tabViewers => 'Viewers';
 
   @override
+  String get tabWeb => 'Web';
+
+  @override
   String get tabPrompt => 'Prompt';
 
   @override
@@ -146,6 +149,74 @@ class AppLocalizationsEn extends AppLocalizations {
   String get navCollapse => 'Collapse';
 
   @override
+  String get navWebSearch => 'Web Search';
+
+  @override
+  String get conversation => 'Conversation';
+
+  @override
+  String get closeProject => 'Close project';
+
+  @override
+  String get recentProjectsTitle => 'Recent projects';
+
+  @override
+  String get projectBusy => 'Working';
+
+  @override
+  String get closeBusyProjectTitle => 'This project is still working';
+
+  @override
+  String closeBusyProjectBody(String name) {
+    return '$name has a generation in progress. Closing it stops that work. Other open projects are not affected.';
+  }
+
+  @override
+  String get browserBack => 'Back';
+
+  @override
+  String get browserForward => 'Forward';
+
+  @override
+  String get browserReload => 'Reload';
+
+  @override
+  String get browserStop => 'Stop loading';
+
+  @override
+  String get browserNewTab => 'New tab';
+
+  @override
+  String get browserCloseTab => 'Close tab';
+
+  @override
+  String get browserAddressHint => 'Search, or enter an address';
+
+  @override
+  String get browserEmpty => 'No browser tab is open';
+
+  @override
+  String get browserUnsupported =>
+      'The web browser is not available on this platform yet.';
+
+  @override
+  String get searchEngine => 'Search engine';
+
+  @override
+  String get searchEngineDesc =>
+      'Used by the agent\'s web_search tool and by the address bar above the browser. Engines are defined in the Python module collabo_web.py, so more can be added there.';
+
+  @override
+  String get browserUserAgent => 'Browser User-Agent';
+
+  @override
+  String get browserUserAgentDesc =>
+      'Leave empty to use the platform default, which is what an ordinary browser sends and works best with sites that block automation. Applies to tabs opened from now on.';
+
+  @override
+  String get browserUserAgentHint => 'Platform default';
+
+  @override
   String get activityTitle => 'Activity';
 
   @override
@@ -229,6 +300,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get procStderr => 'stderr';
+
+  @override
+  String get procTerminal => 'Terminal';
+
+  @override
+  String get procTerminalInputHint => 'Type into the terminal…';
+
+  @override
+  String get procNoPty =>
+      'No pseudo-terminal is available, so interactive programs will not work in this session.';
 
   @override
   String get newProjectTitle => 'New Project';
@@ -373,9 +454,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Empty = measure automatically (assumes 100 tok/s until then)';
 
   @override
-  String tokPerSecMeasured(String tps) {
-    return 'Measured: $tps tok/s';
-  }
+  String tokPerSecMeasured(String tps) => 'Measured: $tps tok/s';
 
   @override
   String get testConnection => 'Test connection';

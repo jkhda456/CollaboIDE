@@ -24,6 +24,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get tabViewers => '뷰어';
 
   @override
+  String get tabWeb => '웹 검색';
+
+  @override
   String get tabPrompt => '프롬프트';
 
   @override
@@ -34,7 +37,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String aboutVersion(String version, String build) {
-    return '버전 $version (빌드 $build)';
+    return '버전 ${version} (빌드 ${build})';
   }
 
   @override
@@ -47,13 +50,15 @@ class AppLocalizationsKo extends AppLocalizations {
   String get viewLicenses => '오픈소스 라이선스 전체 보기';
 
   @override
-  String get systemPromptDesc => '대화를 시작할 때마다 전달하는 실행 전략입니다. 비워 두면 기본값을 씁니다.';
+  String get systemPromptDesc =>
+      '대화를 시작할 때마다 전달하는 실행 전략입니다. 비워 두면 기본값을 씁니다.';
 
   @override
   String get usePreAssessment => '사전 평가 사용하기';
 
   @override
-  String get usePreAssessmentDesc => '답변하기 전에 서브에이전트가 위임이 필요한지 한 줄로 짚어 줍니다.';
+  String get usePreAssessmentDesc =>
+      '답변하기 전에 서브에이전트가 위임이 필요한지 한 줄로 짚어 줍니다.';
 
   @override
   String get useProjectState => '프로젝트 상태 알려주기';
@@ -143,16 +148,83 @@ class AppLocalizationsKo extends AppLocalizations {
   String get navCollapse => '접기';
 
   @override
+  String get navWebSearch => '웹 검색';
+
+  @override
+  String get conversation => '대화';
+
+  @override
+  String get closeProject => '프로젝트 닫기';
+
+  @override
+  String get recentProjectsTitle => '최근 프로젝트';
+
+  @override
+  String get projectBusy => '작업 중입니다';
+
+  @override
+  String get closeBusyProjectTitle => '아직 작업이 진행 중입니다';
+
+  @override
+  String closeBusyProjectBody(String name) {
+    return '$name 에서 생성이 돌고 있습니다. 닫으면 그 작업이 중단됩니다. 다른 프로젝트는 영향을 받지 않습니다.';
+  }
+
+  @override
+  String get browserBack => '뒤로';
+
+  @override
+  String get browserForward => '앞으로';
+
+  @override
+  String get browserReload => '새로고침';
+
+  @override
+  String get browserStop => '중지';
+
+  @override
+  String get browserNewTab => '새 탭';
+
+  @override
+  String get browserCloseTab => '탭 닫기';
+
+  @override
+  String get browserAddressHint => '검색어나 주소를 입력하세요';
+
+  @override
+  String get browserEmpty => '열린 탭이 없습니다';
+
+  @override
+  String get browserUnsupported => '이 플랫폼에서는 웹 브라우저를 아직 쓸 수 없습니다.';
+
+  @override
+  String get searchEngine => '검색 엔진';
+
+  @override
+  String get searchEngineDesc =>
+      '에이전트의 web_search 도구와 브라우저 위 주소창이 함께 씁니다. 엔진은 파이썬 모듈 collabo_web.py 에 정의되어 있어 거기서 늘릴 수 있습니다.';
+
+  @override
+  String get browserUserAgent => '브라우저 User-Agent';
+
+  @override
+  String get browserUserAgentDesc =>
+      '비워 두면 플랫폼 기본값을 씁니다. 일반 브라우저가 보내는 값이라 자동화를 막는 사이트에서 가장 잘 동작합니다. 지금부터 여는 탭에 적용됩니다.';
+
+  @override
+  String get browserUserAgentHint => '플랫폼 기본값';
+
+  @override
   String get activityTitle => '진행 상태';
 
   @override
   String activityRunningLabel(int count) {
-    return '실행 중 ($count)';
+    return '실행 중 (${count})';
   }
 
   @override
   String activityRunningTooltip(int count) {
-    return '프로세스 $count개가 실행 중입니다';
+    return '프로세스 ${count}개가 실행 중입니다';
   }
 
   @override
@@ -205,7 +277,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String procStatusExited(int code) {
-    return '종료했습니다 (코드 $code)';
+    return '종료했습니다 (코드 ${code})';
   }
 
   @override
@@ -227,6 +299,15 @@ class AppLocalizationsKo extends AppLocalizations {
   String get procStderr => 'stderr';
 
   @override
+  String get procTerminal => '터미널';
+
+  @override
+  String get procTerminalInputHint => '터미널에 입력하세요';
+
+  @override
+  String get procNoPty => '가상 터미널을 쓸 수 없어 이 세션에서는 대화형 프로그램이 동작하지 않습니다.';
+
+  @override
   String get newProjectTitle => '새 프로젝트';
 
   @override
@@ -240,7 +321,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String createLocation(String path) {
-    return '생성 위치: $path';
+    return '생성 위치: ${path}';
   }
 
   @override
@@ -248,14 +329,14 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String createFailed(String error) {
-    return '폴더를 만들지 못했습니다: $error';
+    return '폴더를 만들지 못했습니다: ${error}';
   }
 
   @override
   String get nameEmpty => '이름을 입력하세요.';
 
   @override
-  String get nameInvalidChars => '사용할 수 없는 문자가 있습니다: < > : \" / \\ | ? *';
+  String get nameInvalidChars => '사용할 수 없는 문자가 있습니다: < > : " / \\ | ? *';
 
   @override
   String get nameInvalidName => '사용할 수 없는 이름입니다.';
@@ -366,9 +447,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get tokPerSecAuto => '비워 두면 자동으로 측정합니다 (그때까지는 100 tok/s 로 봅니다)';
 
   @override
-  String tokPerSecMeasured(String tps) {
-    return '자동으로 측정했습니다: $tps tok/s';
-  }
+  String tokPerSecMeasured(String tps) => '자동으로 측정했습니다: $tps tok/s';
 
   @override
   String get testConnection => '연결 상태 확인';
@@ -437,7 +516,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String toolsCount(String name, int count) {
-    return '$name 도구 ($count)';
+    return '${name} 도구 (${count})';
   }
 
   @override
@@ -447,8 +526,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get viewTools => '도구 보기';
 
   @override
-  String get toolToggleDesc =>
-      '체크를 끄면 그 도구를 에이전트에게 넘기지 않습니다. 설정은 남아 있어 언제든 다시 켤 수 있습니다.';
+  String get toolToggleDesc => '체크를 끄면 그 도구를 에이전트에게 넘기지 않습니다. 설정은 남아 있어 언제든 다시 켤 수 있습니다.';
 
   @override
   String get toolListLoading => '도구 목록을 읽는 중입니다…';
@@ -457,7 +535,8 @@ class AppLocalizationsKo extends AppLocalizations {
   String get toolNativeFixed => '앱이 직접 실행하며 끌 수 없습니다';
 
   @override
-  String get viewersDesc => '파일 뷰어를 JS 파일로 확장합니다. 추가하면 보기 방식 드롭다운에 바로 나타납니다.';
+  String get viewersDesc =>
+      '파일 뷰어를 JS 파일로 확장합니다. 추가하면 보기 방식 드롭다운에 바로 나타납니다.';
 
   @override
   String get viewerRulesTitle => '확장자 연결';
@@ -532,7 +611,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get pythonNotSetTitle => 'Python 미설정';
 
   @override
-  String get pythonNotSetBody => '먼저 \"Python 설정\"에서 인터프리터를 선택하세요.';
+  String get pythonNotSetBody => '먼저 "Python 설정"에서 인터프리터를 선택하세요.';
 
   @override
   String get pythonCheckTitle => 'Python 환경 점검';
@@ -603,12 +682,12 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String consoleProcessExited(int code) {
-    return '[프로세스 종료: $code]';
+    return '[프로세스 종료: ${code}]';
   }
 
   @override
   String consoleExecFailed(String error) {
-    return '실행하지 못했습니다: $error';
+    return '실행하지 못했습니다: ${error}';
   }
 
   @override
@@ -616,7 +695,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String webviewInitFailed(String error) {
-    return '웹뷰를 시작하지 못했습니다\n$error';
+    return '웹뷰를 시작하지 못했습니다\n${error}';
   }
 
   @override
@@ -638,7 +717,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String wizardStep(int current, int total) {
-    return '$total단계 중 $current단계';
+    return '${total}단계 중 ${current}단계';
   }
 
   @override

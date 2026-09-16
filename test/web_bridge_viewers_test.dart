@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collabo_ide/src/app/project_session.dart';
 import 'package:collabo_ide/src/app/workspace_controller.dart';
+import 'package:collabo_ide/src/browser/browser_controller.dart';
 import 'package:collabo_ide/src/data/app_database.dart';
 import 'package:collabo_ide/src/data/sqlite_init.dart';
 import 'package:collabo_ide/src/llm/llm_config.dart';
@@ -116,6 +118,7 @@ void main() {
   late AppDatabase db;
   late _FakeWebView view;
   late WorkspaceController wc;
+  late ProjectSession session;
   late WebBridge bridge;
 
   /// 스테이징 스텁: 복사 없이 상대 URL 만 만들어 준다(호출 인자도 기록).
@@ -130,20 +133,25 @@ void main() {
     await wc.loadViewersForTest(db);
     staged = [];
     view = _FakeWebView();
+    session = await ProjectSession.open(tmp.path,
+        browser: BrowserController(), firstConversationTitle: 'test');
     bridge = WebBridge(
-      view,
       wc,
+      session,
       llmClient: _StubProvider(),
       viewerStager: (sources) async {
         staged.add(sources);
         return [for (final s in sources) './viewers/user/${s.stagedName}'];
       },
-    )..start();
+    );
+    session.bridge = bridge;
+    await bridge.start();
+    await bridge.attachView(view);
     view.scripts.clear();
   });
 
   tearDown(() async {
-    await bridge.dispose();
+    await session.close(); // 브리지도 여기서 같이 정리된다.
     await view.dispose();
     await db.close();
     if (await tmp.exists()) await tmp.delete(recursive: true);

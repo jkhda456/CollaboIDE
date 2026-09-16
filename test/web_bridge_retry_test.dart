@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collabo_ide/src/app/project_session.dart';
 import 'package:collabo_ide/src/app/workspace_controller.dart';
+import 'package:collabo_ide/src/browser/browser_controller.dart';
 import 'package:collabo_ide/src/conversation/models.dart';
 import 'package:collabo_ide/src/data/sqlite_init.dart';
 import 'package:collabo_ide/src/llm/llm_config.dart';
@@ -78,6 +80,7 @@ void main() {
   late Directory tmp;
   late _FakeWebView view;
   late WorkspaceController wc;
+  late ProjectSession session;
   late WebBridge bridge;
   late _FailingProvider provider;
 
@@ -86,17 +89,22 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('collabo_retry_');
     wc = WorkspaceController();
-    await wc.openProject(tmp.path);
+    session = await ProjectSession.open(
+      tmp.path,
+      browser: BrowserController(),
+      firstConversationTitle: 'test',
+    );
     view = _FakeWebView();
     provider = _FailingProvider();
-    bridge = WebBridge(view, wc,
-        llmClient: provider, viewerStager: (_) async => const [])
-      ..start();
-    await bridge.setProject(tmp.path);
+    bridge = WebBridge(wc, session,
+        llmClient: provider, viewerStager: (_) async => const []);
+    session.bridge = bridge;
+    await bridge.start();
+    await bridge.attachView(view);
   });
 
   tearDown(() async {
-    await bridge.dispose();
+    await session.close();
     await view.dispose();
     if (await tmp.exists()) await tmp.delete(recursive: true);
   });
@@ -110,7 +118,8 @@ void main() {
     view.emit(jsonEncode({'type': 'chat.send', 'text': '문서를 고쳐줘'}));
     await Future<void>.delayed(const Duration(milliseconds: 400));
 
-    final msgs = await wc.conversation!.messages(wc.activeConversationId!);
+    final msgs =
+        await session.conversation.messages(session.activeConversationId!);
     expect(msgs.map((m) => m.role), [MessageRole.user],
         reason: '실패한 시도가 남긴 어시스턴트/도구 기록은 모두 정리돼야 한다');
     expect(msgs.single.content, '문서를 고쳐줘');

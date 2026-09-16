@@ -18,6 +18,8 @@ class ToolAssets {
   static const List<String> baseScripts = [
     'collabo_tools.py', // 파일·명령·권한 등 기본 작업
     'collabo_docs.py', // docx/xlsx/pptx 문서 읽기·편집
+    'collabo_web.py', // 웹 검색·페이지 읽기(네이티브 브라우저 탭을 부린다)
+    'collabo_term.py', // 터미널 세션(PTY) — 열기·읽기·입력·검색
   ];
 
   /// 기본 모듈을 추출하고 대표 스크립트 경로를 반환한다.

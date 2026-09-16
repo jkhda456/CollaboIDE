@@ -1729,13 +1729,24 @@
     function onDirChildren(path, entries) {
       childrenCache.set(path, entries);
       if (searchMode) return; // 검색 결과 표시 중에는 트리를 갱신하지 않음
+      // ★ **스크롤 위치를 지키고 다시 그린다.**
+      // `renderDir` 는 컨테이너를 통째로 비우므로, 그 순간 내용 높이가 0 이 되어
+      // 브라우저가 `scrollTop` 을 0 으로 눌러 버린다. 에이전트가 도는 동안에는
+      // 파일 변경이 계속 들어와(특히 `.collabo/PLAYBOOK.md`) 이 재렌더가 몇 초마다
+      // 일어나므로, 보고 있던 트리가 자꾸 맨 위로 튄다.
+      // (§13-7 "다시 그려지는 UI 의 상태는 render 밖에 둔다" 와 같은 이야기다.)
+      const keepTop = treeEl.scrollTop;
       if (path === rootPath) {
         treeEl.innerHTML = '';
         dirContainers.set(rootPath, treeEl);
         renderDir(rootPath, treeEl, 0);
       } else if (dirContainers.has(path)) {
         renderDir(path, dirContainers.get(path), depthOf(path));
+      } else {
+        return; // 그리지 않았으면 스크롤도 건드릴 이유가 없다.
       }
+      // 내용이 줄어 그 위치가 사라졌으면 브라우저가 알아서 끝으로 맞춘다.
+      if (keepTop) treeEl.scrollTop = keepTop;
     }
 
     function onFsChange(paths, files) {
@@ -1783,12 +1794,20 @@
 
     let viewerReloadTimer = null;
     let viewerAutoReloading = false;
+
+    /// 자동 갱신 직전의 뷰어 스크롤. `{path, top}` 이고, 같은 파일이 다시 그려진
+    /// 뒤에만 되돌린다(다른 파일을 열었으면 맨 위가 맞다).
+    let viewerKeepScroll = null;
+
     function scheduleViewerReload() {
       if (viewerReloadTimer) clearTimeout(viewerReloadTimer);
       viewerReloadTimer = setTimeout(function () {
         viewerReloadTimer = null;
         if (currentFilePath) {
           viewerAutoReloading = true;
+          // ★ 읽던 자리를 기억해 둔다. 에이전트가 도는 동안 `PLAYBOOK.md` 같은
+          // 파일은 몇 초마다 바뀌는데, 그때마다 맨 위로 튀면 읽을 수가 없다.
+          viewerKeepScroll = { path: currentFilePath, top: viewerEl.scrollTop };
           // 보던 뷰어를 유지한 채 다시 읽는다.
           openFile(currentFilePath, currentViewerId);
         }
@@ -2358,6 +2377,18 @@
         noticeEl.classList.add('d-none');
       }
       renderViewer();
+      // 자동 갱신이었으면 읽던 자리로 되돌린다. 뷰어가 렌더 안에서 비동기로
+      // 내용을 채울 수 있어 한 프레임 뒤에 맞춘다(그래도 어긋나면 그 뷰어가
+      // 자기 스크롤을 따로 들고 있는 경우다 — 가상 스크롤은 이미 자체 보존한다).
+      if (viewerKeepScroll && viewerKeepScroll.path === msg.path) {
+        const top = viewerKeepScroll.top;
+        viewerKeepScroll = null;
+        if (top) {
+          requestAnimationFrame(function () { viewerEl.scrollTop = top; });
+        }
+      } else {
+        viewerKeepScroll = null;
+      }
       // 내용 검색이 열려 있으면 즉시 하이라이트 적용.
       const cs = document.getElementById('content-search');
       if (cs && cs.value.trim()) applyViewerSearch(cs.value);
@@ -2369,9 +2400,11 @@
       // 자동 갱신 중 파일이 사라진(삭제/이동) 경우엔 에러 대신 뷰어를 닫는다.
       if (viewerAutoReloading) {
         viewerAutoReloading = false;
+        viewerKeepScroll = null;
         clearViewer();
         return;
       }
+      viewerKeepScroll = null;
       viewerEl.className = 'p-3';
       viewerEl.innerHTML = '<div class="text-danger small">' +
         esc(T('fileOpenError', '파일을 열 수 없습니다: ')) + esc(msg.message || '') + '</div>';
@@ -2568,6 +2601,9 @@
     // 바닥까지 스크롤해도 마지막 내용이 가려지지 않게 한다.
     function updateComposerSpace() {
       const h = composerEl.offsetHeight + 24;
+      // 화면에 안 보이는 웹뷰에서는 이 값이 0(또는 엉뚱한 값)이다 — 그대로 쓰면
+      // 대화창 바닥 여백이 사라지거나 과하게 벌어진 채로 굳는다(§autoGrow).
+      if (h <= 24) return;
       // ::after 의 높이를 CSS 변수로 지정 → 입력창 높이만큼 더 스크롤된다.
       document.documentElement.style.setProperty('--composer-h', h + 'px');
       scrollBtn.style.bottom = h + 'px';
@@ -3513,11 +3549,39 @@
     // ===== 입력창(composer): 자동 높이 확장 + 전송 =====
     const prompt = document.getElementById('prompt');
     const sendBtn = document.getElementById('send-btn');
+
+    /// ★ **지금 페이지가 제대로 된 크기를 갖고 있는가.**
+    ///
+    /// 화면에 안 보이는 웹뷰는 크기가 0 이거나 엉뚱한 값이다. 그 상태에서 잰
+    /// `scrollHeight` 로 높이를 정하면 **인라인 px 로 굳어** 화면에 돌아와도 그대로
+    /// 남는다 — 배경에서 로드된 프로젝트로 옮기면 입력창이 잔뜩 커져 있던 원인이다
+    /// (여러 프로젝트를 동시에 열면서 생겼다. 복원된 프로젝트는 안 보이는 채로
+    ///  페이지가 로드되고, 그때 `autoGrow()` 가 한 번 돈다).
+    function hasLayout() {
+      return prompt.clientWidth > 0 && window.innerHeight > 0;
+    }
+
     function autoGrow() {
+      // 빈 입력창은 **재지 않고 한 줄로 되돌린다.** 인라인 높이를 지우면 CSS 의
+      // `rows="1"` 높이로 돌아간다 — 어쩌다 잘못된 값이 굳었어도 여기서 풀린다.
+      // (보내고 나면 비므로, 실제로 문제가 되는 상태는 거의 다 이 경로로 낫는다.)
+      if (prompt.value === '') {
+        prompt.style.height = '';
+        updateComposerSpace();
+        return;
+      }
+      // 잴 수 없으면 **건드리지 않는다.** 크기가 생기면 아래 resize 에서 다시 잰다.
+      if (!hasLayout()) return;
       prompt.style.height = 'auto';
       prompt.style.height = Math.min(prompt.scrollHeight, 160) + 'px';
       updateComposerSpace();
     }
+
+    // 크기가 (다시) 생기면 그때 제대로 잰다. 화면을 옮겨 돌아왔을 때 스스로 낫는다.
+    window.addEventListener('resize', autoGrow);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) autoGrow();
+    });
     function updateSendBtn() {
       // 내용도 첨부도 없으면 보내기 비활성화.
       sendBtn.disabled = prompt.value.trim() === '' && pendingAttachments.length === 0;

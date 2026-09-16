@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../browser/browser_controller.dart';
 import '../conversation/conversation_store.dart';
 import '../data/app_database.dart';
 import '../llm/llm_config.dart';
@@ -17,32 +18,45 @@ import '../tools/tool_assets.dart';
 import '../tools/tool_source.dart';
 import '../ui/app_theme.dart';
 import '../viewers/viewer_assets.dart';
+import '../webview/web_bridge.dart';
+import 'project_session.dart';
 import '../viewers/viewer_rule.dart';
 import '../viewers/viewer_source.dart';
 
-/// 프로젝트별 venv 준비 상태.
-enum VenvStatus { idle, creating, ready, error }
-
-/// 앱 전역 상태의 중심. 메인 DB, 현재 프로젝트, 프로젝트 대화 DB,
-/// 런쳐 프로세스 매니저, LLM 설정, 최근 프로젝트 목록을 한곳에서 묶는다.
+/// 앱 전역 상태의 중심. 메인 DB, **열려 있는 프로젝트들**, LLM 설정, 도구·뷰어
+/// 설정, 최근 프로젝트 목록을 한곳에서 묶는다.
+///
+/// > ★ **프로젝트에 딸린 것은 여기 없다.** 대화 DB·백그라운드 명령·venv·브리지는
+/// > [ProjectSession] 의 것이고, 이 클래스는 그 목록([sessions])과 지금 보고 있는
+/// > 것([activeSession])만 안다. 예전에는 전부 여기 한 벌씩 있어서, 다른 프로젝트를
+/// > 열면 돌고 있던 생성과 기록이 통째로 덮여 사라졌다.
 class WorkspaceController extends ChangeNotifier {
   AppDatabase? _appDb;
-  ProcessManager? _processManager;
-  PythonEnvironment? _pythonEnv;
 
-  /// 백그라운드 명령(run_command) 레지스트리 — `.collabo/proc` 를 읽어 추적한다.
-  final BackgroundProcessRegistry _backgroundProcesses =
-      BackgroundProcessRegistry();
+  /// 웹 검색 탭들(사용자와 에이전트가 같이 쓴다). 탭 하나가 웹뷰 하나다.
+  ///
+  /// **프로젝트와 무관하게 앱에 하나뿐이다** — 열린 프로젝트가 여럿이어도 탭 목록과
+  /// 쿠키는 하나로 공유한다. 프로젝트마다 다른 것은 파이썬이 말을 거는 통로뿐이고,
+  /// 그건 각 세션이 자기 `.collabo/browser` 로 가진다.
+  late final BrowserController _browser =
+      BrowserController(onActivateRequested: () => _browserWanted?.call());
 
-  String? _projectPath;
+  /// 도구가 탭을 열었을 때 화면을 웹 검색 쪽으로 돌리는 콜백([AppLayout] 이 건다).
+  VoidCallback? _browserWanted;
+
+  /// **열려 있는 프로젝트들.** 연 순서를 유지한다(= 좌측 메뉴의 표시 순서).
+  final List<ProjectSession> _sessions = [];
+
+  /// 지금 보고 있는 프로젝트 경로. 비어 있으면 열린 프로젝트가 없다.
+  String _activePath = '';
+
+  /// 지난 실행에서 열려 있던 경로들. [restoreOpenProjects] 가 비우며 처리한다.
+  List<String> _pendingRestore = const [];
+  String _pendingActive = '';
 
   /// 프로젝트별 venv 사용 여부(전역 정책, 기본 꺼짐). 켜면 각 프로젝트의
   /// `<project>/.collabo/venv` 에 venv 를 자동 생성해 그걸로 실행한다.
   bool _useVenv = false;
-  VenvStatus _venvStatus = VenvStatus.idle;
-  String _venvError = '';
-  ConversationStore? _conversation;
-  int? _activeConversationId;
   List<RecentProject> _recentProjects = const [];
 
   /// 테마 모드. 기본값은 라이트. (설정으로 관리, 메인 DB 에 영구 저장)
@@ -128,11 +142,25 @@ class WorkspaceController extends ChangeNotifier {
   /// (설정 → 프롬프트에서 토글)
   bool _supervisor = true;
 
+  /// `web_search` 가 기본으로 쓸 검색엔진 이름('google' | 'duckduckgo' | 확장).
+  ///
+  /// **판정은 파이썬이 한다** — 여기 있는 값은 그대로 `COLLABO_SEARCH_ENGINE`
+  /// 으로 넘어가고, 모르는 이름이면 파이썬이 기본값으로 되돌린다. 그래야 엔진을
+  /// 늘릴 때 Dart 의 목록을 같이 고치지 않아도 된다(노트 §12 "두 곳" 회피).
+  String _searchEngine = 'google';
+
+  /// 브라우저 탭의 User-Agent 덮어쓰기. 비면 플랫폼 기본을 쓴다(권장).
+  String _browserUserAgent = '';
+
   /// 초기 설정 마법사 완료(또는 건너뜀) 여부. 메인 DB 에 영구 저장.
   bool _setupDone = false;
 
   /// init() 완료 여부. 첫 실행 판단은 DB 로드가 끝난 뒤에만 한다.
   bool _initialized = false;
+
+  /// [init] 이 끝났는지. `main.dart` 가 `init()` 을 **기다리지 않으므로** 화면은
+  /// 초기화보다 먼저 뜬다 — 설정에 기대는 일은 이 값을 보고 미뤄야 한다.
+  bool get initialized => _initialized;
 
   static const String _themeSettingKey = 'theme_mode';
   static const String _llmSettingKey = 'llm'; // 레거시(단일 설정) — 마이그레이션 원본
@@ -150,8 +178,6 @@ class WorkspaceController extends ChangeNotifier {
   static const String _pythonKey = 'python_interpreter';
   static const String _useVenvKey = 'python_use_venv';
 
-  /// 프로젝트 폴더 안에서 venv 를 두는 상대 경로.
-  static const List<String> _venvSubdir = ['.collabo', 'venv'];
   /// 마지막 창 크기 설정 키(main.dart 가 부팅 시 직접 읽어 복원한다).
   static const String windowSizeKey = 'window_size';
   static const String _localeKey = 'locale';
@@ -162,15 +188,75 @@ class WorkspaceController extends ChangeNotifier {
   static const String _projectStateKey = 'project_state';
   static const String _planMemoryKey = 'plan_memory';
   static const String _supervisorKey = 'supervisor';
+  static const String _searchEngineKey = 'web_search_engine';
+  static const String _browserUserAgentKey = 'web_user_agent';
 
-  String? get projectPath => _projectPath;
-  bool get hasProject => _projectPath != null;
-  ConversationStore? get conversation => _conversation;
-  int? get activeConversationId => _activeConversationId;
-  ProcessManager? get processManager => _processManager;
+  /// 열어 둔 프로젝트 경로 목록과 그중 보고 있던 것.
+  ///
+  /// **최근 목록(MRU)과 다른 것이다.** MRU 는 "예전에 열었던 것" 이고 이쪽은
+  /// "지금 열려 있는 것" 이다 — 앱을 닫았다 켜도 열어 둔 상태가 그대로여야 한다.
+  static const String _openProjectsKey = 'open_projects';
+  static const String _activeProjectKey = 'active_project';
 
-  /// 백그라운드 명령 레지스트리(좌측 활동 배지 + 프로세스 뷰어가 사용).
-  BackgroundProcessRegistry get backgroundProcesses => _backgroundProcesses;
+  /// 열려 있는 프로젝트들(연 순서).
+  List<ProjectSession> get sessions => List.unmodifiable(_sessions);
+
+  /// 지금 보고 있는 프로젝트. 없으면 null.
+  ProjectSession? get activeSession => sessionFor(_activePath);
+
+  /// 경로로 열린 세션을 찾는다(안 열려 있으면 null).
+  ProjectSession? sessionFor(String path) {
+    for (final s in _sessions) {
+      if (s.path == path) return s;
+    }
+    return null;
+  }
+
+  bool isOpen(String path) => sessionFor(path) != null;
+
+  /// 생성이 돌고 있는 프로젝트 수(좌측 메뉴 배지).
+  int get busySessionCount => _sessions.where((s) => s.isBusy).length;
+
+  // --- 아래 넷은 **활성 세션으로 위임**한다. 설정 창과 기존 호출부가 "지금 보고
+  //     있는 프로젝트" 를 묻는 흔한 질문이라 그대로 남겨 두었다. 특정 프로젝트를
+  //     가리켜야 하는 곳(브리지 등)은 세션을 직접 들고 있어야 한다.
+  String? get projectPath => activeSession?.path;
+  bool get hasProject => activeSession != null;
+  ConversationStore? get conversation => activeSession?.conversation;
+  int? get activeConversationId => activeSession?.activeConversationId;
+
+  ProcessManager? get processManager => activeSession?.processManager;
+
+  /// 활성 프로젝트의 백그라운드 명령 레지스트리(프로세스 뷰어가 사용).
+  ///
+  /// 좌측 메뉴의 활동 배지는 **열린 전부**를 세야 하므로 [runningProcessCount] 를 쓴다.
+  BackgroundProcessRegistry? get backgroundProcesses =>
+      activeSession?.backgroundProcesses;
+
+  /// 열린 **모든** 프로젝트에서 돌고 있는 백그라운드 명령 수.
+  int get runningProcessCount {
+    var n = 0;
+    for (final s in _sessions) {
+      n += s.backgroundProcesses.runningCount;
+    }
+    return n;
+  }
+
+  /// 웹 검색 탭(패널이 그리고, 파일 통로가 부린다).
+  BrowserController get browser => _browser;
+
+  /// 도구가 탭을 열면 화면을 웹 검색으로 돌려 달라는 요청을 받는다.
+  /// [AppLayout] 이 한 번 걸어 두고 끝이다.
+  set onBrowserWanted(VoidCallback? cb) => _browserWanted = cb;
+
+  String get searchEngine => _searchEngine;
+  String get browserUserAgent => _browserUserAgent;
+
+  /// **모든** 도구 실행에 실리는 환경변수. [ToolRunner.baseEnv] 로 간다.
+  Map<String, String> get toolEnv => {
+        'COLLABO_LANG': langCode,
+        'COLLABO_SEARCH_ENGINE': _searchEngine,
+      };
   List<RecentProject> get recentProjects => _recentProjects;
   ThemeMode get themeMode => _themeMode;
 
@@ -199,13 +285,11 @@ class WorkspaceController extends ChangeNotifier {
   /// 현재(또는 지정) 프로젝트의 대화에 쓸 연결 설정.
   /// 프로젝트가 고른 프리셋이 있으면 그것을, 없으면 기본 프리셋을 쓴다.
   LlmConfig configForConversation([String? projectPath]) {
-    final path = projectPath ?? _projectPath;
-    if (path != null) {
-      final id = _projectModels[path];
-      if (id != null && id.isNotEmpty) {
-        final p = _presetById(id);
-        if (p != null) return p.config;
-      }
+    // 빈 경로(열린 프로젝트 없음)는 매핑에 없으므로 기본 프리셋으로 떨어진다.
+    final id = _projectModels[projectPath ?? _activePath];
+    if (id != null && id.isNotEmpty) {
+      final p = _presetById(id);
+      if (p != null) return p.config;
     }
     return defaultPreset.config;
   }
@@ -231,11 +315,8 @@ class WorkspaceController extends ChangeNotifier {
   /// 대화가 실제로 쓰는 프리셋 id(**빈 문자열이 아니라 해석된 값**).
   /// 속도 실측을 프리셋별로 모으려면 "기본 사용" 이 아니라 실제 id 가 필요하다.
   String resolvedPresetIdForConversation([String? projectPath]) {
-    final path = projectPath ?? _projectPath;
-    if (path != null) {
-      final id = _projectModels[path];
-      if (id != null && id.isNotEmpty && _presetById(id) != null) return id;
-    }
+    final id = _projectModels[projectPath ?? _activePath];
+    if (id != null && id.isNotEmpty && _presetById(id) != null) return id;
     return defaultPreset.id;
   }
 
@@ -306,11 +387,8 @@ class WorkspaceController extends ChangeNotifier {
   String presetIdForTool(String toolName) => _toolModels[toolName] ?? '';
 
   /// 프로젝트에 지정된 프리셋 id('' = 기본 사용).
-  String presetIdForProject([String? projectPath]) {
-    final path = projectPath ?? _projectPath;
-    if (path == null) return '';
-    return _projectModels[path] ?? '';
-  }
+  String presetIdForProject([String? projectPath]) =>
+      _projectModels[projectPath ?? _activePath] ?? '';
 
   /// 현재 시스템 프롬프트(미설정이면 기본값).
   String get systemPrompt =>
@@ -377,109 +455,74 @@ class WorkspaceController extends ChangeNotifier {
   String? get pythonInterpreter =>
       _pythonInterpreterPath.isEmpty ? null : _pythonInterpreterPath;
 
-  /// 실제 스크립트/도구 실행에 쓰는 **실효 파이썬**(venv 준비 시 venv, 아니면 base).
-  /// 미설정이면 null. 상태확인(env_check)·pip 도 이걸 써야 tools 와 동일 환경을
-  /// 대상으로 한다(base 로 설치하면 Homebrew/시스템 파이썬의 PEP 668 로 막힌다).
-  String? get effectivePython {
-    final e = _pythonEnv;
-    if (e == null || !e.isInstalled) return null;
-    return e.executablePath;
-  }
+  /// 활성 프로젝트의 **실효 파이썬**(venv 준비 시 venv, 아니면 base). 미설정이면 null.
+  ///
+  /// 상태확인(env_check)·pip 도 이걸 써야 tools 와 동일 환경을 대상으로 한다
+  /// (base 로 설치하면 Homebrew/시스템 파이썬의 PEP 668 로 막힌다).
+  /// **프로젝트마다 다를 수 있다** — venv 가 프로젝트별이기 때문이다.
+  String? get effectivePython => activeSession?.effectivePython;
 
-  bool get pythonInstalled => _pythonEnv?.isInstalled ?? false;
-  PythonEnvironment? get pythonEnv => _pythonEnv;
+  bool get pythonInstalled => _pythonInterpreterPath.isNotEmpty &&
+      File(_pythonInterpreterPath).existsSync();
 
-  /// 에이전트가 Python 도구를 실제로 실행할 수 있는 상태인지.
+  PythonEnvironment? get pythonEnv => activeSession?.pythonEnv;
+
+  /// 그 프로젝트에서 에이전트가 Python 도구를 실제로 실행할 수 있는 상태인지.
   /// (인터프리터 선택 + 그 파일이 존재 + 기본 모듈/어댑터 추출 완료)
   ///
-  /// **`WebBridge._buildToolRegistry` 의 전제조건과 같아야 한다.** false 면 도구가
+  /// **`AgentLoop._buildToolRegistry` 의 전제조건과 같아야 한다.** false 면 도구가
   /// 하나도 없는 채로 대화만 돌아가므로(서브에이전트가 아무 작업도 못 한다),
   /// 대화 헤더에 설정 안내 버튼을 띄우는 근거로도 쓴다.
-  bool get toolsReady =>
-      pythonInstalled &&
-      effectivePython != null &&
+  bool toolsReadyFor(ProjectSession session) =>
+      session.effectivePython != null &&
       _baseToolModulePaths.isNotEmpty &&
       toolAdaptersDir != null;
+
+  /// 활성 프로젝트 기준(설정 창이 본다).
+  bool get toolsReady {
+    final s = activeSession;
+    return s != null && toolsReadyFor(s);
+  }
 
   /// 프로젝트별 venv 사용 여부(전역 정책).
   bool get useVenv => _useVenv;
 
-  /// 현재 프로젝트의 venv 준비 상태.
-  VenvStatus get venvStatus => _venvStatus;
+  /// 활성 프로젝트의 venv 준비 상태.
+  VenvStatus get venvStatus => activeSession?.venvStatus ?? VenvStatus.idle;
 
   /// venv 생성 실패 메시지(없으면 빈 문자열).
-  String get venvError => _venvError;
+  String get venvError => activeSession?.venvError ?? '';
 
-  /// 현재 프로젝트에 적용될 venv 경로(미사용/프로젝트 없음이면 null).
-  String? get venvPath => _effectiveVenvPath();
+  /// 활성 프로젝트에 적용될 venv 경로(미사용/프로젝트 없음이면 null).
+  String? get venvPath => activeSession?.venvPathFor(useVenv: _useVenv);
 
-  String? _effectiveVenvPath() {
-    final root = _projectPath;
-    if (!_useVenv || root == null || root.isEmpty) return null;
-    return p.join(root, _venvSubdir[0], _venvSubdir[1]);
-  }
-
-  /// 현재 base 인터프리터 + 프로젝트 venv 경로로 Python 환경/프로세스 매니저를 재구성한다.
-  void _rebuildPythonEnv() {
-    final env =
-        PythonEnvironment(_pythonInterpreterPath, venvPath: _effectiveVenvPath());
-    _pythonEnv = env;
-    _processManager?.updateEnvironment(env);
-  }
-
-  /// 현재 프로젝트의 venv 를 (없으면) 생성한다. 상태를 갱신하며 알림.
-  /// venv 미사용/프로젝트 없음/base 미설정이면 조용히 넘어간다.
-  Future<void> _ensureVenv() async {
-    final env = _pythonEnv;
-    if (env == null || env.venvPath == null) {
-      _venvStatus = VenvStatus.idle;
-      _venvError = '';
-      notifyListeners();
-      return;
+  /// 열린 **모든** 세션의 파이썬 환경을 현재 설정으로 다시 만든다.
+  ///
+  /// ⚠️ 한 세션만 갱신하면 나머지는 옛 인터프리터로 계속 돈다 — 인터프리터와 venv
+  /// 정책은 전역 설정이므로 바뀌면 전부가 따라와야 한다.
+  void _rebuildAllPythonEnvs() {
+    for (final s in _sessions) {
+      s.rebuildPythonEnv(_pythonInterpreterPath, useVenv: _useVenv);
     }
-    if (env.venvReady) {
-      _venvStatus = VenvStatus.ready;
-      _venvError = '';
-      notifyListeners();
-      return;
-    }
-    if (!env.isInstalled) return; // base 미설정: 인터프리터 지정 시 다시 시도됨.
-    _venvStatus = VenvStatus.creating;
-    _venvError = '';
-    notifyListeners();
-    final r = await env.ensureVenv();
-    // 도중에 프로젝트/설정이 바뀌었으면 결과를 버린다(경합 방지).
-    if (!identical(env, _pythonEnv)) return;
-    if (r.ok) {
-      _venvStatus = VenvStatus.ready;
-      _venvError = '';
-    } else {
-      _venvStatus = VenvStatus.error;
-      _venvError = r.error ?? 'Failed to create venv.';
-    }
-    notifyListeners();
   }
 
   /// 프로젝트별 venv 사용 여부를 변경/저장한다(설정 → 도구 → Python).
   Future<void> setUseVenv(bool value) async {
     if (value == _useVenv) return;
     _useVenv = value;
-    _rebuildPythonEnv();
+    _rebuildAllPythonEnvs();
     notifyListeners();
     await _appDb?.setSetting(_useVenvKey, value);
-    await _ensureVenv();
+    for (final s in _sessions) {
+      await s.ensureVenv();
+    }
   }
 
-  /// 현재 프로젝트의 venv 를 삭제 후 재생성한다(설정의 "재생성" 버튼).
+  /// 활성 프로젝트의 venv 를 삭제 후 재생성한다(설정의 "재생성" 버튼).
   Future<void> recreateVenv() async {
-    final vp = _effectiveVenvPath();
-    if (vp == null) return;
-    try {
-      final dir = Directory(vp);
-      if (await dir.exists()) await dir.delete(recursive: true);
-    } catch (_) {}
-    _rebuildPythonEnv(); // venvReady 캐시 없음 — 안전하게 재구성.
-    await _ensureVenv();
+    final s = activeSession;
+    if (s == null) return;
+    await s.recreateVenv(useVenv: _useVenv);
   }
 
   /// 언어 설정 코드('system'|'ko'|'en').
@@ -503,9 +546,6 @@ class WorkspaceController extends ChangeNotifier {
 
   /// 앱 시작 시 1회: 메인 DB 열기, 설정/최근 목록 로드, Python 환경/매니저 준비.
   Future<void> init() async {
-    // 레지스트리 변경(프로세스 시작/종료)을 컨트롤러 알림으로 포워드 —
-    // AppLayout 은 컨트롤러만 listen 하므로 배지/뷰어가 실시간 갱신된다.
-    _backgroundProcesses.addListener(notifyListeners);
     _appDb = await AppDatabase.open();
     _recentProjects = await _appDb!.recentProjects();
     _themeMode =
@@ -541,10 +581,17 @@ class WorkspaceController extends ChangeNotifier {
         (await _appDb!.getSetting(_projectStateKey) as bool?) ?? true;
     _planMemory = (await _appDb!.getSetting(_planMemoryKey) as bool?) ?? true;
     _supervisor = (await _appDb!.getSetting(_supervisorKey) as bool?) ?? true;
+    _searchEngine =
+        (await _appDb!.getSetting(_searchEngineKey) as String?) ?? 'google';
+    _browserUserAgent =
+        (await _appDb!.getSetting(_browserUserAgentKey) as String?) ?? '';
+    _browser.userAgent = _browserUserAgent;
+    // 열어 둔 프로젝트는 **경로만** 여기서 읽고 실제 열기는 미룬다 — 새 대화 제목이
+    // l10n 이라 화면이 준비된 뒤여야 한다([restoreOpenProjects]).
+    final op = await _appDb!.getSetting(_openProjectsKey);
+    if (op is List) _pendingRestore = op.whereType<String>().toList();
+    _pendingActive = (await _appDb!.getSetting(_activeProjectKey) as String?) ?? '';
 
-    final env = PythonEnvironment(_pythonInterpreterPath);
-    _pythonEnv = env;
-    _processManager = ProcessManager(env);
     _baseToolModulePaths = await ToolAssets.extractBaseModules();
     _viewerExamples = await ViewerAssets.examples();
     _initialized = true;
@@ -606,6 +653,31 @@ class WorkspaceController extends ChangeNotifier {
     await _appDb?.setSetting(_supervisorKey, value);
   }
 
+  /// 기본 검색엔진을 변경/저장한다(설정 → 도구).
+  ///
+  /// 값을 검사하지 않는다 — 무엇이 유효한 엔진인지는 파이썬 모듈만 알고, 사용자가
+  /// `web_engines/` 에 새로 넣은 이름도 여기 들어올 수 있다.
+  Future<void> setSearchEngine(String name) async {
+    final value = name.trim();
+    if (value.isEmpty || value == _searchEngine) return;
+    _searchEngine = value;
+    notifyListeners();
+    await _appDb?.setSetting(_searchEngineKey, value);
+  }
+
+  /// 브라우저 User-Agent 덮어쓰기를 변경/저장한다. 빈 값이면 플랫폼 기본.
+  ///
+  /// **이미 열려 있는 탭에는 적용되지 않는다** — 웹뷰마다 초기화 때 한 번
+  /// 정해지는 값이라, 다음에 여는 탭부터 바뀐다.
+  Future<void> setBrowserUserAgent(String value) async {
+    final ua = value.trim();
+    if (ua == _browserUserAgent) return;
+    _browserUserAgent = ua;
+    _browser.userAgent = ua;
+    notifyListeners();
+    await _appDb?.setSetting(_browserUserAgentKey, ua);
+  }
+
   /// 초기 설정 마법사를 완료(또는 건너뜀)로 표시한다(이후 자동 표시 안 함).
   Future<void> markSetupComplete() async {
     if (_setupDone) return;
@@ -638,10 +710,12 @@ class WorkspaceController extends ChangeNotifier {
   /// venv 를 쓰는 프로젝트라면, 바뀐 base 로 venv 를 (없으면) 다시 준비한다.
   Future<void> setPythonInterpreter(String path) async {
     _pythonInterpreterPath = path;
-    _rebuildPythonEnv();
+    _rebuildAllPythonEnvs();
     notifyListeners();
     await _appDb?.setSetting(_pythonKey, path);
-    await _ensureVenv();
+    for (final s in _sessions) {
+      await s.ensureVenv();
+    }
   }
 
   static List<ToolSource> _parseSources(List<Object?> raw) {
@@ -929,6 +1003,16 @@ class WorkspaceController extends ChangeNotifier {
     if (vg is List) _registeredViewers = _parseViewerInfos(vg);
   }
 
+  /// 테스트 전용: 주어진 메인 DB 를 붙이고 열린 프로젝트 목록만 읽는다.
+  /// (실제로는 [init] 이 앱 지원 폴더의 DB 에서 읽는다.)
+  @visibleForTesting
+  Future<void> loadOpenProjectsForTest(AppDatabase db) async {
+    _appDb = db;
+    final op = await db.getSetting(_openProjectsKey);
+    if (op is List) _pendingRestore = op.whereType<String>().toList();
+    _pendingActive = (await db.getSetting(_activeProjectKey) as String?) ?? '';
+  }
+
   /// 테스트 전용: 주어진 메인 DB 에서 도구 소스/비활성 목록만 로드한다.
   @visibleForTesting
   Future<void> loadToolsForTest(AppDatabase db) async {
@@ -1034,38 +1118,143 @@ class WorkspaceController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 프로젝트를 연다: 이전 대화 DB 닫기 → 새 대화 DB 열기 → 활성 대화 확보 → MRU 갱신.
+  /// 새 대화의 기본 제목. `openProject` 를 부르기 전에 UI 가 l10n 값으로 채운다.
+  ///
+  /// 예전에는 여기 한국어 `'대화'` 가 박혀 있었다(§9-(5)). 컨트롤러에는
+  /// `BuildContext` 가 없어 l10n 을 직접 못 읽으므로 바깥에서 넣어 준다.
+  String newConversationTitle = 'Conversation';
+
+  /// 세션이 생기거나 사라질 때 알린다. [AppLayout] 이 패널 목록을 맞추는 데 쓴다.
+  ///
+  /// 브리지를 만드는 데 필요한 UI 콜백(설정 창·도구 호출 내역 열기)도 여기서 받는다 —
+  /// 컨트롤러는 위젯을 모르고, 위젯은 세션 수명을 모르기 때문이다.
+  void Function(String section)? onOpenSettings;
+  void Function(ProjectSession session, String callId)? onOpenActivity;
+
+  /// 프로젝트를 연다. **이미 열려 있으면 그리로 이동만 한다.**
+  ///
+  /// ★ 예전에는 이 함수가 이전 프로젝트의 대화 DB 를 닫고 그 자리를 덮어썼다.
+  /// 지금은 열린 것을 건드리지 않는다 — 돌고 있던 생성, 도구 호출 기록, 큐,
+  /// 속도 실측이 그대로 남는다.
   Future<void> openProject(String path) async {
-    await _conversation?.close();
-    final store = await ConversationStore.openForProject(path);
-    _conversation = store;
-    _projectPath = path;
-    _backgroundProcesses.attachProject(path);
+    final existing = sessionFor(path);
+    if (existing != null) {
+      activateProject(path);
+      await _appDb?.touchRecentProject(path);
+      _recentProjects = await _appDb?.recentProjects() ?? const [];
+      notifyListeners();
+      await _saveOpenProjects();
+      return;
+    }
 
-    // 새 프로젝트의 venv 경로로 Python 환경 재구성 + (필요 시) venv 백그라운드 생성.
-    _venvStatus = VenvStatus.idle;
-    _venvError = '';
-    _rebuildPythonEnv();
-
-    // 활성(메인) 대화 확보: 최근 메인 대화가 있으면 재사용, 없으면 새로 생성.
-    final mains = await store.listMainConversations();
-    _activeConversationId =
-        mains.isNotEmpty ? mains.first.id : await store.createConversation(title: '대화');
+    final session = await ProjectSession.open(
+      path,
+      browser: _browser,
+      firstConversationTitle: newConversationTitle,
+    );
+    session.rebuildPythonEnv(_pythonInterpreterPath, useVenv: _useVenv);
+    session.bridge = WebBridge(
+      this,
+      session,
+      onOpenSettings: (s) => onOpenSettings?.call(s),
+      onOpenActivity: (id) => onOpenActivity?.call(session, id),
+    );
+    await session.bridge!.start();
+    // 세션의 변화(프로세스 시작/종료, venv 상태)를 앱 알림으로 올린다 —
+    // 좌측 메뉴의 배지와 설정 창이 컨트롤러만 듣기 때문이다.
+    session.addListener(notifyListeners);
+    _sessions.add(session);
+    _activePath = path;
 
     await _appDb?.touchRecentProject(path);
     _recentProjects = await _appDb?.recentProjects() ?? const [];
     notifyListeners();
+    await _saveOpenProjects();
 
     // venv 생성은 시간이 걸릴 수 있어 프로젝트 열기를 막지 않고 백그라운드로.
-    unawaited(_ensureVenv());
+    unawaited(session.ensureVenv());
+  }
+
+  /// 지난 실행에서 열려 있던 프로젝트들을 다시 연다.
+  ///
+  /// **[init] 이 아니라 화면이 준비된 뒤에 부른다**([AppLayout]) — 새 대화 제목이
+  /// l10n 이고 컨트롤러에는 `BuildContext` 가 없다. 한 번만 실행된다.
+  ///
+  /// ⚠️ **[initialized] 전에 불리면 아무것도 하지 않고 그냥 돌아온다.**
+  /// `main.dart` 가 `init()` 을 기다리지 않으므로 첫 프레임이 초기화보다 먼저 올 수
+  /// 있다 — 그때 목록을 소비해 버리면 복원 기회를 영영 잃는다(실제로 그랬다).
+  /// 호출측은 초기화가 끝난 뒤 **다시 불러야** 한다.
+  ///
+  /// 사라진 폴더는 조용히 건너뛰고 저장 목록에서도 지운다. 하나가 실패해도
+  /// 나머지는 계속 연다 — 한 프로젝트의 DB 가 깨졌다고 전부 못 열면 안 된다.
+  Future<void> restoreOpenProjects() async {
+    if (!_initialized && _pendingRestore.isEmpty) return;
+    final paths = _pendingRestore;
+    final wanted = _pendingActive;
+    if (paths.isEmpty) return;
+    _pendingRestore = const [];
+    _pendingActive = '';
+    for (final path in paths) {
+      if (isOpen(path)) continue;
+      if (!Directory(path).existsSync()) continue;
+      try {
+        await openProject(path);
+      } catch (_) {
+        // 그 프로젝트만 건너뛴다.
+      }
+    }
+    if (wanted.isNotEmpty && isOpen(wanted)) {
+      _activePath = wanted;
+      notifyListeners();
+    }
+    await _saveOpenProjects();
+  }
+
+  /// 열린 목록과 활성 경로를 메인 DB 에 남긴다(열기/닫기/전환 때마다).
+  Future<void> _saveOpenProjects() async {
+    await _appDb?.setSetting(
+        _openProjectsKey, [for (final s in _sessions) s.path]);
+    await _appDb?.setSetting(_activeProjectKey, _activePath);
+  }
+
+  /// 열린 프로젝트로 화면을 옮긴다(아무것도 닫지 않는다).
+  void activateProject(String path) {
+    if (_activePath == path || !isOpen(path)) return;
+    _activePath = path;
+    notifyListeners();
+    unawaited(_saveOpenProjects());
+  }
+
+  /// 프로젝트를 닫는다. **돌고 있는 생성이 있으면 먼저 끊긴다.**
+  ///
+  /// 물어보는 것은 UI 의 몫이다([ProjectSession.isBusy] 로 판단). 여기까지 왔으면
+  /// 사용자가 이미 동의한 것으로 본다.
+  Future<void> closeProject(String path) async {
+    final i = _sessions.indexWhere((s) => s.path == path);
+    if (i < 0) return;
+    final session = _sessions.removeAt(i);
+    session.removeListener(notifyListeners);
+    if (_activePath == path) {
+      // 닫은 자리를 이어받는다 — 없으면 그 앞 프로젝트, 그것도 없으면 빈 화면.
+      final next = i < _sessions.length
+          ? _sessions[i]
+          : (_sessions.isEmpty ? null : _sessions.last);
+      _activePath = next?.path ?? '';
+    }
+    notifyListeners();
+    await _saveOpenProjects();
+    await session.close();
+    session.dispose();
   }
 
   @override
   void dispose() {
-    _backgroundProcesses.removeListener(notifyListeners);
-    _backgroundProcesses.dispose();
-    _conversation?.close();
-    _processManager?.dispose();
+    for (final s in _sessions) {
+      s.removeListener(notifyListeners);
+      unawaited(s.close());
+    }
+    _sessions.clear();
+    _browser.dispose();
     _appDb?.close();
     super.dispose();
   }

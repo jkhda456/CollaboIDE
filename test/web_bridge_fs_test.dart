@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collabo_ide/src/app/project_session.dart';
 import 'package:collabo_ide/src/app/workspace_controller.dart';
+import 'package:collabo_ide/src/browser/browser_controller.dart';
+import 'package:collabo_ide/src/data/sqlite_init.dart';
 import 'package:collabo_ide/src/llm/llm_config.dart';
 import 'package:collabo_ide/src/llm/llm_provider.dart';
 import 'package:collabo_ide/src/webview/platform_web_view.dart';
@@ -77,6 +80,7 @@ void main() {
   late Directory project;
   late _FakeWebView view;
   late WorkspaceController wc;
+  late ProjectSession session;
   late WebBridge bridge;
 
   /// 웹이 보내는 메시지 하나를 흘려 넣고 결과가 나올 때까지 큐를 돌린다.
@@ -95,29 +99,40 @@ void main() {
 
   bool errored() => lastOfType('fs.error') != null;
 
+  setUpAll(initSqliteFfi);
+
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('collabo_fs_');
     project = Directory(p.join(tmp.path, 'proj'));
     await project.create();
     view = _FakeWebView();
     wc = WorkspaceController();
+    // 브리지는 이제 **세션의 것**이다 — 프로젝트를 열어 세션을 만들고, 웹뷰는
+    // 거기에 붙인다(`setProject` 로 갈아타던 방식은 없어졌다).
+    session = await ProjectSession.open(
+      project.path,
+      browser: BrowserController(),
+      firstConversationTitle: 'test',
+    );
     bridge = WebBridge(
-      view,
       wc,
+      session,
       llmClient: _StubProvider(),
       viewerStager: (_) async => const [],
-    )..start();
+    );
+    session.bridge = bridge;
+    await bridge.start();
+    await bridge.attachView(view);
   });
 
   tearDown(() async {
-    await bridge.dispose();
+    await session.close();
     await view.dispose();
     if (await tmp.exists()) await tmp.delete(recursive: true);
   });
 
   group('새로 만들기', () {
     test('폴더 안에 파일을 만들고 fs.created 로 알린다', () async {
-      await bridge.setProject(project.path);
 
       await emit({
         'type': 'fs.create',
@@ -131,7 +146,6 @@ void main() {
     });
 
     test('폴더도 만든다', () async {
-      await bridge.setProject(project.path);
 
       await emit({
         'type': 'fs.create',
@@ -147,7 +161,6 @@ void main() {
     test('이미 있는 이름은 덮어쓰지 않는다', () async {
       final f = File(p.join(project.path, 'note.md'));
       await f.writeAsString('원본');
-      await bridge.setProject(project.path);
 
       await emit({
         'type': 'fs.create',
@@ -161,7 +174,6 @@ void main() {
     });
 
     test('이름 규칙(경로 구분자·예약어)을 어기면 만들지 않는다', () async {
-      await bridge.setProject(project.path);
 
       for (final name in ['a/b', '..', 'CON', 'end.', '']) {
         await emit({
@@ -177,7 +189,6 @@ void main() {
     });
 
     test('프로젝트 밖 폴더에는 만들지 않는다', () async {
-      await bridge.setProject(project.path);
 
       await emit({
         'type': 'fs.create',
@@ -190,7 +201,10 @@ void main() {
       expect(File(p.join(tmp.path, 'evil.txt')).existsSync(), isFalse);
     });
 
-    test('프로젝트가 열려 있지 않으면 거부한다', () async {
+    // 예전에는 "프로젝트가 열려 있지 않으면 거부한다" 를 여기서 봤다. 브리지가
+    // 세션의 것이 된 뒤로는 **프로젝트 없는 브리지가 존재할 수 없어서** 그 경우를
+    // 만들 수 없다. `_resolveUserPath` 의 null 가드는 fail-safe 로 남겨 두었다.
+    test('브리지는 자기 프로젝트를 들고 있다', () async {
       await emit({
         'type': 'fs.create',
         'parent': project.path,
@@ -198,8 +212,8 @@ void main() {
         'dir': false,
       });
 
-      expect(errored(), isTrue);
-      expect(project.listSync(), isEmpty);
+      expect(errored(), isFalse);
+      expect(File(p.join(project.path, 'note.md')).existsSync(), isTrue);
     });
   });
 
@@ -207,7 +221,6 @@ void main() {
     test('같은 폴더 안에서 이름을 바꾸고 fs.renamed 로 알린다', () async {
       final f = File(p.join(project.path, 'old.md'));
       await f.writeAsString('내용');
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.rename', 'path': f.path, 'name': 'new.md'});
 
@@ -221,7 +234,6 @@ void main() {
       final b = File(p.join(project.path, 'b.md'));
       await a.writeAsString('A');
       await b.writeAsString('B');
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.rename', 'path': a.path, 'name': 'b.md'});
 
@@ -231,7 +243,6 @@ void main() {
     });
 
     test('프로젝트 루트 자신은 바꿀 수 없다', () async {
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.rename', 'path': project.path, 'name': 'other'});
 
@@ -244,7 +255,6 @@ void main() {
     test('파일을 지우고 fs.deleted 로 알린다', () async {
       final f = File(p.join(project.path, 'note.md'));
       await f.writeAsString('내용');
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.delete', 'path': f.path});
 
@@ -256,7 +266,6 @@ void main() {
       final dir = Directory(p.join(project.path, 'src'));
       await dir.create();
       await File(p.join(dir.path, 'main.dart')).writeAsString('void main() {}');
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.delete', 'path': dir.path});
 
@@ -264,7 +273,6 @@ void main() {
     });
 
     test('프로젝트 루트는 지울 수 없다', () async {
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.delete', 'path': project.path});
 
@@ -275,7 +283,6 @@ void main() {
     test('프로젝트 밖은 지울 수 없다', () async {
       final outside = File(p.join(tmp.path, 'outside.md'));
       await outside.writeAsString('원본');
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.delete', 'path': outside.path});
 
@@ -286,7 +293,6 @@ void main() {
     test('형제 prefix 경로(proj-evil)도 프로젝트 밖으로 본다', () async {
       final sibling = Directory(p.join(tmp.path, 'proj-evil'));
       await sibling.create();
-      await bridge.setProject(project.path);
 
       await emit({'type': 'fs.delete', 'path': sibling.path});
 
@@ -302,7 +308,6 @@ void main() {
       collabo = Directory(p.join(project.path, '.collabo'));
       await collabo.create();
       await File(p.join(collabo.path, 'conversation.db')).writeAsString('db');
-      await bridge.setProject(project.path);
     });
 
     test('폴더 자체를 지울 수 없다', () async {

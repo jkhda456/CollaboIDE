@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../app/project_session.dart' show VenvStatus;
 import '../app/workspace_controller.dart';
 import '../llm/llm_config.dart';
 import '../llm/llm_preset.dart';
@@ -44,8 +45,9 @@ int settingsTabIndexFor(String section) => switch (section) {
       'prompt' => 1,
       'tools' => 2,
       'viewers' => 3,
-      'appearance' => 4,
-      'about' => 5,
+      'web' => 4,
+      'appearance' => 5,
+      'about' => 6,
       _ => 0,
     };
 
@@ -194,11 +196,11 @@ class _SettingsDialog extends StatelessWidget {
 
   final WorkspaceController workspace;
 
-  /// 처음 보일 탭 인덱스(0=모델 … 5=정보). [_tabCount] 와 [settingsTabIndexFor] 참고.
+  /// 처음 보일 탭 인덱스(0=모델 … 6=정보). [_tabCount] 와 [settingsTabIndexFor] 참고.
   final int initialTab;
 
   /// 탭 개수. TabBar/TabBarView 항목 수와 반드시 같아야 한다.
-  static const int _tabCount = 6;
+  static const int _tabCount = 7;
 
   @override
   Widget build(BuildContext context) {
@@ -230,6 +232,7 @@ class _SettingsDialog extends StatelessWidget {
                   Tab(text: l.tabPrompt),
                   Tab(text: l.tabTools),
                   Tab(text: l.tabViewers),
+                  Tab(text: l.tabWeb),
                   Tab(text: l.tabAppearance),
                   Tab(text: l.tabAbout),
                 ],
@@ -241,6 +244,7 @@ class _SettingsDialog extends StatelessWidget {
                     _PromptTab(workspace: workspace),
                     _ToolsTab(workspace: workspace),
                     _ViewersTab(workspace: workspace),
+                    _WebTab(workspace: workspace),
                     _AppearanceTab(workspace: workspace),
                     const _AboutTab(),
                   ],
@@ -1073,6 +1077,124 @@ Future<void> _showTextDialog(BuildContext context, String title, String body) {
       ],
     ),
   );
+}
+
+/// 웹 검색 탭 — 검색엔진과 브라우저 User-Agent.
+///
+/// 처음에는 도구 탭 안에 끼워 넣었는데 도구 목록을 밀어내며 자리를 너무 잡았다
+/// (2026-09-13). 웹 검색이 좌측 메뉴의 독립 화면이 된 뒤로는 설정도 자기 탭을
+/// 갖는 편이 맞다.
+///
+/// **엔진 목록을 여기서 고정하지 않는다.** 드롭다운에는 기본 둘만 올리고, 사용자가
+/// `web_engines/` 에 넣은 엔진 이름이 저장돼 있으면 그것도 항목으로 살려 둔다.
+/// 유효성 판정은 파이썬이 한다(모르는 이름이면 기본값으로 되돌린다).
+class _WebTab extends StatelessWidget {
+  const _WebTab({required this.workspace});
+
+  final WorkspaceController workspace;
+
+  /// 드롭다운에 올리는 **기본 제공** 엔진. `collabo_web.py` 의 ENGINES 와 같은
+  /// 이름이어야 한다(노트 §13 "두 곳을 같이 고쳐야 하는 지점" 에 등록).
+  static const List<String> _builtIn = ['google', 'duckduckgo'];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l = AppLocalizations.of(context);
+    return ListenableBuilder(
+      listenable: workspace,
+      builder: (context, _) {
+        final current = workspace.searchEngine;
+        final items = [
+          ..._builtIn,
+          if (!_builtIn.contains(current)) current,
+        ];
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          children: [
+            Text(l.searchEngine, style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: 240,
+              child: DropdownButtonFormField<String>(
+                initialValue: current,
+                isDense: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                ),
+                items: [
+                  for (final e in items)
+                    DropdownMenuItem(value: e, child: Text(e)),
+                ],
+                onChanged: (v) {
+                  if (v != null) workspace.setSearchEngine(v);
+                },
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(l.searchEngineDesc, style: theme.textTheme.bodySmall),
+            const SizedBox(height: 24),
+            Text(l.browserUserAgent, style: theme.textTheme.titleSmall),
+            const SizedBox(height: 6),
+            _UserAgentField(workspace: workspace),
+            const SizedBox(height: 6),
+            Text(l.browserUserAgentDesc, style: theme.textTheme.bodySmall),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// User-Agent 입력칸. 포커스를 잃을 때 저장한다(글자마다 DB 를 쓰지 않는다).
+class _UserAgentField extends StatefulWidget {
+  const _UserAgentField({required this.workspace});
+
+  final WorkspaceController workspace;
+
+  @override
+  State<_UserAgentField> createState() => _UserAgentFieldState();
+}
+
+class _UserAgentFieldState extends State<_UserAgentField> {
+  late final TextEditingController _ctrl =
+      TextEditingController(text: widget.workspace.browserUserAgent);
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) widget.workspace.setBrowserUserAgent(_ctrl.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return TextField(
+      controller: _ctrl,
+      focusNode: _focus,
+      style: Theme.of(context).textTheme.bodySmall,
+      onSubmitted: widget.workspace.setBrowserUserAgent,
+      decoration: InputDecoration(
+        hintText: l.browserUserAgentHint,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      ),
+    );
+  }
 }
 
 /// 도구 탭: function calling 으로 확장되는 도구 목록.

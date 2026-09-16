@@ -128,6 +128,12 @@ abstract class AppLocalizations {
   /// **'Viewers'**
   String get tabViewers;
 
+  /// No description provided for @tabWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'Web'**
+  String get tabWeb;
+
   /// No description provided for @tabPrompt.
   ///
   /// In en, this message translates to:
@@ -356,6 +362,132 @@ abstract class AppLocalizations {
   /// **'Collapse'**
   String get navCollapse;
 
+  /// No description provided for @navWebSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Web Search'**
+  String get navWebSearch;
+
+  /// No description provided for @conversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation'**
+  String get conversation;
+
+  /// No description provided for @closeProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Close project'**
+  String get closeProject;
+
+  /// No description provided for @recentProjectsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent projects'**
+  String get recentProjectsTitle;
+
+  /// No description provided for @projectBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Working'**
+  String get projectBusy;
+
+  /// No description provided for @closeBusyProjectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This project is still working'**
+  String get closeBusyProjectTitle;
+
+  /// No description provided for @closeBusyProjectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} has a generation in progress. Closing it stops that work. Other open projects are not affected.'**
+  String closeBusyProjectBody(String name);
+
+  /// No description provided for @browserBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get browserBack;
+
+  /// No description provided for @browserForward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get browserForward;
+
+  /// No description provided for @browserReload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload'**
+  String get browserReload;
+
+  /// No description provided for @browserStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop loading'**
+  String get browserStop;
+
+  /// No description provided for @browserNewTab.
+  ///
+  /// In en, this message translates to:
+  /// **'New tab'**
+  String get browserNewTab;
+
+  /// No description provided for @browserCloseTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Close tab'**
+  String get browserCloseTab;
+
+  /// No description provided for @browserAddressHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search, or enter an address'**
+  String get browserAddressHint;
+
+  /// No description provided for @browserEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No browser tab is open'**
+  String get browserEmpty;
+
+  /// No description provided for @browserUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'The web browser is not available on this platform yet.'**
+  String get browserUnsupported;
+
+  /// No description provided for @searchEngine.
+  ///
+  /// In en, this message translates to:
+  /// **'Search engine'**
+  String get searchEngine;
+
+  /// No description provided for @searchEngineDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Used by the agent\'s web_search tool and by the address bar above the browser. Engines are defined in the Python module collabo_web.py, so more can be added there.'**
+  String get searchEngineDesc;
+
+  /// No description provided for @browserUserAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser User-Agent'**
+  String get browserUserAgent;
+
+  /// No description provided for @browserUserAgentDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to use the platform default, which is what an ordinary browser sends and works best with sites that block automation. Applies to tabs opened from now on.'**
+  String get browserUserAgentDesc;
+
+  /// No description provided for @browserUserAgentHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform default'**
+  String get browserUserAgentHint;
+
   /// No description provided for @activityTitle.
   ///
   /// In en, this message translates to:
@@ -511,6 +643,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'stderr'**
   String get procStderr;
+
+  /// No description provided for @procTerminal.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal'**
+  String get procTerminal;
+
+  /// No description provided for @procTerminalInputHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Type into the terminal…'**
+  String get procTerminalInputHint;
+
+  /// No description provided for @procNoPty.
+  ///
+  /// In en, this message translates to:
+  /// **'No pseudo-terminal is available, so interactive programs will not work in this session.'**
+  String get procNoPty;
 
   /// No description provided for @newProjectTitle.
   ///

@@ -138,7 +138,15 @@ class AppDatabase {
     await db.delete('recent_projects', where: 'path = ?', whereArgs: [path]);
   }
 
-  Future<void> close() => db.close();
+  /// DB 를 닫는다. **두 번 불러도 안전하다** — 컨트롤러의 dispose 와 호출측이
+  /// 같은 인스턴스를 닫는 경로가 있어(테스트가 대표적이다) 멱등이어야 한다.
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await db.close();
+  }
+
+  bool _closed = false;
 }
 
 /// 최근 프로젝트 항목.
