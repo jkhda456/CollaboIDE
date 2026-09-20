@@ -454,7 +454,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Empty = measure automatically (assumes 100 tok/s until then)';
 
   @override
-  String tokPerSecMeasured(String tps) => 'Measured: $tps tok/s';
+  String tokPerSecMeasured(String tps) {
+    return 'Measured: $tps tok/s';
+  }
 
   @override
   String get testConnection => 'Test connection';

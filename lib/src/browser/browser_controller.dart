@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import 'browser_tab.dart';
 import 'platform_browser_view.dart';
@@ -294,16 +297,24 @@ var s = el ? el.outerHTML : '';
 return s.length > $n ? s.slice(0, $n) : s;
 ''';
       case 'links':
+        // `download` 속성과 파일처럼 보이는 확장자를 같이 준다 — 에이전트가
+        // 어느 링크가 받을 것인지 고를 때 쓴다(`web_download(link:)`).
+        // 판정은 여기서 하지 않는다. **재료만** 주고 고르는 것은 파이썬의 일이다.
         return '''
 var out = [], seen = {};
 var as = document.querySelectorAll('a[href]');
 for (var i = 0; i < as.length && out.length < $maxLinks; i++) {
-  var h = as[i].href || '';
+  var a = as[i];
+  var h = a.href || '';
   if (h.indexOf('http') !== 0 || seen[h]) continue;
   seen[h] = 1;
-  var t = (as[i].innerText || as[i].textContent || '')
-            .replace(/\\s+/g, ' ').trim();
-  out.push({text: t.slice(0, 300), url: h});
+  var t = (a.innerText || a.textContent || '').replace(/\\s+/g, ' ').trim();
+  var rec = {text: t.slice(0, 300), url: h};
+  var d = a.getAttribute('download');
+  if (d !== null) rec.download = d || true;
+  var m = /\\/([^\\/?#]+)\\.([A-Za-z0-9]{1,8})(?:[?#]|\$)/.exec(h);
+  if (m) { rec.file = m[1] + '.' + m[2]; rec.ext = m[2].toLowerCase(); }
+  out.push(rec);
 }
 return out;
 ''';
@@ -335,6 +346,279 @@ return s.length > $n ? s.slice(0, $n) : s;
     } on BrowserEvalException catch (e) {
       throw BrowserException(e.message);
     }
+  }
+
+  // ---------------------------------------------------------------- 내려받기
+
+  /// 한 번에 웹뷰에서 꺼내 오는 조각(원시 바이트 기준).
+  ///
+  /// 통째로 가져오지 않는 이유: 바이트가 **base64 문자열**로 메시지 채널을 탄다
+  /// (§evalJs — 반환값 대신 채널을 쓰는 이유는 §12 에 있다). 64MB 파일이면 87MB
+  /// 짜리 문자열 하나가 되는데, 그걸 한 번에 넘기면 백엔드가 버티든 못 버티든
+  /// 메모리가 세 배로 뛴다. 512KB 씩 끊으면 왕복이 늘 뿐 비용이 평평해진다.
+  static const int downloadChunkBytes = 512 * 1024;
+
+  /// 한 번의 다운로드 상한(기본). 호출측이 더 낮출 수 있다.
+  static const int maxDownloadBytes = 128 * 1024 * 1024;
+
+  /// 페이지가 다 받을 때까지 기다리는 기본 상한. 페이지 로드보다 길게 잡는다 —
+  /// 큰 파일은 원래 오래 걸린다.
+  static const Duration downloadTimeout = Duration(minutes: 3);
+
+  var _dlSeq = 0;
+
+  /// **탭의 세션으로** [url] 을 받아 파일로 쓴다.
+  ///
+  /// ★ 이것이 "그냥 HTTP 요청" 과 다른 점: 받는 주체가 우리가 아니라 **그 페이지**다.
+  /// 페이지 안에서 `fetch(credentials:'include')` 를 돌리므로 로그인 쿠키
+  /// (HttpOnly 포함 — 그래서 `document.cookie` 를 긁는 방식으로는 안 된다),
+  /// Referer, 동의 상태, 서비스 워커가 전부 사용자가 보고 있는 그대로다.
+  /// 로그인해야 받을 수 있는 파일이 이 방법의 존재 이유다.
+  ///
+  /// 한계도 그 구조에서 나온다 — **교차 출처는 CORS 가 허락해야 읽힌다.**
+  /// 막히면 그 URL 의 출처에서 다시 받아야 하는데, 그 판단은 파이썬이 한다
+  /// (§12 층 가르기 — 여기는 "이 탭에서 받아라" 만 안다).
+  ///
+  /// [destDir] 은 **호출측이 이미 검증한** 폴더다(통로가 프로젝트 안인지 본다).
+  Future<Map<String, Object?>> downloadToFile(
+    String id,
+    String url, {
+    required String destDir,
+    String? fileName,
+    int? maxBytes,
+    Duration? timeout,
+  }) async {
+    final view = _views[id];
+    final tab = _byId(id);
+    if (view == null || tab == null) throw BrowserException('no such tab: $id');
+    if (!isAllowedBrowserUrl(url)) {
+      throw BrowserException('only http/https URLs can be downloaded: $url');
+    }
+    if (!isAllowedBrowserUrl(tab.url)) {
+      throw const BrowserException(
+          'the tab has no page loaded — open one first so the download can use '
+          'its session');
+    }
+    final limit = (maxBytes == null || maxBytes <= 0)
+        ? maxDownloadBytes
+        : (maxBytes > maxDownloadBytes ? maxDownloadBytes : maxBytes);
+    final key = 'd${++_dlSeq}';
+    final wait = timeout ?? downloadTimeout;
+
+    Object? head;
+    try {
+      head = await view.evalJs(_downloadStartScript(url, key), timeout: wait);
+    } on BrowserEvalException catch (e) {
+      throw BrowserException('download failed: ${e.message}');
+    }
+    final info =
+        head is Map ? head.cast<String, Object?>() : const <String, Object?>{};
+    if (info['ok'] != true) {
+      // 페이지가 준 이유를 그대로 올린다 — CORS 인지 404 인지 파이썬이 보고
+      // 다음 수를 정한다(출처를 바꿔 다시 받을지).
+      await _downloadCleanup(view, key);
+      throw BrowserException(
+          'the page could not fetch it: ${info['error'] ?? 'unknown error'}');
+    }
+    final size = (info['size'] as num?)?.toInt() ?? 0;
+    final status = (info['status'] as num?)?.toInt() ?? 0;
+    if (status >= 400) {
+      await _downloadCleanup(view, key);
+      throw BrowserException('the server answered $status for $url');
+    }
+    if (size > limit) {
+      await _downloadCleanup(view, key);
+      throw BrowserException(
+          'the file is too large: $size bytes (limit $limit). Raise max_bytes '
+          'if you really want it.');
+    }
+
+    // 리다이렉트를 따라갔으면 **최종 URL** 이 이름의 근거로 더 정확하다.
+    // 다만 백엔드가 못 채워 줄 수도 있어, 비어 있으면 요청한 URL 로 돌아간다.
+    final landed = (info['url'] as String?) ?? '';
+    final effectiveUrl = landed.isNotEmpty ? landed : url;
+    final name = _downloadFileName(
+      fileName,
+      (info['disposition'] as String?) ?? '',
+      effectiveUrl,
+    );
+    await Directory(destDir).create(recursive: true);
+    final dest = await _uniqueFile(destDir, name);
+    final sink = dest.openWrite();
+    var done = false;
+    try {
+      var written = 0;
+      while (written < size) {
+        final n = (size - written) < downloadChunkBytes
+            ? (size - written)
+            : downloadChunkBytes;
+        final Object? chunk;
+        try {
+          chunk = await view.evalJs(_downloadChunkScript(key, written, n),
+              timeout: wait);
+        } on BrowserEvalException catch (e) {
+          throw BrowserException('download was interrupted: ${e.message}');
+        }
+        final b64 = chunk is String ? chunk : '';
+        if (b64.isEmpty) {
+          // 조각이 비었다 = 페이지가 옮겨 갔거나 버퍼가 사라졌다.
+          throw const BrowserException(
+              'the page navigated away while downloading — open the file URL '
+              'in its own tab and try again');
+        }
+        final bytes = base64.decode(b64);
+        sink.add(bytes);
+        written += bytes.length;
+      }
+      await sink.flush();
+      done = true;
+    } finally {
+      await sink.close();
+      await _downloadCleanup(view, key);
+      if (!done) {
+        // 반쯤 쓰인 파일을 남기지 않는다 — 다음 도구가 그걸 온전한 파일로 읽는다.
+        try {
+          if (await dest.exists()) await dest.delete();
+        } catch (_) {}
+      }
+    }
+
+    return {
+      'tab': id,
+      'url': effectiveUrl,
+      'path': dest.path,
+      'name': p.basename(dest.path),
+      'bytes': size,
+      'mime': ((info['type'] as String?) ?? '').split(';').first.trim(),
+      'status': status,
+      'from': tab.url,
+    };
+  }
+
+  /// 페이지 안에서 받아 `window.__collaboDl[key]` 에 담아 둔다(아직 안 넘긴다).
+  static String _downloadStartScript(String url, String key) {
+    final u = jsonEncode(url);
+    final k = jsonEncode(key);
+    return '''
+window.__collaboDl = window.__collaboDl || {};
+return fetch($u, {credentials: 'include', redirect: 'follow'})
+  .then(function(r){
+    function h(n){ try { return r.headers.get(n) || ''; } catch (e) { return ''; } }
+    var cd = h('content-disposition'), ct = h('content-type');
+    return r.arrayBuffer().then(function(b){
+      window.__collaboDl[$k] = new Uint8Array(b);
+      return {ok: true, status: r.status, size: b.byteLength,
+              type: ct, disposition: cd, url: r.url};
+    });
+  })
+  .catch(function(e){
+    return {ok: false, error: String((e && e.message) || e)};
+  });
+''';
+  }
+
+  /// 담아 둔 바이트에서 한 조각을 base64 로 꺼낸다.
+  static String _downloadChunkScript(String key, int offset, int count) {
+    final k = jsonEncode(key);
+    // ⚠️ `String.fromCharCode.apply` 에 큰 배열을 한 번에 주면 인자 한도를 넘겨
+    // 스택이 터진다. 8KB 씩 이어 붙인다.
+    return '''
+var a = (window.__collaboDl || {})[$k];
+if (!a) return '';
+var s = $offset, e = Math.min(s + $count, a.length), bin = '';
+for (var i = s; i < e; i += 8192) {
+  bin += String.fromCharCode.apply(null, a.subarray(i, Math.min(i + 8192, e)));
+}
+return btoa(bin);
+''';
+  }
+
+  /// 페이지에 남은 버퍼를 지운다. 실패해도 조용히 넘어간다 — 탭을 닫거나
+  /// 페이지를 옮기면 어차피 사라진다.
+  static Future<void> _downloadCleanup(
+      PlatformBrowserView view, String key) async {
+    try {
+      await view.evalJs(
+        'try { delete (window.__collaboDl || {})[${jsonEncode(key)}]; } '
+        'catch (e) {} return true;',
+        timeout: const Duration(seconds: 5),
+      );
+    } catch (_) {}
+  }
+
+  /// 저장할 이름을 정한다: 지정한 이름 → `Content-Disposition` → URL 의 끝 → 기본값.
+  ///
+  /// 어느 쪽에서 왔든 **경로가 아니라 이름 하나로** 만든다. 서버가 주는 문자열을
+  /// 그대로 경로에 붙이면 `../../` 한 줄로 프로젝트 밖에 쓰게 된다.
+  static String _downloadFileName(
+      String? given, String disposition, String url) {
+    final explicit = (given ?? '').trim();
+    if (explicit.isNotEmpty) return sanitizeDownloadName(explicit);
+
+    // RFC 5987 의 `filename*=UTF-8''...` 이 있으면 그쪽이 우선이다(비ASCII 이름).
+    final star = RegExp(r"filename\*\s*=\s*([^']*)'[^']*'([^;]+)",
+            caseSensitive: false)
+        .firstMatch(disposition);
+    if (star != null) {
+      try {
+        final decoded = Uri.decodeComponent(star.group(2)!.trim());
+        if (decoded.isNotEmpty) return sanitizeDownloadName(decoded);
+      } catch (_) {}
+    }
+    final plain =
+        RegExp(r'filename\s*=\s*"?([^";]+)"?', caseSensitive: false)
+            .firstMatch(disposition);
+    if (plain != null) {
+      final v = plain.group(1)!.trim();
+      if (v.isNotEmpty) return sanitizeDownloadName(v);
+    }
+
+    final uri = Uri.tryParse(url);
+    final segs = uri?.pathSegments.where((s) => s.isNotEmpty).toList() ?? const [];
+    if (segs.isNotEmpty) {
+      final last = sanitizeDownloadName(segs.last);
+      if (last != _fallbackDownloadName) return last;
+    }
+    return _fallbackDownloadName;
+  }
+
+  static const String _fallbackDownloadName = 'download.bin';
+
+  /// 서버·페이지가 준 이름을 **파일 이름 하나**로 깎는다.
+  ///
+  /// 경로 구분자와 3-OS 공통 금지 문자를 지우고, 앞의 점을 떼고(`.`/`..` 방지),
+  /// 길이를 자른다. 남는 게 없으면 기본 이름.
+  static String sanitizeDownloadName(String raw) {
+    var s = raw.trim().replaceAll('\\', '/');
+    // 경로가 섞여 와도 마지막 조각만 쓴다.
+    if (s.contains('/')) s = s.split('/').last;
+    s = s.replaceAll(RegExp(r'[\x00-\x1f<>:"|?*]'), '').trim();
+    while (s.startsWith('.')) {
+      s = s.substring(1);
+    }
+    s = s.trim();
+    if (s.isEmpty) return _fallbackDownloadName;
+    if (s.length > 180) {
+      final dot = s.lastIndexOf('.');
+      final ext = (dot > 0 && s.length - dot <= 12) ? s.substring(dot) : '';
+      s = s.substring(0, 180 - ext.length) + ext;
+    }
+    return s;
+  }
+
+  /// 같은 이름이 있으면 `name_1.ext`, `name_2.ext` … 로 비켜 간다.
+  /// **덮어쓰지 않는다** — 받은 파일이 조용히 사라지는 쪽이 훨씬 나쁘다.
+  static Future<File> _uniqueFile(String dir, String name) async {
+    var candidate = File(p.join(dir, name));
+    if (!await candidate.exists()) return candidate;
+    final dot = name.lastIndexOf('.');
+    final stem = dot > 0 ? name.substring(0, dot) : name;
+    final ext = dot > 0 ? name.substring(dot) : '';
+    for (var i = 1; i < 1000; i++) {
+      candidate = File(p.join(dir, '${stem}_$i$ext'));
+      if (!await candidate.exists()) return candidate;
+    }
+    return File(p.join(dir, '${stem}_${DateTime.now().millisecondsSinceEpoch}$ext'));
   }
 
   // --------------------------------------------------------------- 상태 갱신

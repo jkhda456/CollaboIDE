@@ -199,9 +199,76 @@ class BrowserChannel {
         await controller.waitForLoad(id, timeout: _timeoutArg(args));
         return (_tabById(id) ?? const BrowserTab(id: '')).toJson();
 
+      case 'download':
+        final id = _requireTab(args);
+        final url = (args['url'] as String?) ?? '';
+        if (url.isEmpty) throw const BrowserException('download needs a url');
+        return controller.downloadToFile(
+          id,
+          url,
+          destDir: await _requireProjectDir((args['dir'] as String?) ?? ''),
+          fileName: (args['name'] as String?),
+          maxBytes: (args['max_bytes'] as num?)?.toInt(),
+          timeout: _timeoutArg(args),
+        );
+
       default:
         throw BrowserException('unknown browser op: $op');
     }
+  }
+
+  /// 이 통로가 속한 프로젝트 루트. `<project>/.collabo/browser` 에서 두 칸 위다.
+  String? get projectRoot {
+    final root = _root;
+    if (root == null) return null;
+    return p.dirname(p.dirname(root));
+  }
+
+  /// 내려받은 파일을 쓸 폴더가 **이 프로젝트 안인지** 확인하고 실제 경로를 준다.
+  ///
+  /// ⚠️ 파이썬도 이미 `_resolve()` 로 워크스페이스 안으로 가두지만, 여기서 한 번
+  /// 더 본다. 이 동사는 네이티브가 **디스크에 쓰는** 유일한 브라우저 동사라,
+  /// 경로를 주는 쪽(모델이 인자를 만든다)만 믿을 수는 없다 — 파일 도구가 지키는
+  /// 경계를 브라우저로 우회하는 길이 되면 안 된다(§12 가드, §1 원칙 3).
+  /// 심링크는 풀어서 비교한다.
+  Future<String> _requireProjectDir(String dir) async {
+    final root = projectRoot;
+    if (root == null) {
+      throw const BrowserException('no project is open, so there is nowhere to save');
+    }
+    if (dir.isEmpty) throw const BrowserException('download needs a dir');
+    final String realRoot;
+    try {
+      realRoot = await Directory(root).resolveSymbolicLinks();
+    } catch (e) {
+      throw BrowserException('cannot use that folder: $e');
+    }
+    // ⚠️ **만들기 전에 판정한다.** 첫 다운로드 때는 대상 폴더가 아직 없어서
+    // `resolveSymbolicLinks()` 를 바로 못 쓰는데, 그렇다고 먼저 만들어 놓고
+    // 검사하면 거절당한 경로에도 폴더가 생긴다. 그래서 **있는 조상까지만** 풀고
+    // 나머지는 이름 그대로 이어 붙여 비교한다.
+    var probe = p.normalize(p.absolute(dir));
+    final rest = <String>[];
+    while (!await Directory(probe).exists()) {
+      final parent = p.dirname(probe);
+      if (parent == probe) break; // 루트까지 올라갔다
+      rest.insert(0, p.basename(probe));
+      probe = parent;
+    }
+    String resolved;
+    try {
+      resolved = await Directory(probe).resolveSymbolicLinks();
+    } catch (_) {
+      resolved = probe;
+    }
+    final realTarget = rest.isEmpty
+        ? resolved
+        : p.normalize(p.join(resolved, p.joinAll(rest)));
+    if (!p.equals(realRoot, realTarget) && !p.isWithin(realRoot, realTarget)) {
+      throw BrowserException('outside the project: $dir');
+    }
+    await Directory(realTarget).create(recursive: true);
+    return realTarget;
   }
 
   BrowserTab? _tabById(String id) {
@@ -280,6 +347,9 @@ class BrowserChannel {
       'ms': took.inMilliseconds,
       if (result is Map && result['content'] is String)
         'chars': (result['content'] as String).length,
+      // 내려받기는 **무엇이 디스크에 생겼는지**가 기록의 핵심이다.
+      if (result is Map && result['path'] is String) 'path': result['path'],
+      if (result is Map && result['bytes'] is int) 'bytes': result['bytes'],
     });
     try {
       await File(p.join(root, 'log', '$day.jsonl'))
