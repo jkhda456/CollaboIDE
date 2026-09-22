@@ -110,6 +110,10 @@ def main(argv):
         "started_at": started,
         "status": "running",
     }
+    # collaboCore 게스트에서 돌면 pid 는 **게스트 pid** 다 — 앱이 호스트에서 kill 하면
+    # 엉뚱한 프로세스가 죽는다. 앱은 이 표시를 보고 샌드박스 안에서 끝낸다.
+    if os.environ.get("COLLABO_SANDBOX"):
+        meta["sandbox"] = True
     _write_meta(proc_dir, meta)
 
     stop = threading.Event()

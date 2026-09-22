@@ -190,6 +190,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get browserCloseTab => 'Close tab';
 
   @override
+  String get browserCloseAll => 'Close all tabs';
+
+  @override
+  String get browserCloseAgentTabs => 'Close the agent\'s tabs';
+
+  @override
   String get browserAddressHint => 'Search, or enter an address';
 
   @override
@@ -610,6 +616,165 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get viewerReadFailed => 'Could not read the file.';
+
+  @override
+  String get toolRuntime => 'Tool runtime';
+
+  @override
+  String get toolRuntimeSandbox => 'Sandbox';
+
+  @override
+  String get toolRuntimeSystem => 'System Python';
+
+  @override
+  String get toolRuntimeSandboxDesc =>
+      'Tools run in an isolated Linux (WebAssembly) machine that sees only the project folder. Programs on this computer (git, node…) are not available there.';
+
+  @override
+  String get toolRuntimeSystemDesc =>
+      'Tools run directly on this computer with the Python selected below, and can use every program and file it can reach.';
+
+  @override
+  String get sandboxUnavailable =>
+      'This app has no sandbox runtime for this platform. Tools cannot run until you switch to System Python.';
+
+  @override
+  String get sandboxIdle => 'Starts when a tool first runs';
+
+  @override
+  String get sandboxStarting => 'Starting the sandbox…';
+
+  @override
+  String get sandboxRunning => 'Sandbox running';
+
+  @override
+  String sandboxFailed(String error) {
+    return 'Sandbox error: $error';
+  }
+
+  @override
+  String get navSandboxes => 'Sandboxes';
+
+  @override
+  String navSandboxesRunning(int count) {
+    return '$count running';
+  }
+
+  @override
+  String get sandboxNoProjects =>
+      'No project is open. Each open project gets its own sandbox here.';
+
+  @override
+  String get sandboxSystemMode =>
+      'Tools are set to run with System Python. You can switch to the sandbox in Settings → Tools.';
+
+  @override
+  String get sandboxStart => 'Start';
+
+  @override
+  String get sandboxRestart => 'Restart';
+
+  @override
+  String get sandboxStop => 'Stop';
+
+  @override
+  String get sandboxStopTitle => 'Stop the sandbox';
+
+  @override
+  String get sandboxStopBody =>
+      'Stopping the sandbox ends every command and terminal running in it. Files in the project folder stay as they are.';
+
+  @override
+  String get sandboxConsole => 'Console';
+
+  @override
+  String get sandboxNetwork => 'Network';
+
+  @override
+  String get sandboxConsoleHint => 'Command for the root shell';
+
+  @override
+  String get sandboxNotRunning =>
+      'The sandbox is off. Start it to use its root shell.';
+
+  @override
+  String get sandboxNetworkEmpty => 'No network access yet.';
+
+  @override
+  String get sandboxMountRo => 'read-only';
+
+  @override
+  String sandboxUptime(String since) {
+    return 'Running since $since';
+  }
+
+  @override
+  String get newFile => 'New file';
+
+  @override
+  String get newFolder => 'New folder';
+
+  @override
+  String get rename => 'Rename';
+
+  @override
+  String get delete => 'Delete';
+
+  @override
+  String get deleteWarn =>
+      'This cannot be undone (it does not go to the trash).';
+
+  @override
+  String get deleteFolderWarn =>
+      'The folder and everything in it will be removed. This cannot be undone.';
+
+  @override
+  String get copyPath => 'Copy full path';
+
+  @override
+  String get openWith => 'Open with default app';
+
+  @override
+  String get openInExplorer => 'Open in file explorer';
+
+  @override
+  String get openPlaybook => 'Open the plan file (.collabo/PLAYBOOK.md)';
+
+  @override
+  String get fileSearchPlaceholder => 'Search file names…';
+
+  @override
+  String get fileSearchTitle => 'Search file names';
+
+  @override
+  String get contentSearchTitle => 'Search file content';
+
+  @override
+  String get contentSearchPlaceholder => 'Search file content…';
+
+  @override
+  String get fileNone => 'No file selected';
+
+  @override
+  String get copySelection => 'Copy selection';
+
+  @override
+  String get fullscreenTitle => 'Fullscreen';
+
+  @override
+  String get fullscreenExitTitle => 'Exit fullscreen';
+
+  @override
+  String get folderEmpty => '(empty folder)';
+
+  @override
+  String get noResults => 'No results';
+
+  @override
+  String get treeLoading => 'Loading…';
+
+  @override
+  String get viewerModeTitle => 'View as';
 
   @override
   String get pythonEnv => 'Python environment';

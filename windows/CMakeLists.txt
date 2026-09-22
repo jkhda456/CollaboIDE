@@ -124,3 +124,21 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# collaboCore: 이 아키텍처의 샌드박스 런타임을 실행 파일 옆
+# <exe dir>\collabo_core_runtime\collabo-core-win-<arch>\ 에 둔다(CollaboRuntime.locate() 가 찾는 자리).
+# 런타임은 리포 안 collabo_core_runtime/ 에 복사해 둔 것(CollaboCore/dist/runtime 에서).
+# 없으면 경고만 한다 — 샌드박스 없이도 앱은 시스템 파이썬으로 돈다.
+set(COLLABO_CORE_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../collabo_core_runtime" CACHE PATH "collaboCore runtime folder")
+if(FLUTTER_TARGET_PLATFORM STREQUAL "windows-arm64")
+  set(COLLABO_CORE_PLATFORM "win-arm64")
+else()
+  set(COLLABO_CORE_PLATFORM "win-x64")
+endif()
+if(EXISTS "${COLLABO_CORE_RUNTIME_DIR}/collabo-core-${COLLABO_CORE_PLATFORM}/manifest.json")
+  install(DIRECTORY "${COLLABO_CORE_RUNTIME_DIR}/collabo-core-${COLLABO_CORE_PLATFORM}"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/collabo_core_runtime"
+    COMPONENT Runtime)
+else()
+  message(WARNING "collaboCore runtime not found: ${COLLABO_CORE_RUNTIME_DIR}/collabo-core-${COLLABO_CORE_PLATFORM}")
+endif()

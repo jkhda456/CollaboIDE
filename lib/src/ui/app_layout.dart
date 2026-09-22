@@ -7,16 +7,17 @@ import 'package:path/path.dart' as p;
 import '../../l10n/app_localizations.dart';
 import '../app/project_session.dart';
 import '../app/workspace_controller.dart';
-import '../webview/web_view_panel.dart';
 import 'browser_panel.dart';
 import 'left_nav.dart';
 import 'new_project_dialog.dart';
 import 'process_panel.dart';
+import 'project_panel.dart';
+import 'sandbox_panel.dart';
 import 'settings_dialog.dart';
 import 'tool_activity_dialog.dart';
 
-/// 우측 영역에 올 수 있는 화면. **설정 버튼 위의 항목들이 이 셋 중 하나를 고른다.**
-enum AppView { project, browser, processes }
+/// 우측 영역에 올 수 있는 화면. **설정 버튼 위의 항목들이 이 중 하나를 고른다.**
+enum AppView { project, browser, processes, sandboxes }
 
 /// 최상위 레이아웃: 좌측 네이티브 메뉴 + 우측 화면 하나.
 ///
@@ -219,6 +220,13 @@ class _AppLayoutState extends State<AppLayout> {
                   browserSelected: _view == AppView.browser,
                   browserTabCount: _workspace.browser.tabs.length,
                   onToggleBrowser: () => _showView(AppView.browser),
+                  // 샌드박스 모드이거나, 모드를 바꿨어도 아직 떠 있는 머신이 있을 때만.
+                  onToggleSandboxes: _workspace.usesSandbox ||
+                          _workspace.runningSandboxCount > 0
+                      ? () => _showView(AppView.sandboxes)
+                      : null,
+                  sandboxesSelected: _view == AppView.sandboxes,
+                  runningSandboxCount: _workspace.runningSandboxCount,
                 ),
               ),
               const VerticalDivider(width: 1, thickness: 1),
@@ -244,7 +252,7 @@ class _AppLayoutState extends State<AppLayout> {
         onRemoveRecent: _workspace.removeRecentProject,
       ),
       for (final s in sessions)
-        WebViewPanel(
+        ProjectPanel(
           key: ValueKey(s.path),
           session: s,
           themeMode: _workspace.themeMode,
@@ -260,10 +268,16 @@ class _AppLayoutState extends State<AppLayout> {
         workspace: _workspace,
         visible: _view == AppView.processes,
       ),
+      // 웹뷰가 없어 싸다 — 진행 상태처럼 처음부터 둔다.
+      SandboxPanel(
+        workspace: _workspace,
+        visible: _view == AppView.sandboxes,
+      ),
     ];
     // 위 순서와 맞춘 자리. 바꾸면 아래 index 계산도 같이 고쳐야 한다.
-    final browserIndex = children.length - 2;
-    final processIndex = children.length - 1;
+    final browserIndex = children.length - 3;
+    final processIndex = children.length - 2;
+    final sandboxIndex = children.length - 1;
 
     final int index;
     switch (_view) {
@@ -272,6 +286,8 @@ class _AppLayoutState extends State<AppLayout> {
         index = _browserCreated ? browserIndex : _projectIndex(sessions);
       case AppView.processes:
         index = processIndex;
+      case AppView.sandboxes:
+        index = sandboxIndex;
       case AppView.project:
         index = _projectIndex(sessions);
     }

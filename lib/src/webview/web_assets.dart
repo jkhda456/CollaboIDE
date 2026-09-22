@@ -21,14 +21,37 @@ class WebAssets {
     return Directory(p.join(support.path, 'web'));
   }
 
-  /// 웹 에셋을 추출하고 진입점 `index.html` 의 `file://` URL 을 반환한다.
-  static Future<String> extractAndGetIndexUrl() async {
-    final destRoot = await webRoot();
+  /// 웹 에셋을 추출하고 진입점 `index.html`(대화)의 `file://` URL 을 반환한다.
+  static Future<String> extractAndGetIndexUrl() => pageUrl('index.html');
 
+  /// 웹 에셋을 추출하고 [page](`index.html` 대화 · `viewer.html` 파일 뷰어)의 URL.
+  static Future<String> pageUrl(String page) async {
+    final destRoot = await _extract();
+    return Uri.file(p.join(destRoot.path, page)).toString();
+  }
+
+  /// 추출은 **앱 실행마다 한 번**이다. 프로젝트마다 웹뷰가 둘(대화 + 뷰어)이라,
+  /// 패널이 뜰 때마다 전부 다시 쓰면 같은 파일을 몇 번이고 덮어쓴다.
+  /// 실패하면 다음 호출이 다시 시도한다.
+  static Future<Directory>? _extracting;
+
+  static Future<Directory> _extract() {
+    final running = _extracting;
+    if (running != null) return running;
+    final f = _extractAll();
+    _extracting = f;
+    f.catchError((Object _) {
+      _extracting = null;
+      return Directory('');
+    });
+    return f;
+  }
+
+  static Future<Directory> _extractAll() async {
+    final destRoot = await webRoot();
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final keys =
         manifest.listAssets().where((k) => k.startsWith(_assetPrefix));
-
     for (final key in keys) {
       final rel = key.substring(_assetPrefix.length);
       final dest = File(p.join(destRoot.path, rel));
@@ -39,8 +62,6 @@ class WebAssets {
         data.lengthInBytes,
       ));
     }
-
-    final indexPath = p.join(destRoot.path, 'index.html');
-    return Uri.file(indexPath).toString();
+    return destRoot;
   }
 }

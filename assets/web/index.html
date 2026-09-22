@@ -145,107 +145,6 @@
     .diff-view .diff-hunk { color: #58a6ff; }
     .diff-view .diff-meta { color: var(--bs-secondary-color); }
 
-    /* 좌/우 폭 조절 splitter */
-    #right-resizer { flex: 0 0 6px; cursor: col-resize; background: transparent;
-                     border-left: 1px solid var(--bs-border-color); }
-    #right-resizer:hover, #right-resizer.active { background: var(--bs-primary); }
-
-    /* 우측: 트리 + 파일 뷰어 (폭 가변) */
-    #right { width: 340px; flex: 0 0 340px; display: flex; flex-direction: column;
-             min-width: 220px; }
-    #tree { flex: 1 1 60%; overflow: auto; min-height: 0; overscroll-behavior: contain; }
-
-    /* 트리 ↔ 뷰어 높이 조절 splitter */
-    #vert-resizer { flex: 0 0 6px; cursor: row-resize;
-                    border-top: 1px solid var(--bs-border-color); }
-    #vert-resizer:hover, #vert-resizer.active { background: var(--bs-primary); }
-
-    /* 뷰어 섹션(헤더 + 내용). 전체화면 시 창 전체를 덮는다. */
-    #viewer-section { flex: 1 1 40%; display: flex; flex-direction: column; min-height: 0; }
-    #viewer-section.fullscreen { position: fixed; inset: 0; z-index: 1090;
-                                 background: var(--bs-body-bg); flex: 1 1 auto; }
-    /* flex-basis 0 + min-height 0: 내용이 짧아도 섹션 높이를 항상 채운다 */
-    #viewer { flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain;
-              font-family: var(--bs-font-monospace); font-size: .82rem; }
-    #viewer.md-rendered { font-family: inherit; font-size: inherit; }
-    /* text/hex: 패딩을 pre 에 두고(스크롤 컨테이너에는 두지 않음) pre 가 뷰어를
-       가로·세로로 모두 채우게 한다. 이렇게 하면 가로/세로 스크롤바가 모두
-       #viewer(스크롤 컨테이너)에 생겨, 가로 스크롤바가 항상 패널 맨 아래에
-       고정되고 둘이 동시에 보인다. */
-    #viewer pre { margin: 0; white-space: pre; display: inline-block;
-                  min-width: 100%; min-height: 100%; box-sizing: border-box;
-                  padding: .5rem .6rem; }
-
-    /* 대용량 파일 가상 스크롤(collaboViewers.virtualList). 전체 줄 수만큼 높이를
-       잡아 두는 층(.vlist-body) 위에, 보이는 줄만 그리는 층(pre.vlist-layer)을
-       띄운다. 스크롤은 #viewer 가 그대로 맡는다. */
-    .vlist-body { position: relative; min-width: 100%; }
-    /* 위아래 패딩은 두지 않는다 — 줄 위치를 top 으로 직접 잡으므로 패딩이 있으면
-       스크롤 위치와 내용이 그만큼 어긋난다(좌우 여백은 그대로 둔다). */
-    #viewer pre.vlist-layer { position: absolute; left: 0; top: 0; min-height: 0;
-                              padding-top: 0; padding-bottom: 0; }
-    /* 줄 높이를 재기 위한 눈금자 — 패딩 없이, 레이아웃에 영향 없이 잰다. */
-    #viewer pre.vlist-probe { position: absolute; visibility: hidden; top: 0; left: 0;
-                              padding: 0; min-height: 0; min-width: 0; }
-
-    /* 압축 파일 뷰어: 머리말(형식·개수·검색) + 폴더 트리 + 항목 미리보기. */
-    #viewer.archive-view { display: flex; flex-direction: column; overflow: hidden;
-                           font-family: var(--bs-body-font-family); font-size: .82rem; }
-    .archive-bar { flex: 0 0 auto; display: flex; align-items: center; gap: .5rem;
-                   padding: .35rem .5rem;
-                   border-bottom: 1px solid var(--bs-border-color); }
-    .archive-filter { max-width: 220px; margin-left: auto; }
-    #viewer.archive-view .alert { flex: 0 0 auto; border-radius: 0; }
-    /* 목록만 스크롤한다. 미리보기가 열리면 목록이 줄어든다(둘 다 최소 높이 확보). */
-    .archive-list { flex: 1 1 auto; min-height: 4rem; overflow: auto; }
-    .archive-row { display: flex; align-items: center; gap: .25rem;
-                   padding: .05rem .5rem .05rem 0; cursor: pointer;
-                   white-space: nowrap; }
-    .archive-row:hover { background: var(--bs-secondary-bg); }
-    .archive-row.selected { background: var(--bs-primary-bg-subtle); }
-    .archive-row.dir { font-weight: 500; }
-    .archive-caret { width: 1em; flex: 0 0 auto; color: var(--bs-secondary-color); }
-    .archive-name { overflow: hidden; text-overflow: ellipsis; }
-    .archive-meta { margin-left: auto; padding-left: .75rem; flex: 0 0 auto;
-                    font-size: .75rem; color: var(--bs-secondary-color);
-                    font-family: var(--bs-font-monospace); }
-    /* 미리보기: 뷰어 아래 절반까지 차지하고 그 안에서 스크롤한다. */
-    .archive-preview { flex: 1 1 50%; min-height: 6rem; display: flex;
-                       flex-direction: column;
-                       border-top: 1px solid var(--bs-border-color); }
-    .archive-preview.d-none { display: none !important; }
-    .archive-preview-head { flex: 0 0 auto; display: flex; align-items: center;
-                            gap: .5rem; padding: .25rem .5rem;
-                            background: var(--bs-secondary-bg); }
-    .archive-preview-name { overflow: hidden; text-overflow: ellipsis;
-                            white-space: nowrap;
-                            font-family: var(--bs-font-monospace); }
-    .archive-preview-head .btn-close { margin-left: auto; }
-    .archive-preview-body { flex: 1 1 0; min-height: 0; overflow: auto; }
-    /* `#viewer pre` 규칙(id 선택자)을 이기려면 여기도 id 를 껴야 한다. */
-    #viewer.archive-view .archive-preview-body pre {
-      margin: 0; padding: .5rem .6rem; display: inline-block;
-      min-width: 100%; box-sizing: border-box; min-height: 0;
-      font-family: var(--bs-font-monospace); font-size: .8rem; white-space: pre;
-    }
-
-    /* 마크다운 편집기(뷰어 플러그인 예제): 툴바 + [편집 | 미리보기] 2단.
-       #viewer 는 스크롤 컨테이너지만, 편집기는 자기 안에서 스크롤한다. */
-    #viewer.md-editor { display: flex; flex-direction: column; overflow: hidden; }
-    .md-editor-bar { flex: 0 0 auto; display: flex; align-items: center; gap: .5rem;
-                     padding: .35rem .5rem;
-                     border-bottom: 1px solid var(--bs-border-color); }
-    .md-editor-state { font-size: .78rem; }
-    .md-editor-warn { flex: 0 0 auto; border-radius: 0; }
-    .md-editor-split { flex: 1 1 0; min-height: 0; display: flex; }
-    .md-editor-input, .md-editor-preview { flex: 1 1 50%; min-width: 0; overflow: auto; }
-    .md-editor-input { border: 0; border-right: 1px solid var(--bs-border-color);
-                       resize: none; outline: none; padding: .5rem .6rem;
-                       font-family: var(--bs-font-monospace); font-size: .82rem;
-                       background: var(--bs-body-bg); color: var(--bs-body-color); }
-    .md-editor-preview { padding: .5rem .8rem;
-                         font-family: var(--bs-body-font-family); font-size: .9rem; }
-
     .panel-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
     /* 대화 헤더 제목. 프로젝트가 열리면 폴더명을 쓰는데, 폴더명은 고유명사라
        .panel-title 의 대문자 변환/자간을 그대로 두면 어색하다(collabo_ide →
@@ -260,26 +159,9 @@
     /* 색은 .text-warning(부트스트랩 유틸 — !important)이 잡으므로 여기선 폭만.
        hover 색도 .icon-btn:hover 대신 경고색이 그대로 유지된다(의도). */
     #setup-warn { max-width: 180px; min-width: 0; }
-    .path-text { font-size: .8rem; user-select: none; cursor: default; }
     .icon-btn { line-height: 1; color: var(--bs-secondary-color); }
     .icon-btn:hover { color: var(--bs-primary); }
     .head-row { gap: .4rem; min-height: 31px; }
-
-    /* 트리 */
-    .tree-row { display: flex; align-items: center; gap: .25rem; padding: 1px 4px;
-                white-space: nowrap; cursor: default; border-radius: 4px; user-select: none; }
-    .tree-row:hover { background: var(--bs-secondary-bg); }
-    .tree-row.selected { background: var(--bs-primary-bg-subtle); }
-    .tree-caret { width: 1rem; text-align: center; color: var(--bs-secondary-color);
-                  flex: 0 0 auto; }
-    .tree-name { overflow: hidden; text-overflow: ellipsis; }
-    .tree-name.dir { font-weight: 500; }
-    .tree-row.drop-target { background: var(--bs-primary-bg-subtle);
-                            outline: 1px dashed var(--bs-primary); }
-    #viewer mark { background: #ffd54f; color: #000; padding: 0 1px; border-radius: 2px; }
-
-    /* 컨텍스트 메뉴 */
-    #context-menu { position: fixed; z-index: 1080; min-width: 180px; display: none; }
 
     /* 호출 내역 모달 리스트 */
     .activity-item { font-size: .8rem; }
@@ -317,11 +199,6 @@
     #plan-caret { transition: transform .15s; }
     #plan-card.open #plan-caret { transform: rotate(180deg); }
 
-    /* 계획 파일 바로가기 — 파일이 없으면 감춘다.
-       ⚠️ `d-none` 을 쓰면 안 된다. 이 버튼은 `data-search-extra` 라서 검색창을 닫을 때
-       검색 토글이 `d-none` 을 **일괄로 벗겨** 파일이 없어도 되살아난다. 검색 코드가
-       건드리지 않는 별도 클래스로 둬야 두 상태가 서로를 덮지 않는다. */
-    #tree-open-playbook.no-file { display: none !important; }
 
     /* 진행 상태 말풍선(대화 흐름 안, 작업 중 표시 → 완료 시 제거) */
     .msg.status { display: flex; align-items: center; gap: 8px; }
@@ -535,133 +412,6 @@
       </div>
     </section>
 
-    <!-- 좌/우 폭 조절 핸들 -->
-    <div id="right-resizer" data-i18n-title="resizeWidthTitle" title="드래그하여 폭 조절"></div>
-
-    <!-- 우측: 트리 / 파일 뷰어 -->
-    <aside id="right">
-      <!-- 트리 헤더: [고정 경로] + 파일검색 아이콘 → 클릭 시 검색창이 경로를 덮음 -->
-      <div class="border-bottom px-2 py-2">
-        <div class="d-flex align-items-center head-row" data-search="file">
-          <span id="project-path"
-                class="path-text text-truncate flex-grow-1 text-secondary"
-                data-search-label>열린 프로젝트 없음</span>
-          <!-- 계획 파일로 바로 가기. `.collabo` 안에만 생겨서 사용자가 존재 자체를
-               모르고 지나치기 때문에 띄운다. **파일이 있을 때만** 나타난다
-               (네이티브가 chat.plan 의 path 로 알려 준다). -->
-          <button class="btn btn-sm p-1 icon-btn no-file" type="button"
-                  id="tree-open-playbook" data-search-extra
-                  data-i18n-title="openPlaybook" title="계획 파일 열기">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
-                 fill="currentColor" viewBox="0 0 16 16">
-              <path d="M5 11.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5M3.854 2.146a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 3.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 1 1 .708-.708L2 7.293l1.146-1.147a.5.5 0 0 1 .708 0m0 4a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 0 1-.708 0l-.5-.5a.5.5 0 0 1 .708-.708l.146.147 1.146-1.147a.5.5 0 0 1 .708 0"/>
-            </svg>
-          </button>
-          <button class="btn btn-sm p-1 icon-btn" type="button"
-                  id="tree-open-external" data-search-extra
-                  data-i18n-title="openInExplorer" title="탐색기에서 열기" disabled>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
-                 fill="currentColor" viewBox="0 0 16 16">
-              <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0 1 15 5.5v.64c.57.265.94.876.856 1.546l-.64 5.124A2.5 2.5 0 0 1 12.733 15H3.266a2.5 2.5 0 0 1-2.481-2.19l-.64-5.124A1.5 1.5 0 0 1 1 6.14zM2 6h12v-.5a.5.5 0 0 0-.5-.5H9c-.964 0-1.71-.629-2.174-1.154C6.374 3.334 5.82 3 5.264 3H2.5a.5.5 0 0 0-.5.5zm-.367 1a.5.5 0 0 0-.496.562l.64 5.124A1.5 1.5 0 0 0 3.266 14h9.468a1.5 1.5 0 0 0 1.489-1.314l.64-5.124A.5.5 0 0 0 14.367 7z"/>
-            </svg>
-          </button>
-          <button class="btn btn-sm p-1 icon-btn" type="button"
-                  data-search-toggle data-i18n-title="fileSearchTitle" title="파일 이름 검색">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
-                 fill="currentColor" viewBox="0 0 16 16">
-              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
-            </svg>
-          </button>
-          <div class="input-group input-group-sm flex-grow-1 d-none" data-search-box>
-            <input id="file-search" type="search" class="form-control"
-                   data-i18n-ph="fileSearchPlaceholder"
-                   placeholder="파일 이름 검색…" data-search-input>
-            <button class="btn btn-outline-secondary" type="button"
-                    data-search-close data-i18n="cancel">취소</button>
-          </div>
-        </div>
-      </div>
-      <div id="tree" class="p-2">
-        <div class="text-secondary small" data-i18n="treeEmpty">프로젝트를 열면 파일 트리가 표시됩니다.</div>
-      </div>
-
-      <!-- 트리 ↔ 뷰어 높이 조절 핸들 -->
-      <div id="vert-resizer" data-i18n-title="resizeHeightTitle" title="드래그하여 높이 조절"></div>
-
-      <!-- 뷰어 섹션 (헤더 + 내용). 전체화면 토글 대상. -->
-      <div id="viewer-section">
-        <!-- 뷰어 헤더: [파일명] + 모드(text/hex/md) + 전체화면 + 내용검색 -->
-        <div class="px-2 py-2">
-          <div class="d-flex align-items-center head-row" data-search="content">
-            <span id="file-name"
-                  class="text-truncate flex-grow-1 small fw-semibold"
-                  data-search-label>선택된 파일 없음</span>
-            <!-- 네이티브 <select> 팝업은 webview_windows 에서 안 떠서 DOM 드롭다운 사용 -->
-            <div class="dropdown" data-search-extra>
-              <button id="viewer-mode-btn"
-                      class="btn btn-sm btn-outline-secondary dropdown-toggle"
-                      type="button" data-bs-toggle="dropdown" data-bs-display="static"
-                      aria-expanded="false" title="보기 방식" disabled>Text</button>
-              <!-- 항목은 등록된 뷰어 플러그인으로 채운다(updateViewerMenu). -->
-              <ul class="dropdown-menu dropdown-menu-end" id="viewer-mode-menu"></ul>
-            </div>
-            <button class="btn btn-sm p-1 icon-btn" type="button"
-                    id="viewer-copy" data-search-extra
-                    data-i18n-title="copySelection" title="선택 영역 복사">
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
-                   fill="currentColor" viewBox="0 0 16 16">
-                <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1z"/>
-                <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0z"/>
-              </svg>
-            </button>
-            <button class="btn btn-sm p-1 icon-btn" type="button"
-                    id="viewer-open-external" data-search-extra
-                    data-i18n-title="openWith" title="연결 프로그램으로 열기" disabled>
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
-                   fill="currentColor" viewBox="0 0 16 16">
-                <path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/>
-                <path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/>
-              </svg>
-            </button>
-            <button class="btn btn-sm p-1 icon-btn" type="button"
-                    id="fullscreen-toggle" data-search-extra title="전체화면 보기"></button>
-            <button class="btn btn-sm p-1 icon-btn" type="button"
-                    data-search-toggle data-i18n-title="contentSearchTitle" title="파일 내용 검색">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
-                   fill="currentColor" viewBox="0 0 16 16">
-                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>
-              </svg>
-            </button>
-            <div class="input-group input-group-sm flex-grow-1 d-none" data-search-box>
-              <input id="content-search" type="search" class="form-control"
-                     data-i18n-ph="contentSearchPlaceholder"
-                     placeholder="파일 내용 검색…" data-search-input>
-              <button class="btn btn-outline-secondary" type="button"
-                      data-search-close>취소</button>
-            </div>
-          </div>
-          <div id="viewer-notice" class="small text-warning mt-1 d-none"></div>
-        </div>
-        <div id="viewer" class="p-2">
-          <div class="text-secondary small" data-i18n="viewerEmpty">선택한 파일 내용이 여기에 표시됩니다.</div>
-        </div>
-      </div>
-    </aside>
-  </div>
-
-  <!-- 호출 내역 모달 (런쳐 프로세스 / 도구 호출) -->
-  <div class="modal fade" id="activity-modal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header py-2">
-          <h6 class="modal-title mb-0" data-i18n="activityTitle">호출 내역</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body p-0">
-          <div id="activity-list" class="list-group list-group-flush"></div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- 변경(diff) 모달 -->
@@ -701,8 +451,26 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
+          <!-- 모드: 시작점 만들기(계획도 비움) / 계획만 비우기(대화는 그대로) -->
+          <div class="btn-group btn-group-sm w-100 mb-3" role="group">
+            <input type="radio" class="btn-check" name="cp-mode" id="cp-mode-checkpoint"
+                   value="checkpoint" checked>
+            <label class="btn btn-outline-primary" for="cp-mode-checkpoint"
+                   data-i18n="checkpointModeCheckpoint">시작점 만들기</label>
+            <input type="radio" class="btn-check" name="cp-mode" id="cp-mode-plan" value="plan">
+            <label class="btn btn-outline-primary" for="cp-mode-plan"
+                   data-i18n="checkpointModePlan">계획만 초기화</label>
+          </div>
+          <div id="cp-plan-body" class="d-none">
+            <p class="small text-secondary mb-0" data-i18n="planResetDesc">
+              대화는 그대로 두고 계획(PLAYBOOK)만 비웁니다. 이전 계획은
+              .collabo/playbook-archive 에 보관됩니다.</p>
+          </div>
+          <div id="cp-checkpoint-body">
           <p class="small text-secondary" data-i18n="checkpointDesc">
             지금까지의 대화를 접고 새 시작점을 만듭니다. 이후 AI는 시작점 이후만 봅니다.</p>
+          <p class="small text-secondary" data-i18n="checkpointPlanNote">
+            계획(PLAYBOOK)도 함께 비웁니다. 이전 계획은 .collabo/playbook-archive 에 보관됩니다.</p>
           <div class="small text-secondary mb-2">
             <span data-i18n="checkpointCurrentContext">시작 전 컨텍스트</span>:
             <span id="cp-current" class="fw-semibold">–</span> tok
@@ -731,6 +499,7 @@
             <textarea id="cp-preview-text" class="form-control form-control-sm"
                       rows="7" style="font-size:.8rem"></textarea>
           </div>
+          </div><!-- /cp-checkpoint-body -->
         </div>
         <div class="modal-footer py-2">
           <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -740,7 +509,7 @@
                  fill="currentColor" viewBox="0 0 16 16" class="me-1">
               <path d="M3.5 3.5c-.614-.884-.074-1.962.858-2.5L8 7.226 11.642 1c.932.538 1.472 1.616.858 2.5L8.81 8.61l1.556 2.661a2.5 2.5 0 1 1-.794.637L8 9.73l-1.572 2.177a2.5 2.5 0 1 1-.794-.637L7.19 8.61zm2.5 10a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0m7 0a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0"/>
             </svg>
-            <span data-i18n="checkpointCreate">시작점 만들기</span>
+            <span id="cp-create-label">시작점 만들기</span>
           </button>
         </div>
       </div>
@@ -777,68 +546,8 @@
     </div>
   </div>
 
-  <!-- 우클릭 컨텍스트 메뉴 (트리 항목 / 빈 영역 공용 — 항목별로 보이는 줄이 달라진다) -->
-  <ul id="context-menu" class="dropdown-menu show">
-    <li><button class="dropdown-item" type="button" id="ctx-new-file" data-i18n="newFile">새 파일</button></li>
-    <li><button class="dropdown-item" type="button" id="ctx-new-folder" data-i18n="newFolder">새 폴더</button></li>
-    <li class="ctx-item-only"><hr class="dropdown-divider"></li>
-    <li class="ctx-item-only"><button class="dropdown-item" type="button" id="ctx-rename" data-i18n="rename">이름 변경</button></li>
-    <li class="ctx-item-only"><button class="dropdown-item text-danger" type="button" id="ctx-delete" data-i18n="delete">삭제</button></li>
-    <li><hr class="dropdown-divider"></li>
-    <li class="ctx-file-only"><button class="dropdown-item" type="button" id="ctx-open-with" data-i18n="openWith">연결 프로그램으로 열기</button></li>
-    <li><button class="dropdown-item" type="button" id="ctx-copy-path" data-i18n="copyPath">전체 경로 복사</button></li>
-  </ul>
-
-  <!-- 이름 입력 모달 (새 파일 / 새 폴더 / 이름 변경 공용) -->
-  <div class="modal fade" id="name-modal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-sm">
-      <div class="modal-content">
-        <div class="modal-header py-2">
-          <h6 class="modal-title mb-0" id="name-modal-title">–</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <div class="small text-secondary text-truncate mb-1" id="name-modal-where"></div>
-          <input type="text" class="form-control form-control-sm" id="name-modal-input"
-                 autocomplete="off" spellcheck="false">
-          <div class="form-text text-danger" id="name-modal-error"></div>
-        </div>
-        <div class="modal-footer py-2">
-          <button type="button" class="btn btn-sm btn-outline-secondary"
-                  data-bs-dismiss="modal" data-i18n="cancel">취소</button>
-          <button type="button" class="btn btn-sm btn-primary" id="name-modal-ok">–</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 삭제 확인 모달 (되돌릴 수 없다는 것을 분명히 알린다) -->
-  <div class="modal fade" id="confirm-delete-modal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-sm">
-      <div class="modal-content">
-        <div class="modal-header py-2">
-          <h6 class="modal-title mb-0" data-i18n="delete">삭제</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <div class="text-break" id="confirm-delete-name"></div>
-          <div class="small text-danger mt-2" id="confirm-delete-warn"></div>
-        </div>
-        <div class="modal-footer py-2">
-          <button type="button" class="btn btn-sm btn-outline-secondary"
-                  data-bs-dismiss="modal" data-i18n="cancel">취소</button>
-          <button type="button" class="btn btn-sm btn-danger" id="confirm-delete-ok"
-                  data-i18n="delete">삭제</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <script src="./vendor/bootstrap.bundle.min.js"></script>
   <script src="./vendor/marked.min.js"></script>
-  <!-- 뷰어 플러그인 목록(window.COLLABO_VIEWER_FILES). 실제 뷰어 파일은
-       아래 인라인 스크립트가 레지스트리를 만든 뒤 주입한다. -->
-  <script src="./viewers/index.js"></script>
   <script>
     // ===== Flutter ↔ Web 브리지 =====
     // 백엔드별 송신: Windows(webview_windows)=chrome.webview,
@@ -857,19 +566,6 @@
       catch (e) { return; }
       switch (msg.type) {
         case 'project.changed': onProjectChanged(msg.path); break;
-        case 'dir.children': onDirChildren(msg.path, msg.entries); break;
-        case 'fs.change': onFsChange(msg.paths || [], msg.files || []); break;
-        case 'search.results': onSearchResults(msg); break;
-        case 'fs.error': onChatNotice({ text: msg.message || 'error' }); break;
-        case 'fs.created': onFsCreated(msg); break;
-        case 'fs.renamed': onFsRenamed(msg); break;
-        case 'fs.deleted': onFsDeleted(msg); break;
-        case 'file.content': onFileContent(msg); break;
-        case 'file.error': onFileError(msg); break;
-        case 'file.saved': onFileSaved(msg); break;
-        case 'file.windowData': onFileWindowData(msg); break;
-        case 'viewer.assetData': onViewerAssetData(msg); break;
-        case 'archive.entryData': onArchiveEntryData(msg); break;
         case 'chat.meta': onChatMeta(msg); break;
         case 'chat.history': onChatHistory(msg.messages || []); break;
         case 'chat.message': onChatMessage(msg); break;
@@ -878,7 +574,8 @@
         case 'chat.stats': onChatStats(msg); break;
         case 'chat.done': onChatDone(msg); break;
         case 'chat.tool': onChatTool(msg); break;
-        case 'chat.activity': recordActivity(msg); break;
+        case 'chat.activity': break; // 배지는 네이티브가 센다(activity.count)
+        case 'activity.count': setActivityCount(msg.count); break;
         case 'chat.sub': onChatSub(msg); break;
         case 'chat.notice': onChatNotice(msg); break;
         case 'chat.plan': onChatPlan(msg); break;
@@ -1016,7 +713,7 @@
         return;
       }
       var bubble = ensureStatusBubble();
-      bubble.querySelector('.status-text').textContent = text;
+      bubble.querySelector('.status-text').textContent = TM(msg, text);
       // 요약 대기 중에만 '건너뛰기'가 보이고, 그동안 '중지'는 숨긴다
       // (아직 생성이 시작되지 않아 중지할 대상이 없다).
       var skippable = !!(msg && msg.skippable);
@@ -1096,10 +793,26 @@
       var compressEl = document.getElementById('cp-compress');
       var rowEl = document.getElementById('cp-size-row');
       var prevRow = document.getElementById('cp-preview-row');
+      var modeCp = document.getElementById('cp-mode-checkpoint');
+      var modePlan = document.getElementById('cp-mode-plan');
+      var cpBody = document.getElementById('cp-checkpoint-body');
+      var planBody = document.getElementById('cp-plan-body');
+      var createLabel = document.getElementById('cp-create-label');
+      function planOnly() { return modePlan.checked; }
       function syncLabel() {
         labelEl.textContent = (sizeEl.value / 1000).toFixed(1) + 'k tok';
       }
       function syncMode() {
+        // "계획만 초기화" 는 시작점을 만들지 않는다 — 압축·미리보기가 필요 없다.
+        cpBody.classList.toggle('d-none', planOnly());
+        planBody.classList.toggle('d-none', !planOnly());
+        createLabel.textContent = planOnly()
+          ? T('planResetButton', '계획 초기화')
+          : T('checkpointCreate', '시작점 만들기');
+        if (planOnly()) {
+          cpCreateBtn.disabled = false;
+          return;
+        }
         rowEl.style.display = compressEl.checked ? '' : 'none';
         // 압축 OFF면 미리보기 불필요 → 바로 생성 가능. ON이면 미리보기 후 활성화.
         if (!compressEl.checked) {
@@ -1111,6 +824,8 @@
       }
       sizeEl.addEventListener('input', syncLabel);
       compressEl.addEventListener('change', syncMode);
+      modeCp.addEventListener('change', syncMode);
+      modePlan.addEventListener('change', syncMode);
       cpPreviewText.addEventListener('input', function () {
         updateCpPreviewTokens();
         cpCreateBtn.disabled = cpPreviewText.value.trim() === '';
@@ -1128,15 +843,21 @@
         prevRow.classList.add('d-none');
         cpPreviewBtn.disabled = false;
         cpPreviewBtn.querySelector('span').textContent = T('checkpointPreview', '미리보기 생성');
+        modeCp.checked = true; // 열 때마다 기본 모드(시작점 만들기)로
         syncLabel(); syncMode();
         bootstrap.Modal.getOrCreateInstance(modalEl).show();
       });
       cpCreateBtn.addEventListener('click', function () {
-        send({
-          type: 'chat.checkpoint.create',
-          compress: compressEl.checked,
-          content: compressEl.checked ? cpPreviewText.value : '',
-        });
+        if (planOnly()) {
+          send({ type: 'chat.plan.reset' });
+        } else {
+          // 시작점을 만들면 네이티브가 계획(PLAYBOOK)도 같이 비운다.
+          send({
+            type: 'chat.checkpoint.create',
+            compress: compressEl.checked,
+            content: compressEl.checked ? cpPreviewText.value : '',
+          });
+        }
         bootstrap.Modal.getOrCreateInstance(modalEl).hide();
       });
     })();
@@ -1172,6 +893,18 @@
     // ===== 다국어(i18n): 네이티브가 JSON 리소스를 넘겨준다 =====
     let STR = {};
     function T(key, fallback) { return (STR && STR[key]) || fallback; }
+    // 네이티브가 보낸 문구(상태·알림·오류)를 지금 언어로. 네이티브 루프는 화면 언어를
+    // 모르므로 영어 문구(fallback)에 언어팩 키(msg.key)와 `{이름}` 자리 값(msg.args)을
+    // 곁들여 보낸다. 키가 없거나 언어팩에 없으면 영어 문구를 그대로 쓴다.
+    function TM(msg, fallback) {
+      fallback = fallback || '';
+      const tpl = msg && msg.key && STR && STR[msg.key];
+      if (!tpl) return fallback;
+      const args = (msg && msg.args) || {};
+      return tpl.replace(/\{(\w+)\}/g, function (all, name) {
+        return Object.prototype.hasOwnProperty.call(args, name) ? String(args[name]) : all;
+      });
+    }
     window.collaboSetStrings = function (dict) {
       STR = dict || {};
       applyStrings();
@@ -1193,9 +926,6 @@
       renderChatTitle();
       renderSetupWarning(setupMissing); // 라벨/툴팁이 번역 문자열이라 다시 그린다
 
-      if (!rootPath) pathEl.textContent = T('noProject', '열린 프로젝트가 없습니다');
-      if (!currentFilePath) fileNameEl.textContent = T('fileNone', '선택한 파일이 없습니다');
-      if (typeof refreshFullscreenTitle === 'function') refreshFullscreenTitle();
     }
 
     // ===== 유틸 =====
@@ -1211,489 +941,11 @@
       return i > 0 ? name.slice(i).toLowerCase() : '';
     }
 
-    // ===== 파일 뷰어 플러그인 레지스트리 =====
-    // 뷰어 종류를 늘리는 방법은 viewers/index.js 주석 참고(계약도 거기 있다).
-    // 스크립트 URL 정규화(절대화 + 쿼리/프래그먼트 제거).
-    // 로드 시엔 캐시 무효화용 ?v=… 를 붙이지만, 추적/해제는 이 정규형으로 한다.
-    function normViewerUrl(u) {
-      try {
-        var a = new URL(u, document.baseURI);
-        a.search = ''; a.hash = '';
-        return a.href;
-      } catch (e) { return String(u || ''); }
-    }
-
-    // 네이티브가 읽어 줄 수 있는 데이터 형태. 새 형태를 늘리려면 네이티브
-    // FileService(FileViewMode)에 먼저 추가해야 한다 — 웹은 파일을 직접 못 읽는다.
-    var DATA_MODES = ['text', 'hex', 'archive'];
-
-    // 지금 그려진 뷰어가 걸어 둔 구독을 끊는 함수(가상 스크롤의 scroll 리스너 등).
-    // 다음 렌더 직전에 호출한다 — 뷰어는 몇 번이고 다시 그려지기 때문이다.
-    var viewerCleanup = null;
-
-    window.collaboViewers = (function () {
-      var list = [];
-      // 사용자 설정(설정 → 뷰어). 뷰어 id → {enabled, extensions|null}.
-      // 플러그인이 선언한 값 위에 덮어쓴다. null 이면 선언값을 그대로 쓴다.
-      var rules = Object.create(null);
-      // 사용자가 정한 뷰어 우선순위(id 배열, 앞이 이긴다). 비면 등록 순서.
-      var order = [];
-      // 플러그인에 열어 주는 도우미. t 는 언어팩 조회(T)로, 뷰어도 다국어가 된다.
-      var util = { esc: esc, baseName: baseName, extOf: extOf, t: T };
-
-      function register(v) {
-        if (!v || !v.id || typeof v.render !== 'function') {
-          console.warn('[viewer] register 무시 — id/render 누락', v);
-          return;
-        }
-        if (list.some(function (x) { return x.id === v.id; })) {
-          console.warn('[viewer] 중복 id 무시:', v.id);
-          return;
-        }
-        list.push({
-          id: v.id,
-          label: v.label || v.id,
-          // 'text' | 'hex' | 'archive'(압축 목록 JSON). 모르는 값은 text 로.
-          dataMode: DATA_MODES.indexOf(v.dataMode) !== -1 ? v.dataMode : 'text',
-          extensions: (v.extensions || []).map(function (e) { return e.toLowerCase(); }),
-          match: typeof v.match === 'function' ? v.match : null,
-          render: v.render,
-          // 어느 스크립트가 등록했는지. 설정에서 뷰어를 제거할 때 이걸로 찾아 내린다.
-          // 최상위 실행 중이면 document.currentScript 가 그 <script> 다(비동기
-          // 콜백 안에서 register 하면 null → 그 뷰어는 해제 대상에서 빠진다).
-          src: normViewerUrl(document.currentScript && document.currentScript.src),
-        });
-      }
-
-      /// 그 스크립트가 등록한 뷰어를 모두 목록에서 뺀다(제거된 개수 반환).
-      function unregisterBySrc(src) {
-        var key = normViewerUrl(src);
-        if (!key) return 0;
-        var before = list.length;
-        list = list.filter(function (v) { return v.src !== key; });
-        return before - list.length;
-      }
-
-      // ── 사용자 설정 적용 ────────────────────────────────────────────────
-      // 켜짐 여부와 담당 확장자는 **설정이 우선**이고, 없으면 선언값을 쓴다.
-      function isEnabled(v) {
-        var r = rules[v.id];
-        return !(r && r.enabled === false);
-      }
-      // override 가 있으면 그것. 빈 배열이면 "담당 확장자 없음" 이라는 뜻으로,
-      // 아무도 담당하지 않는 파일의 폴백 후보로만 남는다(pick 참고).
-      function extsOf(v) {
-        var r = rules[v.id];
-        return (r && r.extensions) ? r.extensions : v.extensions;
-      }
-
-      function setRules(map, orderIds) {
-        var next = Object.create(null);
-        Object.keys(map || {}).forEach(function (id) {
-          var r = map[id] || {};
-          next[id] = {
-            enabled: r.enabled !== false,
-            extensions: r.extensions
-              ? r.extensions.map(function (e) { return String(e).toLowerCase(); })
-              : null,
-          };
-        });
-        rules = next;
-        order = (orderIds || []).slice();
-      }
-
-      // 우선순위 = 사용자가 정한 순서(앞이 이김). 그 목록에 없는 뷰어는 뒤로 보내고,
-      // 그들끼리는 등록 순서(= COLLABO_VIEWER_FILES 순서)를 유지한다.
-      // (네이티브 sortViewersByOrder 와 같은 규칙이어야 한다 — 설정 화면의 표시
-      //  순서가 곧 실제 선택 순서다.)
-      function rankOf(v) {
-        var i = order.indexOf(v.id);
-        return i >= 0 ? i : order.length;
-      }
-
-      /// 쓸 수 있는 뷰어를 **우선순위 순으로** 돌려준다(드롭다운·자동 선택 대상).
-      /// 꺼 둔 뷰어는 빠진다. (꺼 둔 것까지 필요한 곳은 report() 뿐이다.)
-      function all() {
-        // Array.prototype.sort 는 안정 정렬이라 동점이면 등록 순서가 유지된다.
-        return list.filter(isEnabled).sort(function (a, b) {
-          return rankOf(a) - rankOf(b);
-        });
-      }
-      function get(id) {
-        for (var i = 0; i < list.length; i++) {
-          if (list[i].id === id) return isEnabled(list[i]) ? list[i] : null;
-        }
-        return null;
-      }
-
-      // 파일 + 네이티브가 준 데이터 형태에 맞는 뷰어를 고른다.
-      //
-      // 후보 등급: 확장자 담당 > match() 통과 > 폴백(담당 확장자 없음).
-      // **같은 등급 안에서는 목록 순서(all())대로 먼저 나온 뷰어가 이긴다** —
-      // `.md` 를 Markdown 과 Markdown 편집기가 둘 다 담당하는 것처럼 중복은 흔하고,
-      // 그때 누가 이길지는 사용자가 설정에서 정한다.
-      //
-      // **담당 확장자를 선언한 뷰어는 그 확장자에만 후보가 된다.** 그러지 않으면
-      // 확장자가 안 맞아도 순서만으로 이겨 버린다(예: `.py` 를 열었는데 Markdown 이
-      // 폴백 Text 를 눌러 마크다운으로 렌더링). 확장자를 비운 뷰어만 폴백이 된다.
-      function pick(path, dataMode) {
-        var ext = extOf(path);
-        var info = { path: path, ext: ext, dataMode: dataMode };
-        var byExt = null, byMatch = null, fallback = null;
-        var usable = all();
-        for (var i = 0; i < usable.length; i++) {
-          var v = usable[i];
-          if (v.dataMode !== dataMode) continue;
-          var exts = extsOf(v);
-          if (ext && exts.indexOf(ext) !== -1) {
-            if (!byExt) byExt = v;
-            continue;
-          }
-          if (v.match) {
-            try {
-              if (v.match(info)) { if (!byMatch) byMatch = v; continue; }
-            } catch (e) { /* 무시 */ }
-          }
-          if (!exts.length && !fallback) fallback = v;
-        }
-        return byExt || byMatch || fallback;
-      }
-
-      /// 확장자를 담당하는 뷰어 중 우선순위가 가장 높은 것(데이터 형태는 안 본다).
-      ///
-      /// 파일을 **어떤 형태로 읽어 달라고 할지**를 정하기 위한 것이다. 네이티브도
-      /// 자체 확장자 목록으로 text/hex 를 판정하는데, 그걸 그대로 두면 사용자가
-      /// 설정한 확장자 연결(`.dat` → Text 뷰어)이 무시된다(hex 로 읽혀 온다).
-      /// 담당 뷰어가 있으면 그 뷰어의 dataMode 로 요청하고, 없으면 네이티브 판정에
-      /// 맡긴다(null).
-      function pickByExt(path) {
-        var ext = extOf(path);
-        if (!ext) return null;
-        var usable = all();
-        for (var i = 0; i < usable.length; i++) {
-          if (extsOf(usable[i]).indexOf(ext) !== -1) return usable[i];
-        }
-        return null;
-      }
-
-      // 등록 상태를 네이티브에 보고한다(설정 → 뷰어 화면이 이걸로 줄을 그린다).
-      // 확장자는 **선언값**을 보낸다 — 설정 화면이 "기본값으로 되돌리기" 를
-      // 보여 줄 수 있어야 한다(적용값은 네이티브가 rules 로 이미 알고 있다).
-      var lastReport = '';
-      function report() {
-        var payload = list.map(function (v) {
-          return {
-            id: v.id,
-            label: v.label,
-            dataMode: v.dataMode,
-            extensions: v.extensions,
-            user: v.src.indexOf('/viewers/user/') !== -1,
-          };
-        });
-        var json = JSON.stringify(payload);
-        if (json === lastReport) return;   // 같은 목록을 반복해 보내지 않는다
-        lastReport = json;
-        send({ type: 'viewers.list', viewers: payload });
-      }
-
-      // 큰 파일용 **가상 스크롤**. `ctx.windowed` 인 파일에서 뷰어가 호출한다.
-      //
-      //   collaboViewers.virtualList(ctx, { className: 'hex-view' })
-      //
-      // 전체 줄 수만큼 높이를 잡아 두고(스크롤바가 파일 전체를 나타낸다) 화면에
-      // 보이는 줄만 그린다. 줄은 `ctx.window(from, count)` 로 그때그때 받아 오고,
-      // 아직 안 온 줄자리는 비워 뒀다가 도착하면 다시 그린다.
-      function virtualList(ctx, opts) {
-        opts = opts || {};
-        var CHUNK = 200;      // 한 번에 받아 오는 줄 수(요청 횟수와 응답 크기의 절충)
-        var OVERSCAN = 20;    // 화면 위아래로 미리 그려 두는 줄(스크롤 시 빈 칸 방지)
-        var total = ctx.lineCount || 0;
-        var chunks = Object.create(null);   // 청크 번호 → 줄 배열
-        var asked = Object.create(null);
-
-        var host = ctx.el;
-        // 다시 그릴 때(검색 하이라이트·자동 갱신) 보던 위치를 잃지 않는다 —
-        // 내용을 비우는 순간 스크롤이 0 으로 접히므로 미리 재 뒀다가 되돌린다.
-        var keepTop = host.scrollTop;
-        host.className = '';
-        host.innerHTML = '';
-        var body = document.createElement('div');
-        body.className = 'vlist-body';
-        var layer = document.createElement('pre');
-        layer.className = 'vlist-layer' + (opts.className ? ' ' + opts.className : '');
-        body.appendChild(layer);
-        host.appendChild(body);
-
-        // 줄 높이는 글꼴·테마·배율에 따라 달라지므로 **재서** 쓴다.
-        var probe = document.createElement('pre');
-        probe.className = 'vlist-probe';
-        probe.textContent = 'X\nX\nX\nX\nX\nX\nX\nX\nX\nX';
-        body.appendChild(probe);
-        var lh = probe.getBoundingClientRect().height / 10;
-        body.removeChild(probe);
-        if (!lh || lh < 4) lh = 16;   // 측정 실패(숨겨진 패널 등) 대비
-        // +8px: 마지막 줄이 바닥에 딱 붙지 않게(일반 뷰어의 아래 패딩과 같은 역할).
-        body.style.height = Math.max(1, Math.round(total * lh) + 8) + 'px';
-        if (keepTop) host.scrollTop = keepTop;
-
-        function ensure(c) {
-          if (chunks[c] || asked[c]) return;
-          asked[c] = true;
-          ctx.window(c * CHUNK, CHUNK).then(function (msg) {
-            asked[c] = false;
-            if (!msg || msg.error) return;
-            chunks[c] = msg.lines || [];
-            draw();
-          });
-        }
-
-        function draw() {
-          var first = Math.max(0, Math.floor(host.scrollTop / lh) - OVERSCAN);
-          var last = Math.min(total,
-            first + Math.ceil(host.clientHeight / lh) + OVERSCAN * 2);
-          var out = [];
-          for (var i = first; i < last; i++) {
-            var c = Math.floor(i / CHUNK);
-            var rows = chunks[c];
-            if (!rows) { ensure(c); out.push(''); continue; }
-            var line = rows[i - c * CHUNK];
-            out.push(line == null ? '' : line);
-          }
-          layer.style.top = Math.round(first * lh) + 'px';
-          layer.textContent = out.join('\n');
-        }
-
-        host.addEventListener('scroll', draw);
-        // 다음 뷰어가 그려지기 전에 스크롤 구독을 반드시 끊는다(안 그러면 쌓인다).
-        viewerCleanup = function () { host.removeEventListener('scroll', draw); };
-        draw();
-      }
-
-      // 플러그인이 자기 폴더의 파일(주로 .wasm)을 바이트로 읽는다.
-      //
-      // 웹은 file:// 에서 fetch/XHR 을 못 쓰므로 WebAssembly.instantiateStreaming
-      // 이 통하지 않는다 → 네이티브에 요청해 base64 로 받아 Uint8Array 로 준다.
-      //   collaboViewers.asset('my-viewer', 'mod.wasm')
-      //     .then(function (bytes) { return WebAssembly.instantiate(bytes); })
-      // 요청은 **그 뷰어가 로드된 폴더 안**으로만 제한된다(네이티브가 검사).
-      function asset(viewerId, name) {
-        var v = null;
-        for (var i = 0; i < list.length; i++) {
-          if (list[i].id === viewerId) { v = list[i]; break; }
-        }
-        if (!v || !v.src) {
-          return Promise.reject(new Error('Unknown viewer: ' + viewerId));
-        }
-        return requestViewerAsset(v.src, name);
-      }
-
-      return {
-        register: register,
-        unregisterBySrc: unregisterBySrc,
-        setRules: setRules,
-        all: all, get: get,
-        pick: pick, pickByExt: pickByExt,
-        report: report, asset: asset, util: util,
-        virtualList: virtualList,
-      };
-    })();
-
-    // ===== 뷰어 에셋(wasm 등) 요청 =====
-    // key = '<스크립트 URL>|<파일명>' → {resolve, reject}. 같은 요청은 합친다.
-    var viewerAssetWaiters = Object.create(null);
-
-    function requestViewerAsset(src, name) {
-      var key = src + '|' + name;
-      var pending = viewerAssetWaiters[key];
-      if (pending) return pending.promise;
-      var entry = {};
-      entry.promise = new Promise(function (resolve, reject) {
-        entry.resolve = resolve;
-        entry.reject = reject;
-      });
-      viewerAssetWaiters[key] = entry;
-      send({ type: 'viewer.asset', from: src, name: name });
-      return entry.promise;
-    }
-
-    // ===== 압축 항목 미리보기 요청 (ctx.entry) =====
-    // key = '<압축 경로>|<항목 이름>'.
-    var archiveEntryWaiters = Object.create(null);
-
-    // ===== 대용량 파일 줄 창 요청 (ctx.window) =====
-    // key = '<경로>|<모드>|<시작 줄>|<줄 수>'.
-    var fileWindowWaiters = Object.create(null);
-
-    function requestArchiveEntry(path, name) {
-      var key = path + '|' + name;
-      var pending = archiveEntryWaiters[key];
-      if (pending) return pending.promise;
-      var entry = {};
-      entry.promise = new Promise(function (resolve) { entry.resolve = resolve; });
-      archiveEntryWaiters[key] = entry;
-      send({ type: 'archive.entry', path: path, name: name });
-      return entry.promise;
-    }
-
-    // 대용량 파일의 줄 창(window) 요청. 같은 요청이 이미 떠 있으면 그 약속을 함께 쓴다.
-    // (스크롤이 빠르면 같은 구간을 여러 번 부르기 쉽다.)
-    function requestFileWindow(path, mode, from, count) {
-      var key = path + '|' + mode + '|' + from + '|' + count;
-      var pending = fileWindowWaiters[key];
-      if (pending) return pending.promise;
-      var entry = { key: key };
-      entry.promise = new Promise(function (resolve) { entry.resolve = resolve; });
-      fileWindowWaiters[key] = entry;
-      send({ type: 'file.window', path: path, mode: mode, from: from, count: count });
-      return entry.promise;
-    }
-
-    function onFileWindowData(msg) {
-      // 응답에는 요청한 개수가 없다(끝에서 잘릴 수 있다) → 앞부분이 같은 요청을 모두 깨운다.
-      var prefix = (msg.path || '') + '|' + (msg.mode || '') + '|' + (msg.from || 0) + '|';
-      Object.keys(fileWindowWaiters).forEach(function (key) {
-        if (key.indexOf(prefix) !== 0) return;
-        var entry = fileWindowWaiters[key];
-        delete fileWindowWaiters[key];
-        entry.resolve(msg);
-      });
-    }
-
-    function onArchiveEntryData(msg) {
-      var key = (msg.path || '') + '|' + (msg.name || '');
-      var entry = archiveEntryWaiters[key];
-      if (!entry) return;
-      delete archiveEntryWaiters[key];
-      // 오류도 그대로 넘긴다 — 뷰어가 그 자리에 이유를 보여 준다.
-      entry.resolve(msg);
-    }
-
-    function onViewerAssetData(msg) {
-      var key = (msg.from || '') + '|' + (msg.name || '');
-      var entry = viewerAssetWaiters[key];
-      if (!entry) return;
-      delete viewerAssetWaiters[key];
-      if (msg.error) { entry.reject(new Error(msg.error)); return; }
-      try {
-        // base64 → Uint8Array. atob 는 바이너리 문자열을 주므로 바이트로 옮긴다.
-        var bin = atob(msg.b64 || '');
-        var bytes = new Uint8Array(bin.length);
-        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        entry.resolve(bytes);
-      } catch (e) {
-        entry.reject(e);
-      }
-    }
-
-    // 네이티브가 뷰어 설정을 밀어 준다: {rules:{id:{enabled,extensions}}, order:[id…]}.
-    window.collaboSetViewerRules = function (cfg) {
-      cfg = cfg || {};
-      collaboViewers.setRules(cfg.rules || {}, cfg.order || []);
-      updateViewerMenu();
-      // 보고 있던 뷰어를 꺼 버렸으면 다시 열어 자동 선택으로 되돌린다.
-      if (currentFilePath && !collaboViewers.get(currentViewerId)) {
-        openFile(currentFilePath);
-      }
-    };
-
-    // 뷰어 파일 주입. 레지스트리가 만들어진 뒤여야 하므로 여기서 로드한다.
-    // 파일 하나가 깨져도 나머지 뷰어는 살아 있게 개별로 처리한다.
-    var viewersReady = (function () {
-      var files = window.COLLABO_VIEWER_FILES || [];
-      return Promise.all(files.map(function (f) {
-        return new Promise(function (resolve) {
-          var s = document.createElement('script');
-          s.src = './viewers/' + f;
-          s.onload = function () { resolve(); };
-          s.onerror = function () {
-            console.warn('[viewer] 로드 실패:', f);
-            resolve(); // 실패해도 나머지 진행
-          };
-          document.head.appendChild(s);
-        });
-      }));
-    })();
-
-    // ===== 사용자 뷰어(설정 → 도구 → 파일 뷰어) =====
-    // 네이티브가 사용자 JS 를 웹 루트(viewers/user/)로 복사한 뒤,
-    // collaboSyncUserViewers(['./viewers/user/x.js', …]) 로 현재 목록을 넘긴다.
-    // 무엇을 새로 얹고 무엇을 내릴지는 여기서 판단한다(로드 상태는 웹만 안다).
-    var userViewerUrls = Object.create(null);   // 정규 URL → <script> 엘리먼트
-
-    // 뷰어 스크립트 하나를 얹는다. 같은 파일을 다시 얹으면 먼저 내린다(재적용).
-    // 반환: 로드가 끝나면(성공/실패 모두) 이행되는 Promise.
-    function loadViewerScript(url) {
-      var key = normViewerUrl(url);
-      if (userViewerUrls[key]) unloadViewerScript(key);
-      return new Promise(function (resolve) {
-        var s = document.createElement('script');
-        // 파일 내용이 바뀌어도 다시 읽히도록 캐시를 무효화한다(경로는 그대로다).
-        s.src = url + (url.indexOf('?') === -1 ? '?v=' : '&v=') + Date.now();
-        s.onload = function () { updateViewerMenu(); resolve(); };
-        s.onerror = function () {
-          console.warn('[viewer] 사용자 뷰어 로드 실패:', url);
-          delete userViewerUrls[key];
-          resolve();
-        };
-        userViewerUrls[key] = s;
-        document.head.appendChild(s);
-      });
-    }
-
-    // 여러 개를 **차례로** 얹는다. 이유 둘:
-    //  1) 여러 파일로 된 뷰어(viewer.json 의 scripts → entry)는 순서가 곧 의존성이다.
-    //  2) 등록 순서가 기본 우선순위이므로, 병렬로 로드하면 실행마다 순서가 흔들린다.
-    function loadViewerScriptsInOrder(urls) {
-      return urls.reduce(function (chain, url) {
-        return chain.then(function () { return loadViewerScript(url); });
-      }, Promise.resolve());
-    }
-
-    // 이미 실행된 스크립트를 되돌릴 수는 없지만, 그 스크립트가 등록한 뷰어를
-    // 레지스트리에서 빼면 드롭다운·자동 선택 대상에서 사라진다.
-    function unloadViewerScript(key) {
-      var s = userViewerUrls[key];
-      if (s && s.parentNode) s.parentNode.removeChild(s);
-      delete userViewerUrls[key];
-      return collaboViewers.unregisterBySrc(key) > 0;
-    }
-
-    window.collaboSyncUserViewers = function (urls) {
-      var list = urls || [];
-      var want = Object.create(null);
-      list.forEach(function (u) { want[normViewerUrl(u)] = u; });
-      var dropped = false;
-      // 1) 설정에서 빠진 뷰어 내리기. 이 함수가 얹은 것만 대상이다
-      //    (번들 뷰어는 건드리지 않는다).
-      Object.keys(userViewerUrls).forEach(function (key) {
-        if (!want[key]) dropped = unloadViewerScript(key) || dropped;
-      });
-      // 2) 새로 추가된 뷰어를 **넘어온 순서대로** 얹기(순서 = 의존성 + 우선순위).
-      loadViewerScriptsInOrder(list.filter(function (u) {
-        return !userViewerUrls[normViewerUrl(u)];
-      }));
-      updateViewerMenu();
-      // 지금 보고 있던 뷰어가 사라졌으면 다시 열어 자동 선택으로 되돌린다.
-      if (dropped && currentFilePath && !collaboViewers.get(currentViewerId)) {
-        openFile(currentFilePath);
-      }
-    };
-
-    // 뷰어 하나만 런타임에 붙일 때 쓰는 진입점(수동/디버그용).
-    window.collaboLoadViewer = function (url) { loadViewerScript(url); };
-
-    // ===== 트리 상태 =====
+    // ===== 프로젝트(대화 제목) · 우측 패널 =====
+    // 트리와 파일 뷰어는 네이티브(+ viewer.html)로 옮겼다. 대화 페이지가 아는 것은
+    // 프로젝트 이름(제목)뿐이고, 우측 패널 토글은 네이티브에 부탁한다.
     let rootPath = '';
-    const childrenCache = new Map();   // dirPath -> entries[]
-    const expanded = new Set();        // 펼쳐진 dir 경로
-    const dirContainers = new Map();   // dirPath -> 자식 컨테이너 element
-    let selectedPath = null;
-    let draggedPath = null;   // 드래그 중인 항목 경로
-    let searchMode = false;   // 파일명 검색 결과 표시 중
-    const treeEl = document.getElementById('tree');
-    const pathEl = document.getElementById('project-path');
     const chatTitleEl = document.getElementById('chat-title');
-    const treeOpenBtn = document.getElementById('tree-open-external');
 
     // 대화 헤더 제목: 프로젝트가 열려 있으면 폴더명(툴팁은 전체 경로), 없으면 기본 라벨.
     // onProjectChanged(프로젝트 변경)와 applyStrings(언어 변경) 양쪽에서 호출한다.
@@ -1703,880 +955,13 @@
       chatTitleEl.title = rootPath || '';
       chatTitleEl.classList.toggle('project', !!name);
     }
-    // 트리 경로를 OS 탐색기/파인더로 연다.
-    treeOpenBtn.addEventListener('click', function () {
-      if (rootPath) send({ type: 'file.openExternal', path: rootPath });
-    });
-
     function onProjectChanged(path) {
       rootPath = path || '';
-      pathEl.textContent = rootPath || T('noProject', '열린 프로젝트가 없습니다');
       renderChatTitle();
-      treeOpenBtn.disabled = !rootPath;
-      childrenCache.clear(); expanded.clear(); dirContainers.clear();
-      selectedPath = null;
-      clearViewer();
-      if (!rootPath) {
-        treeEl.innerHTML = '<div class="text-secondary small" data-i18n="treeEmpty"></div>';
-        treeEl.firstChild.textContent = T('treeEmpty', '프로젝트를 열면 파일 트리가 표시됩니다.');
-        return;
-      }
-      treeEl.innerHTML = '<div class="text-secondary small"></div>';
-      treeEl.firstChild.textContent = T('treeLoading', '불러오는 중입니다…');
-      send({ type: 'dir.list', path: rootPath });
     }
-
-    function onDirChildren(path, entries) {
-      childrenCache.set(path, entries);
-      if (searchMode) return; // 검색 결과 표시 중에는 트리를 갱신하지 않음
-      // ★ **스크롤 위치를 지키고 다시 그린다.**
-      // `renderDir` 는 컨테이너를 통째로 비우므로, 그 순간 내용 높이가 0 이 되어
-      // 브라우저가 `scrollTop` 을 0 으로 눌러 버린다. 에이전트가 도는 동안에는
-      // 파일 변경이 계속 들어와(특히 `.collabo/PLAYBOOK.md`) 이 재렌더가 몇 초마다
-      // 일어나므로, 보고 있던 트리가 자꾸 맨 위로 튄다.
-      // (§13-7 "다시 그려지는 UI 의 상태는 render 밖에 둔다" 와 같은 이야기다.)
-      const keepTop = treeEl.scrollTop;
-      if (path === rootPath) {
-        treeEl.innerHTML = '';
-        dirContainers.set(rootPath, treeEl);
-        renderDir(rootPath, treeEl, 0);
-      } else if (dirContainers.has(path)) {
-        renderDir(path, dirContainers.get(path), depthOf(path));
-      } else {
-        return; // 그리지 않았으면 스크롤도 건드릴 이유가 없다.
-      }
-      // 내용이 줄어 그 위치가 사라졌으면 브라우저가 알아서 끝으로 맞춘다.
-      if (keepTop) treeEl.scrollTop = keepTop;
-    }
-
-    function onFsChange(paths, files) {
-      // 트리: 우리가 이미 펼쳐/조회한 디렉토리만 새로고침 → 트리가 접히지 않는다.
-      if (!searchMode) {
-        paths.forEach(function (pth) {
-          if (pth === rootPath || childrenCache.has(pth)) {
-            send({ type: 'dir.list', path: pth });
-          }
-        });
-      }
-      // 뷰어: 지금 보고 있는 파일이 바뀌었으면 디바운스 후 자동 갱신
-      // (연속 변경 시 매번 다시 읽는 과부하를 피하려고 잠깐 모은다).
-      if (currentFilePath && (files || []).indexOf(currentFilePath) !== -1) {
-        // 우리가 방금 저장한 변경이면 다시 읽지 않는다 — 편집기가 갈아치워지면
-        // 커서·스크롤이 날아가고, 방금 쓴 내용이라 읽을 이유도 없다.
-        if (suppressReloadUntil[currentFilePath] > Date.now()) return;
-        scheduleViewerReload();
-      }
-    }
-
-    // ===== 뷰어 편집기의 저장 (ctx.save) =====
-    // 웹은 파일시스템에 직접 접근하지 않는다 — 쓰기도 네이티브(file.save)가 한다.
-    var suppressReloadUntil = Object.create(null);   // path → timestamp
-    var saveWaiters = [];                            // {path, done}
-
-    function requestFileSave(path, text, done) {
-      if (!path) return;
-      if (typeof done === 'function') saveWaiters.push({ path: path, done: done });
-      // 저장 → 감시자 이벤트가 곧 돌아온다. 그 자동 갱신만 잠깐 막는다.
-      suppressReloadUntil[path] = Date.now() + 2000;
-      send({ type: 'file.save', path: path, content: text });
-    }
-
-    function onFileSaved(msg) {
-      var ok = !!msg.ok;
-      if (!ok) delete suppressReloadUntil[msg.path];
-      saveWaiters = saveWaiters.filter(function (w) {
-        if (w.path !== msg.path) return true;
-        try { w.done(ok, msg.message || ''); } catch (e) { console.error(e); }
-        return false;
-      });
-      if (!ok) onChatNotice({ text: T('saveFailed', '저장하지 못했습니다') + ': ' + (msg.message || '') });
-    }
-
-    let viewerReloadTimer = null;
-    let viewerAutoReloading = false;
-
-    /// 자동 갱신 직전의 뷰어 스크롤. `{path, top}` 이고, 같은 파일이 다시 그려진
-    /// 뒤에만 되돌린다(다른 파일을 열었으면 맨 위가 맞다).
-    let viewerKeepScroll = null;
-
-    function scheduleViewerReload() {
-      if (viewerReloadTimer) clearTimeout(viewerReloadTimer);
-      viewerReloadTimer = setTimeout(function () {
-        viewerReloadTimer = null;
-        if (currentFilePath) {
-          viewerAutoReloading = true;
-          // ★ 읽던 자리를 기억해 둔다. 에이전트가 도는 동안 `PLAYBOOK.md` 같은
-          // 파일은 몇 초마다 바뀌는데, 그때마다 맨 위로 튀면 읽을 수가 없다.
-          viewerKeepScroll = { path: currentFilePath, top: viewerEl.scrollTop };
-          // 보던 뷰어를 유지한 채 다시 읽는다.
-          openFile(currentFilePath, currentViewerId);
-        }
-      }, 800);
-    }
-
-    // 파일명 검색 결과(플랫 리스트)를 트리 영역에 표시.
-    function onSearchResults(msg) {
-      searchMode = true;
-      treeEl.innerHTML = '';
-      const files = msg.files || [];
-      if (files.length === 0) {
-        const d = document.createElement('div');
-        d.className = 'text-secondary small p-1';
-        d.textContent = T('noResults', '검색 결과가 없습니다');
-        treeEl.appendChild(d);
-        return;
-      }
-      files.forEach(function (f) {
-        const row = document.createElement('div');
-        row.className = 'tree-row';
-        row.style.paddingLeft = '6px';
-        row.title = f.path;
-        const icon = document.createElement('span');
-        icon.className = 'tree-caret';
-        row.appendChild(icon);
-        const name = document.createElement('span');
-        name.className = 'tree-name';
-        name.textContent = f.name;
-        row.appendChild(name);
-        row.draggable = true;
-        row.addEventListener('dragstart', function (ev) {
-          draggedPath = f.path; ev.dataTransfer.setData('text/plain', f.path);
-        });
-        row.addEventListener('click', function () { openFile(f.path); });
-        // 검색 결과는 파일만 나온다(findByName).
-        row.addEventListener('contextmenu', function (ev) { showContextMenu(ev, f.path, false); });
-        treeEl.appendChild(row);
-      });
-    }
-
-    // 검색 종료 → 트리 복원.
-    function exitSearchMode() {
-      if (!searchMode) return;
-      searchMode = false;
-      if (rootPath && childrenCache.has(rootPath)) {
-        treeEl.innerHTML = '';
-        dirContainers.set(rootPath, treeEl);
-        renderDir(rootPath, treeEl, 0);
-      } else if (rootPath) {
-        send({ type: 'dir.list', path: rootPath });
-      }
-    }
-
-    // 렌더 시 depth 를 알기 위해 컨테이너에 데이터로 저장.
-    function depthOf(path) {
-      const c = dirContainers.get(path);
-      return c && c._depth != null ? c._depth : 0;
-    }
-
-    function renderDir(dirPath, container, depth) {
-      container._depth = depth;
-      const entries = childrenCache.get(dirPath) || [];
-      container.innerHTML = '';
-      if (dirPath === rootPath && entries.length === 0) {
-        container.innerHTML = '<div class="text-secondary small" data-i18n="folderEmpty"></div>';
-        container.firstChild.textContent = T('folderEmpty', '(빈 폴더)');
-        return;
-      }
-      entries.forEach(function (e) {
-        const row = document.createElement('div');
-        row.className = 'tree-row' + (e.path === selectedPath ? ' selected' : '');
-        row.style.paddingLeft = (depth * 14 + 4) + 'px';
-        row.dataset.path = e.path;
-        row.dataset.dir = e.isDir ? '1' : '0';
-
-        const caret = document.createElement('span');
-        caret.className = 'tree-caret';
-        caret.textContent = e.isDir ? (expanded.has(e.path) ? '▾' : '▸') : '';
-        row.appendChild(caret);
-
-        const name = document.createElement('span');
-        name.className = 'tree-name' + (e.isDir ? ' dir' : '');
-        name.textContent = e.name;
-        row.appendChild(name);
-        container.appendChild(row);
-
-        // 드래그하여 폴더로 이동(기본) / 복사(Ctrl).
-        row.draggable = true;
-        row.addEventListener('dragstart', function (ev) {
-          draggedPath = e.path;
-          ev.dataTransfer.setData('text/plain', e.path);
-          ev.dataTransfer.effectAllowed = 'copyMove';
-          ev.stopPropagation();
-        });
-
-        if (e.isDir) {
-          const child = document.createElement('div');
-          child._depth = depth + 1; // 나중에 펼칠 때도 올바른 들여쓰기를 위해 항상 설정
-          dirContainers.set(e.path, child);
-          container.appendChild(child);
-          if (expanded.has(e.path)) {
-            child.style.display = '';
-            if (childrenCache.has(e.path)) renderDir(e.path, child, depth + 1);
-            else { child.innerHTML =
-                   '<div class="text-secondary small" style="padding-left:' +
-                   ((depth + 1) * 14 + 4) + 'px">…</div>'; send({ type: 'dir.list', path: e.path }); }
-          } else {
-            child.style.display = 'none';
-          }
-          row.addEventListener('click', function () { toggleDir(e.path); });
-          // 폴더는 드롭 대상.
-          row.addEventListener('dragover', function (ev) {
-            ev.preventDefault();
-            ev.dataTransfer.dropEffect = ev.ctrlKey ? 'copy' : 'move';
-            row.classList.add('drop-target');
-          });
-          row.addEventListener('dragleave', function () { row.classList.remove('drop-target'); });
-          row.addEventListener('drop', function (ev) {
-            ev.preventDefault(); ev.stopPropagation();
-            row.classList.remove('drop-target');
-            const src = draggedPath || ev.dataTransfer.getData('text/plain');
-            if (src && src !== e.path) {
-              send({ type: ev.ctrlKey ? 'fs.copy' : 'fs.move', src: src, dst: e.path });
-            }
-            draggedPath = null;
-          });
-        } else {
-          row.addEventListener('click', function () { openFile(e.path); });
-        }
-        row.addEventListener('contextmenu', function (ev) { showContextMenu(ev, e.path, e.isDir); });
-      });
-    }
-
-    function toggleDir(path) {
-      const child = dirContainers.get(path);
-      if (expanded.has(path)) {
-        expanded.delete(path);
-        if (child) child.style.display = 'none';
-      } else {
-        expanded.add(path);
-        if (child) {
-          child.style.display = '';
-          if (childrenCache.has(path)) renderDir(path, child, (child._depth || 0));
-          else send({ type: 'dir.list', path: path });
-        }
-      }
-      // caret 갱신: 부모 재렌더 없이 해당 row 만.
-      const row = treeEl.querySelector('.tree-row[data-path="' + cssEscape(path) + '"]');
-      if (row) row.querySelector('.tree-caret').textContent = expanded.has(path) ? '▾' : '▸';
-    }
-
-    function cssEscape(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/"/g, '\\"'); }
-
-    // ===== 컨텍스트 메뉴 =====
-    // 대상은 셋 중 하나다: 파일 / 폴더 / 빈 영역(=프로젝트 루트).
-    // 빈 영역에서는 "만들기" 만 되고 이름 변경·삭제는 숨긴다(루트는 여기서 못 건드린다).
-    const ctxMenu = document.getElementById('context-menu');
-    let ctxPath = null;
-    let ctxIsDir = false;
-    let ctxIsRoot = false;   // 빈 영역 우클릭(대상이 프로젝트 루트)
-    function showContextMenu(ev, path, isDir) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      ctxPath = path;
-      ctxIsDir = !!isDir;
-      ctxIsRoot = !path || path === rootPath;
-      if (!ctxPath) return;
-      // 항목별 표시: 루트(빈 영역)는 만들기만, 파일은 "연결 프로그램으로 열기" 까지.
-      ctxMenu.querySelectorAll('.ctx-item-only').forEach(function (el) {
-        el.style.display = ctxIsRoot ? 'none' : '';
-      });
-      ctxMenu.querySelectorAll('.ctx-file-only').forEach(function (el) {
-        el.style.display = (!ctxIsRoot && !ctxIsDir) ? '' : 'none';
-      });
-      // 먼저 보여야 크기를 잴 수 있다 → 잰 뒤 화면 밖으로 나가지 않게 당긴다.
-      ctxMenu.style.left = '0px';
-      ctxMenu.style.top = '0px';
-      ctxMenu.style.display = 'block';
-      const r = ctxMenu.getBoundingClientRect();
-      const x = Math.max(0, Math.min(ev.clientX, window.innerWidth - r.width - 4));
-      const y = Math.max(0, Math.min(ev.clientY, window.innerHeight - r.height - 4));
-      ctxMenu.style.left = x + 'px';
-      ctxMenu.style.top = y + 'px';
-    }
-    function hideContextMenu() {
-      ctxMenu.style.display = 'none';
-      ctxPath = null; ctxIsDir = false; ctxIsRoot = false;
-    }
-    // 트리 빈 영역 우클릭 → 프로젝트 루트 대상.
-    treeEl.addEventListener('contextmenu', function (ev) {
-      if (ev.target.closest('.tree-row')) return;  // 항목은 각 row 가 처리한다
-      if (!rootPath) return;
-      showContextMenu(ev, rootPath, true);
+    document.getElementById('toggle-right').addEventListener('click', function () {
+      send({ type: 'layout.toggleRight' });
     });
-    document.getElementById('ctx-copy-path').addEventListener('click', function () {
-      if (ctxPath) send({ type: 'clipboard.write', text: ctxPath });
-      hideContextMenu();
-    });
-    document.getElementById('ctx-open-with').addEventListener('click', function () {
-      if (ctxPath) send({ type: 'file.openExternal', path: ctxPath });
-      hideContextMenu();
-    });
-    document.getElementById('ctx-new-file').addEventListener('click', function () {
-      startCreate(false);
-    });
-    document.getElementById('ctx-new-folder').addEventListener('click', function () {
-      startCreate(true);
-    });
-    document.getElementById('ctx-rename').addEventListener('click', function () {
-      const path = ctxPath;
-      hideContextMenu();
-      if (!path) return;
-      promptName({
-        title: T('rename', '이름 변경'),
-        where: path,
-        value: baseName(path),
-        ok: T('rename', '이름 변경'),
-        selectStem: true
-      }, function (name) { send({ type: 'fs.rename', path: path, name: name }); });
-    });
-    document.getElementById('ctx-delete').addEventListener('click', function () {
-      const path = ctxPath;
-      const isDir = ctxIsDir;
-      hideContextMenu();
-      if (path) confirmDelete(path, isDir);
-    });
-    document.addEventListener('click', hideContextMenu);
-    document.addEventListener('scroll', hideContextMenu, true);
-    window.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideContextMenu(); });
-
-    // 새로 만들 위치: 폴더를 눌렀으면 그 안, 파일을 눌렀으면 그 파일이 있는 폴더.
-    function startCreate(isDir) {
-      const parent = (ctxIsDir || ctxIsRoot) ? ctxPath : dirNameOf(ctxPath);
-      hideContextMenu();
-      if (!parent) return;
-      promptName({
-        title: isDir ? T('newFolder', '새 폴더') : T('newFile', '새 파일'),
-        where: parent,
-        value: '',
-        ok: T('create', '만들기')
-      }, function (name) {
-        send({ type: 'fs.create', parent: parent, name: name, dir: isDir });
-      });
-    }
-
-    function dirNameOf(pth) {
-      const s = String(pth || '');
-      const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
-      return i > 0 ? s.slice(0, i) : rootPath;
-    }
-
-    // ===== 이름 입력 / 삭제 확인 모달 =====
-    // 이름 규칙은 네이티브 `lib/src/fs/entry_name.dart` 와 **같은 규칙**이다.
-    // 여기 있는 이유는 번역된 메시지를 입력 즉시 보여주기 위해서고, 최종 판정은
-    // 네이티브가 한다(웹을 통과해도 네이티브가 다시 막는다). 고칠 땐 양쪽을 같이.
-    const WIN_RESERVED = ['CON','PRN','AUX','NUL',
-      'COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9',
-      'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'];
-    function validateEntryName(raw) {
-      const name = String(raw || '').trim();
-      if (!name) return T('nameEmpty', '이름을 입력하세요.');
-      if (/[<>:"/\\|?*\x00-\x1f]/.test(name)) {
-        return T('nameInvalidChars', '사용할 수 없는 문자가 있습니다: < > : " / \\ | ? *');
-      }
-      if (name === '.' || name === '..') return T('nameInvalidName', '사용할 수 없는 이름입니다.');
-      if (/[. ]$/.test(name)) return T('nameTrailingDot', '이름은 마침표(.)나 공백으로 끝날 수 없습니다.');
-      if (WIN_RESERVED.indexOf(name.split('.')[0].toUpperCase()) !== -1) {
-        return T('nameReserved', '예약된 이름은 사용할 수 없습니다.');
-      }
-      return null;
-    }
-
-    const nameModalEl = document.getElementById('name-modal');
-    const nameInput = document.getElementById('name-modal-input');
-    const nameErrorEl = document.getElementById('name-modal-error');
-    const nameOkBtn = document.getElementById('name-modal-ok');
-    let nameCallback = null;
-
-    function promptName(opts, done) {
-      nameCallback = done;
-      document.getElementById('name-modal-title').textContent = opts.title;
-      document.getElementById('name-modal-where').textContent = opts.where || '';
-      document.getElementById('name-modal-where').title = opts.where || '';
-      nameOkBtn.textContent = opts.ok;
-      nameInput.value = opts.value || '';
-      nameInput.dataset.original = opts.value || '';
-      nameInput.dataset.selectStem = opts.selectStem ? '1' : '';
-      refreshNameState();
-      bootstrap.Modal.getOrCreateInstance(nameModalEl).show();
-    }
-    // 모달이 다 열린 뒤 포커스를 준다(열리는 중엔 focus 가 먹지 않는다).
-    nameModalEl.addEventListener('shown.bs.modal', function () {
-      nameInput.focus();
-      // 이름 변경은 확장자를 뺀 부분만 선택 — 확장자를 지우는 실수를 줄인다.
-      const v = nameInput.value;
-      const dot = v.lastIndexOf('.');
-      if (nameInput.dataset.selectStem && dot > 0) nameInput.setSelectionRange(0, dot);
-      else nameInput.select();
-    });
-    nameModalEl.addEventListener('hidden.bs.modal', function () { nameCallback = null; });
-    function refreshNameState() {
-      const err = validateEntryName(nameInput.value);
-      const unchanged = nameInput.value.trim() === (nameInput.dataset.original || '') &&
-                        !!nameInput.dataset.original;
-      nameErrorEl.textContent = nameInput.value ? (err || '') : '';
-      nameOkBtn.disabled = !!err || unchanged;
-    }
-    nameInput.addEventListener('input', refreshNameState);
-    nameInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !nameOkBtn.disabled) { e.preventDefault(); nameOkBtn.click(); }
-    });
-    nameOkBtn.addEventListener('click', function () {
-      const cb = nameCallback;
-      const value = nameInput.value.trim();
-      bootstrap.Modal.getOrCreateInstance(nameModalEl).hide();
-      if (cb && value) cb(value);
-    });
-
-    const confirmDeleteEl = document.getElementById('confirm-delete-modal');
-    const confirmDeleteOk = document.getElementById('confirm-delete-ok');
-    let deleteTarget = null;
-    function confirmDelete(path, isDir) {
-      deleteTarget = path;
-      document.getElementById('confirm-delete-name').textContent = path;
-      document.getElementById('confirm-delete-warn').textContent = isDir
-        ? T('deleteFolderWarn', '폴더와 그 안의 모든 내용이 지워집니다. 되돌릴 수 없습니다.')
-        : T('deleteWarn', '되돌릴 수 없습니다(휴지통으로 가지 않습니다).');
-      bootstrap.Modal.getOrCreateInstance(confirmDeleteEl).show();
-    }
-    confirmDeleteOk.addEventListener('click', function () {
-      const path = deleteTarget;
-      deleteTarget = null;
-      bootstrap.Modal.getOrCreateInstance(confirmDeleteEl).hide();
-      if (path) send({ type: 'fs.delete', path: path });
-    });
-
-    // 네이티브가 알려 주는 결과 — 트리/뷰어 상태를 따라 맞춘다.
-    function onFsCreated(msg) {
-      const path = msg.path;
-      if (!path) return;
-      const parent = dirNameOf(path);
-      if (parent && !expanded.has(parent) && parent !== rootPath) toggleDir(parent);
-      if (!msg.isDir) openFile(path);          // 만든 파일은 바로 열어 편집할 수 있게
-      else selectedPath = path;
-    }
-    function onFsRenamed(msg) {
-      if (selectedPath === msg.path) selectedPath = msg.to;
-      if (expanded.has(msg.path)) { expanded.delete(msg.path); expanded.add(msg.to); }
-      // 옛 경로로 캐시해 둔 것은 버린다(새 경로는 부모를 다시 읽으면서 채워진다).
-      childrenCache.delete(msg.path);
-      dirContainers.delete(msg.path);
-      if (currentFilePath === msg.path) openFile(msg.to);
-    }
-    function onFsDeleted(msg) {
-      const path = msg.path;
-      if (!path) return;
-      if (selectedPath === path || isUnder(selectedPath, path)) selectedPath = null;
-      expanded.forEach(function (d) { if (d === path || isUnder(d, path)) expanded.delete(d); });
-      childrenCache.forEach(function (_, d) { if (d === path || isUnder(d, path)) childrenCache.delete(d); });
-      if (currentFilePath === path || isUnder(currentFilePath, path)) clearViewer();
-    }
-    // path 가 dir 안에 있는가(구분자까지 봐서 형제 prefix 를 걸러낸다).
-    function isUnder(path, dir) {
-      if (!path || !dir) return false;
-      const d = dir.replace(/[\\/]+$/, '');
-      return path.indexOf(d) === 0 && /[\\/]/.test(path.charAt(d.length));
-    }
-
-    // ===== 파일 뷰어 =====
-    let currentFilePath = null;
-    let currentViewerId = null;   // 지금 그리고 있는 뷰어 플러그인
-    let pendingViewerId = null;   // 사용자가 드롭다운에서 고른 뷰어(응답 대기 중)
-    // 응답을 기다리는 경로. 압축 파일처럼 **읽는 데 시간이 걸리는** 형식이 있어서,
-    // ① 대기 중임을 알리고 ② 늦게 도착한 결과(다른 파일로 옮긴 뒤)를 버리는 데 쓴다.
-    let pendingOpenPath = null;
-    let pendingOpenTimer = null;
-    let currentSize = 0;
-    let currentTruncated = false;
-    let currentWindowed = false;   // 창(window) 단위로 이어 읽을 수 있는 파일인가
-    let currentLineCount = 0;      // 전체 줄 수(hex 는 16바이트 = 한 줄)
-    let viewerRaw = '';       // 현재 파일 원본 내용(검색 하이라이트 복원용)
-    const viewerEl = document.getElementById('viewer');
-    const fileNameEl = document.getElementById('file-name');
-    const noticeEl = document.getElementById('viewer-notice');
-
-    function clearViewer() {
-      clearPendingOpen();
-      currentFilePath = null; currentViewerId = null; pendingViewerId = null;
-      viewerRaw = ''; currentSize = 0; currentTruncated = false;
-      currentWindowed = false; currentLineCount = 0;
-      fileNameEl.textContent = T('fileNone', '선택한 파일이 없습니다');
-      noticeEl.classList.add('d-none');
-      viewerEl.className = 'p-2';
-      viewerEl.innerHTML = '<div class="text-secondary small" data-i18n="viewerEmpty"></div>';
-      viewerEl.firstChild.textContent = T('viewerEmpty', '선택한 파일 내용이 여기에 표시됩니다.');
-      updateViewerMenu();
-    }
-
-    // 현재 뷰어 플러그인으로 본문을 다시 그린다(검색 하이라이트는 제거됨).
-    function renderViewer() {
-      // 직전 뷰어가 걸어 둔 구독을 먼저 끊는다(가상 스크롤 리스너가 쌓이지 않게).
-      if (viewerCleanup) {
-        try { viewerCleanup(); } catch (e) { /* 무시 */ }
-        viewerCleanup = null;
-      }
-      const v = collaboViewers.get(currentViewerId);
-      if (!v) {
-        viewerEl.className = '';
-        const pre = document.createElement('pre');
-        pre.textContent = viewerRaw;
-        viewerEl.innerHTML = '';
-        viewerEl.appendChild(pre);
-        return;
-      }
-      try {
-        var path = currentFilePath;
-        v.render({
-          el: viewerEl,
-          content: viewerRaw,
-          path: path,
-          size: currentSize,
-          truncated: currentTruncated,
-          util: collaboViewers.util,
-          // 대용량 파일: content 는 앞부분뿐이고, 나머지는 창으로 이어 읽는다.
-          windowed: currentWindowed,
-          lineCount: currentLineCount,
-          window: function (from, count) {
-            return requestFileWindow(path, v.dataMode, from, count);
-          },
-          // 편집기용 저장. 열려 있던 그 파일에만 쓴다(다른 파일로 옮긴 뒤 늦게
-          // 도착한 저장이 엉뚱한 파일을 덮어쓰지 않게 경로를 고정해 넘긴다).
-          save: function (text, done) { requestFileSave(path, text, done); },
-          // 압축 뷰어(dataMode 'archive')용: 안에 든 파일 하나를 읽는다.
-          // → Promise<{name, mode:'text'|'hex', content, size, truncated, error?}>
-          entry: function (name) { return requestArchiveEntry(path, name); },
-        });
-      } catch (e) {
-        // 확장(플러그인)이 터져도 앱은 살아 있어야 한다 — 오류만 표시한다.
-        console.error('[viewer] render 실패:', v.id, e);
-        viewerEl.className = 'p-3';
-        viewerEl.innerHTML = '<div class="text-danger small"></div>';
-        viewerEl.firstChild.textContent =
-          T('viewerRenderError', '뷰어 오류') + ' (' + v.id + '): ' + e;
-      }
-    }
-
-    // 뷰어 내용에서 검색어를 <mark> 로 하이라이트. 빈 검색어면 복원만.
-    function applyViewerSearch(query) {
-      if (!currentFilePath) return;
-      renderViewer();
-      const q = (query || '').trim();
-      if (!q) return;
-      let count = 0;
-      const lower = q.toLowerCase();
-      const walker = document.createTreeWalker(viewerEl, NodeFilter.SHOW_TEXT, null);
-      const targets = [];
-      let n;
-      while ((n = walker.nextNode())) {
-        if (n.nodeValue.toLowerCase().includes(lower)) targets.push(n);
-      }
-      let first = null;
-      targets.forEach(function (node) {
-        const text = node.nodeValue;
-        const frag = document.createDocumentFragment();
-        let i = 0, idx;
-        const low = text.toLowerCase();
-        while ((idx = low.indexOf(lower, i)) !== -1) {
-          if (idx > i) frag.appendChild(document.createTextNode(text.slice(i, idx)));
-          const mark = document.createElement('mark');
-          mark.textContent = text.slice(idx, idx + q.length);
-          if (!first) first = mark;
-          frag.appendChild(mark);
-          count++;
-          i = idx + q.length;
-        }
-        if (i < text.length) frag.appendChild(document.createTextNode(text.slice(i)));
-        node.parentNode.replaceChild(frag, node);
-      });
-      if (first) first.scrollIntoView({ block: 'center' });
-    }
-
-    // [viewerId] 를 주면 그 뷰어가 요구하는 형태(dataMode)로 읽어 달라고 요청한다.
-    // 안 주면 **확장자를 담당하는 뷰어**(설정 반영)의 형태로 요청하고, 담당이 없으면
-    // 네이티브가 확장자/바이너리 판정으로 형태를 고른다. 어느 쪽이든 도착한 형태에
-    // 맞춰 뷰어가 자동 선택된다.
-    function openFile(path, viewerId) {
-      // 다른 파일로 이동하면 대기 중인 자동 갱신은 취소.
-      if (viewerReloadTimer) { clearTimeout(viewerReloadTimer); viewerReloadTimer = null; }
-      selectedPath = path;
-      treeEl.querySelectorAll('.tree-row.selected').forEach(function (r) { r.classList.remove('selected'); });
-      const row = treeEl.querySelector('.tree-row[data-path="' + cssEscape(path) + '"]');
-      if (row) row.classList.add('selected');
-      const v = viewerId
-        ? collaboViewers.get(viewerId)
-        : collaboViewers.pickByExt(path);
-      pendingViewerId = v ? v.id : null;
-      const m = { type: 'file.open', path: path };
-      if (v) m.mode = v.dataMode;
-      // 읽는 중 표시: 바로 띄우면 작은 텍스트 파일에서 깜빡이므로 조금 기다린다.
-      // (압축 파일은 해독이 필요해 네이티브가 아이솔레이트에서 처리한다.)
-      pendingOpenPath = path;
-      if (pendingOpenTimer) clearTimeout(pendingOpenTimer);
-      pendingOpenTimer = setTimeout(function () {
-        pendingOpenTimer = null;
-        if (pendingOpenPath !== path) return;
-        fileNameEl.textContent = baseName(path);
-        noticeEl.classList.add('d-none');
-        viewerEl.className = 'p-3';
-        viewerEl.innerHTML = '<div class="text-secondary small"></div>';
-        viewerEl.firstChild.textContent = T('viewerLoading', '파일을 읽는 중입니다…');
-      }, 150);
-      send(m);
-    }
-
-    /// 응답 대기 상태를 끝낸다(도착/오류/뷰어 닫기).
-    function clearPendingOpen() {
-      if (pendingOpenTimer) { clearTimeout(pendingOpenTimer); pendingOpenTimer = null; }
-      pendingOpenPath = null;
-    }
-
-    function onFileContent(msg) {
-      // 뷰어 플러그인이 아직 안 붙었을 수 있다(초기 로드 직후).
-      viewersReady.then(function () { renderFileContent(msg); });
-    }
-
-    function renderFileContent(msg) {
-      // 다른 파일로 옮긴 뒤 늦게 도착한 결과는 버린다(압축 해독처럼 느린 읽기).
-      if (pendingOpenPath && msg.path !== pendingOpenPath) return;
-      clearPendingOpen();
-      viewerAutoReloading = false;
-      currentFilePath = msg.path;
-      viewerRaw = msg.content || '';
-      currentSize = msg.size || 0;
-      currentTruncated = !!msg.truncated;
-      // 창(window)으로 이어 읽을 수 있는 파일인가 — 뷰어가 가상 스크롤을 켠다.
-      currentWindowed = !!msg.windowed;
-      currentLineCount = msg.lineCount || 0;
-      fileNameEl.textContent = baseName(msg.path);
-
-      // 네이티브의 읽기 모드('text'|'hex'|'md'|'archive')를 뷰어의 dataMode 로 환원한다.
-      // md 는 데이터 형태로는 text 다(마크다운 렌더는 뷰어가 한다).
-      // ⚠️ 네이티브에 읽기 모드를 추가하면 **여기도 같이 늘려야 한다** — 빠뜨리면
-      // 그 형태로 읽어 온 결과가 text 로 강등되고, 그 모드를 쓰는 뷰어는 탈락한다
-      // (dataMode 가 안 맞아 pick 이 폴백 Text 를 고른다).
-      // ('md' 는 DATA_MODES 에 없으므로 자연히 text 로 떨어진다.)
-      const dataMode =
-        DATA_MODES.indexOf(msg.mode) !== -1 ? msg.mode : 'text';
-      let v = pendingViewerId ? collaboViewers.get(pendingViewerId) : null;
-      // 사용자가 고른 뷰어가 이 데이터 형태와 안 맞으면 자동 선택으로 되돌린다.
-      if (!v || v.dataMode !== dataMode) v = collaboViewers.pick(msg.path, dataMode);
-      currentViewerId = v ? v.id : null;
-      pendingViewerId = null;
-      updateViewerMenu();
-
-      // 압축은 `truncated` 가 "항목 목록이 잘렸다" 는 뜻이라 이 문구(앞부분만 읽음)와
-      // 의미가 다르다 — 뷰어가 자기 자리에 항목 수로 안내하므로 여기선 띄우지 않는다.
-      if (msg.truncated && dataMode !== 'archive') {
-        // 창을 쓰는 파일은 "앞부분만" 이 아니다 — 스크롤하면 이어서 읽는다.
-        // 다만 **저장은 여전히 막힌다**(전체를 들고 있지 않다).
-        noticeEl.textContent = (currentWindowed
-            ? T('windowed', '대용량 파일: 보이는 부분만 읽으므로 저장할 수 없습니다')
-            : T('truncated', '대용량 파일: 앞부분만 표시합니다')) +
-          ' (' + formatSize(msg.size) + ')';
-        noticeEl.classList.remove('d-none');
-      } else {
-        noticeEl.classList.add('d-none');
-      }
-      renderViewer();
-      // 자동 갱신이었으면 읽던 자리로 되돌린다. 뷰어가 렌더 안에서 비동기로
-      // 내용을 채울 수 있어 한 프레임 뒤에 맞춘다(그래도 어긋나면 그 뷰어가
-      // 자기 스크롤을 따로 들고 있는 경우다 — 가상 스크롤은 이미 자체 보존한다).
-      if (viewerKeepScroll && viewerKeepScroll.path === msg.path) {
-        const top = viewerKeepScroll.top;
-        viewerKeepScroll = null;
-        if (top) {
-          requestAnimationFrame(function () { viewerEl.scrollTop = top; });
-        }
-      } else {
-        viewerKeepScroll = null;
-      }
-      // 내용 검색이 열려 있으면 즉시 하이라이트 적용.
-      const cs = document.getElementById('content-search');
-      if (cs && cs.value.trim()) applyViewerSearch(cs.value);
-    }
-
-    function onFileError(msg) {
-      if (pendingOpenPath && msg.path && msg.path !== pendingOpenPath) return;
-      clearPendingOpen();
-      // 자동 갱신 중 파일이 사라진(삭제/이동) 경우엔 에러 대신 뷰어를 닫는다.
-      if (viewerAutoReloading) {
-        viewerAutoReloading = false;
-        viewerKeepScroll = null;
-        clearViewer();
-        return;
-      }
-      viewerKeepScroll = null;
-      viewerEl.className = 'p-3';
-      viewerEl.innerHTML = '<div class="text-danger small">' +
-        esc(T('fileOpenError', '파일을 열 수 없습니다: ')) + esc(msg.message || '') + '</div>';
-    }
-
-    const modeBtn = document.getElementById('viewer-mode-btn');
-    const modeMenu = document.getElementById('viewer-mode-menu');
-    const openExternalBtn = document.getElementById('viewer-open-external');
-
-    // 보기 방식 드롭다운을 등록된 뷰어 플러그인으로 채운다.
-    // (설정에서 뷰어를 추가/제거해도 collaboSyncUserViewers 가 다시 부른다.)
-    function updateViewerMenu() {
-      modeBtn.disabled = !currentFilePath;
-      openExternalBtn.disabled = !currentFilePath;
-      // 등록 상태가 바뀌었으면 네이티브(설정 화면)에 알린다. 같은 목록은 걸러진다.
-      collaboViewers.report();
-      const viewers = collaboViewers.all();
-      const cur = collaboViewers.get(currentViewerId);
-      modeBtn.textContent = cur ? cur.label : (viewers.length ? viewers[0].label : '—');
-      modeMenu.innerHTML = '';
-      viewers.forEach(function (v) {
-        const li = document.createElement('li');
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'dropdown-item' + (v.id === currentViewerId ? ' active' : '');
-        b.textContent = v.label;
-        b.addEventListener('click', function () {
-          if (currentFilePath) openFile(currentFilePath, v.id);
-        });
-        li.appendChild(b);
-        modeMenu.appendChild(li);
-      });
-    }
-    // 연결 프로그램(OS 기본 앱)으로 현재 파일 열기.
-    openExternalBtn.addEventListener('click', function () {
-      if (currentFilePath) send({ type: 'file.openExternal', path: currentFilePath });
-    });
-    // 뷰어가 다 붙은 뒤 한 번 채워 둔다(파일을 열기 전에도 목록이 보이도록).
-    viewersReady.then(updateViewerMenu);
-
-    // 뷰어 선택 영역 복사(선택이 없으면 전체).
-    document.getElementById('viewer-copy').addEventListener('click', function () {
-      const sel = window.getSelection();
-      let text = '';
-      if (sel && sel.toString() && viewerEl.contains(sel.anchorNode)) {
-        text = sel.toString();
-      } else {
-        text = viewerRaw;
-      }
-      if (text) send({ type: 'clipboard.write', text: text });
-    });
-
-    function formatSize(n) {
-      if (n < 1024) return n + ' B';
-      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-      return (n / 1024 / 1024).toFixed(1) + ' MB';
-    }
-
-    // ===== 검색 토글: 아이콘 클릭 시 라벨(경로/파일명)을 검색창이 덮어쓴다 =====
-    let fileSearchTimer = null;
-    document.querySelectorAll('[data-search]').forEach(function (row) {
-      const kind = row.dataset.search; // 'file' | 'content'
-      const label = row.querySelector('[data-search-label]');
-      const toggle = row.querySelector('[data-search-toggle]');
-      const box = row.querySelector('[data-search-box]');
-      const input = row.querySelector('[data-search-input]');
-      const close = row.querySelector('[data-search-close]');
-      const extras = row.querySelectorAll('[data-search-extra]');
-      function open() {
-        label.classList.add('d-none'); toggle.classList.add('d-none');
-        extras.forEach(function (x) { x.classList.add('d-none'); });
-        box.classList.remove('d-none'); input.focus();
-      }
-      function restore() {
-        if (kind === 'file') exitSearchMode();
-        else applyViewerSearch('');
-      }
-      function hide() {
-        box.classList.add('d-none'); label.classList.remove('d-none');
-        toggle.classList.remove('d-none');
-        extras.forEach(function (x) { x.classList.remove('d-none'); });
-        input.value = '';
-        restore();
-      }
-      function onInput() {
-        if (kind === 'file') {
-          clearTimeout(fileSearchTimer);
-          const q = input.value.trim();
-          fileSearchTimer = setTimeout(function () {
-            if (q) send({ type: 'file.search', query: q });
-            else exitSearchMode();
-          }, 250);
-        } else {
-          applyViewerSearch(input.value);
-        }
-      }
-      toggle.addEventListener('click', open);
-      close.addEventListener('click', hide);
-      input.addEventListener('input', onInput);
-      input.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
-    });
-
-    // ===== 우측 패널 폭 조절 splitter =====
-    (function () {
-      const app = document.getElementById('app');
-      const right = document.getElementById('right');
-      const resizer = document.getElementById('right-resizer');
-      let dragging = false;
-      resizer.addEventListener('mousedown', function (e) { dragging = true; resizer.classList.add('active'); e.preventDefault(); });
-      window.addEventListener('mousemove', function (e) {
-        if (!dragging) return;
-        const total = app.clientWidth;
-        let w = total - e.clientX;
-        w = Math.max(220, Math.min(w, total - 320));
-        right.style.flexBasis = w + 'px'; right.style.width = w + 'px';
-      });
-      window.addEventListener('mouseup', function () { dragging = false; resizer.classList.remove('active'); });
-    })();
-
-    // ===== 트리 ↔ 뷰어 높이 조절 splitter =====
-    (function () {
-      const right = document.getElementById('right');
-      const tree = document.getElementById('tree');
-      const rz = document.getElementById('vert-resizer');
-      let dragging = false;
-      rz.addEventListener('mousedown', function (e) { dragging = true; rz.classList.add('active'); e.preventDefault(); });
-      window.addEventListener('mousemove', function (e) {
-        if (!dragging) return;
-        const top = tree.getBoundingClientRect().top;
-        let h = e.clientY - top;
-        const max = right.clientHeight - 160;          // 뷰어 최소 높이 보장
-        h = Math.max(60, Math.min(h, max > 120 ? max : 120));
-        tree.style.flex = '0 0 ' + h + 'px';
-      });
-      window.addEventListener('mouseup', function () { dragging = false; rz.classList.remove('active'); });
-    })();
-
-    // ===== 우측 트리뷰 숨기기/보이기 토글 =====
-    (function () {
-      const right = document.getElementById('right');
-      const rz = document.getElementById('right-resizer');
-      document.getElementById('toggle-right').addEventListener('click', function () {
-        const hidden = right.style.display === 'none';
-        right.style.display = hidden ? '' : 'none';
-        rz.style.display = hidden ? '' : 'none';
-      });
-    })();
-
-    // ===== 파일 뷰어 전체화면 토글 =====
-    (function () {
-      const btn = document.getElementById('fullscreen-toggle');
-      const section = document.getElementById('viewer-section');
-      const EXPAND = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.828 10.172a.5.5 0 0 0-.707 0l-4.096 4.096V11.5a.5.5 0 0 0-1 0v3.975a.5.5 0 0 0 .5.5H4.5a.5.5 0 0 0 0-1H1.732l4.096-4.096a.5.5 0 0 0 0-.707m4.344 0a.5.5 0 0 1 .707 0l4.096 4.096V11.5a.5.5 0 1 1 1 0v3.975a.5.5 0 0 1-.5.5H11.5a.5.5 0 0 1 0-1h2.768l-4.096-4.096a.5.5 0 0 1 0-.707m0-4.344a.5.5 0 0 0 .707 0l4.096-4.096V6.5a.5.5 0 1 0 1 0V2.525a.5.5 0 0 0-.5-.5H11.5a.5.5 0 0 0 0 1h2.768l-4.096 4.096a.5.5 0 0 0 0 .707m-4.344 0a.5.5 0 0 1-.707 0L1.025 1.732V4.5a.5.5 0 0 1-1 0V.525a.5.5 0 0 1 .5-.5H4.5a.5.5 0 0 1 0 1H1.732l4.096 4.096a.5.5 0 0 1 0 .707"/></svg>';
-      const COLLAPSE = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 0a.5.5 0 0 1 .5.5v4A1.5 1.5 0 0 1 4.5 6h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5m5 0a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 10 4.5v-4a.5.5 0 0 1 .5-.5M0 10.5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 6 11.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5m10 1a1.5 1.5 0 0 1 1.5-1.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0z"/></svg>';
-      btn.innerHTML = EXPAND;
-      // 현재 상태에 맞는 전체화면 버튼 타이틀(언어 변경 시에도 갱신).
-      window.refreshFullscreenTitle = function () {
-        const fs = section.classList.contains('fullscreen');
-        btn.title = fs ? T('fullscreenExitTitle', '전체화면 종료')
-                       : T('fullscreenTitle', '전체화면 보기');
-      };
-      function toggle() {
-        const fs = section.classList.toggle('fullscreen');
-        btn.innerHTML = fs ? COLLAPSE : EXPAND;
-        window.refreshFullscreenTitle();
-      }
-      btn.addEventListener('click', toggle);
-      window.refreshFullscreenTitle();
-      window.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && section.classList.contains('fullscreen')) toggle();
-      });
-    })();
 
     // ===== 대화 렌더링 / 스트리밍 =====
     const messagesEl = document.getElementById('messages');
@@ -3039,7 +1424,6 @@
     function onChatHistory(list) {
       messagesEl.innerHTML = '';
       streamingEl = null;
-      activityLog.length = 0; // 프로젝트/대화 전환 시 내역 초기화 후 재구성
       for (const k in subStore) delete subStore[k]; // 서브에이전트 전사도 초기화
       queueItems = []; renderQueueChip(); renderQueueModal(); // 대기 큐 표시 초기화
       const argMap = {};      // tool_call_id → {name, args} (assistant 의 tool_calls 에서)
@@ -3084,7 +1468,6 @@
           });
         }
       });
-      renderActivity();
       if (list.length === 0) {
         messagesEl.innerHTML = '<div class="text-secondary small" data-i18n="messagesEmpty"></div>';
         messagesEl.firstChild.textContent = T('messagesEmpty', '대화 내용이 여기에 표시됩니다.');
@@ -3241,8 +1624,6 @@
           send({ type: 'activity.open', id: tid });
         });
       }
-      recordActivity({ tid: tid, name: o.name, args: o.args, status: o.status,
-                       ok: o.ok, summary: o.summary, hasDiff: !!o.diff });
     }
 
     function openDiff(tid) {
@@ -3346,7 +1727,7 @@
     function onChatNotice(msg) {
       const w = document.createElement('div');
       w.className = 'msg notice';
-      w.textContent = msg.text || '';
+      w.textContent = TM(msg, msg.text);
       messagesEl.appendChild(w);
       scrollMessages();
     }
@@ -3365,8 +1746,6 @@
       renderPlan();
       // 트리 헤더의 바로가기 버튼도 같이 맞춘다(`d-none` 이 아니라 `no-file` —
       // 검색 토글이 `d-none` 을 일괄로 벗기기 때문. 위 CSS 주석 참고).
-      document.getElementById('tree-open-playbook')
-        .classList.toggle('no-file', !planPath);
     }
 
     function onChatSupervisor(msg) {
@@ -3438,70 +1817,24 @@
 
     // 계획 파일 열기 — 트리에서 `.collabo` 를 펼치지 않아도 바로 뷰어에 띄운다.
     // 트리 행이 아직 없으면 선택 표시만 안 될 뿐 열리는 데는 지장이 없다.
-    document.getElementById('tree-open-playbook')
-      .addEventListener('click', function () {
-        if (planPath) openFile(planPath);
-      });
 
     // ===== 호출 내역(런쳐/도구) =====
-    const activityLog = [];
-    function recordActivity(msg) {
-      let e = activityLog.find(function (a) { return a.tid === msg.tid; });
-      if (!e) {
-        e = { tid: msg.tid, name: msg.name, args: msg.args,
-              time: new Date().toLocaleTimeString() };
-        activityLog.push(e);
-      }
-      e.status = msg.status;
-      if (msg.ok !== undefined) e.ok = msg.ok;
-      if (msg.summary) e.summary = msg.summary;
-      renderActivity();
-    }
-    function renderActivity() {
-      const list = document.getElementById('activity-list');
+    // 배지 숫자는 **네이티브가 센다**(activity.count) — 내역 창(네이티브)과 같은 것을
+    // 세야 어긋나지 않는다. 예전에는 대화 기록의 도구 버블을 여기서 다시 셌는데, 앱을
+    // 다시 켜면 창(메모리)은 비고 숫자만 남았고, 서브에이전트 호출은 실시간에만 셌다.
+    // 네이티브는 마지막 시작점 이후만 센다.
+    function setActivityCount(n) {
       const badge = document.getElementById('activity-count');
-      if (activityLog.length === 0) {
-        list.innerHTML = '<div class="activity-empty">' + T('activityEmpty', '아직 호출 내역이 없습니다') + '</div>';
-        badge.classList.add('d-none');
-        return;
-      }
-      badge.textContent = activityLog.length;
-      badge.classList.remove('d-none');
-      const items = activityLog.slice().reverse().map(function (e) {
-        const running = e.status === 'running';
-        const icon = running ? '⏳' : (e.ok ? '✅' : '⚠️');
-        let h = '<button type="button" class="list-group-item list-group-item-action activity-item" data-tid="' + esc(e.tid) + '">';
-        h += '<div><span>' + icon + '</span> <span class="a-name">' + esc(e.name) + '</span>'
-           + (e.time ? '<span class="text-secondary float-end">' + esc(e.time) + '</span>' : '') + '</div>';
-        if (e.args) h += '<div class="a-args">' + esc(String(e.args).slice(0, 300)) + '</div>';
-        if (e.summary) h += '<div class="a-summary">→ ' + esc(String(e.summary).slice(0, 300)) + '</div>';
-        h += '</button>';
-        return h;
-      }).join('');
-      list.innerHTML = items;
+      n = Number(n) || 0;
+      badge.textContent = n;
+      badge.classList.toggle('d-none', n === 0);
     }
     // 호출 내역: **네이티브 창**으로 연다.
     // 결과 원문은 수십 KB 가 되기도 해서 웹으로 보내지 않는다 — 네이티브가 들고
     // 있다가 이 요청을 받으면 그때 보여 준다(프로세스 뷰어와 같은 방식).
-    (function () {
-      const btn = document.getElementById('activity-btn');
-      const modalEl = document.getElementById('activity-modal');
-      const list = document.getElementById('activity-list');
-      btn.addEventListener('click', function () {
-        send({ type: 'activity.open', id: '' });
-      });
-      list.addEventListener('click', function (e) {
-        const item = e.target.closest('[data-tid]');
-        if (!item) return;
-        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
-        const el = document.getElementById('tool-' + item.dataset.tid);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          el.classList.add('flash');
-          setTimeout(function () { el.classList.remove('flash'); }, 1200);
-        }
-      });
-    })();
+    document.getElementById('activity-btn').addEventListener('click', function () {
+      send({ type: 'activity.open', id: '' });
+    });
 
     // 사용자가 중지를 누른 뒤: 진행 상태/스트리밍 카드를 정리한다.
     // (네이티브가 기록을 다시 보내 부분 응답 카드는 제거되고, 빈 status 로 풍선도 사라진다.)
@@ -3526,7 +1859,7 @@
       wrap.className = 'msg assistant';
       wrap.innerHTML = '<div class="bubble chat-error"></div>' +
                        '<div class="actions"></div>';
-      wrap.querySelector('.bubble').textContent = T('errorPrefix', '오류: ') + (msg.message || '');
+      wrap.querySelector('.bubble').textContent = T('errorPrefix', '오류: ') + TM(msg, msg.message);
       const retry = document.createElement('button');
       retry.className = 'btn btn-sm btn-outline-danger';
       retry.textContent = T('retry', '다시 시도');
@@ -3708,7 +2041,6 @@
     }, true);
 
     // 초기화 완료 → 네이티브에 준비 통지(현재 프로젝트를 받아옴).
-    clearViewer();
     send({ type: 'ready' });
   </script>
 </body>

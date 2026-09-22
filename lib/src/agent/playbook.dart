@@ -185,6 +185,51 @@ class Playbook {
 
   // ------------------------------------------------------------------ 조작
 
+  /// 보관본이 쌓이는 폴더(`.collabo/playbook-archive/`).
+  static const String archiveDirName = 'playbook-archive';
+
+  /// 계획을 **비운다** — 대화 시작점을 만들 때, 또는 "계획만 초기화".
+  ///
+  /// 파일이 있으면 지우지 않고 `.collabo/playbook-archive/PLAYBOOK-<시각>.md` 로
+  /// **옮겨 보관**한다. 초기화는 되돌리는 버튼이 없다(시작점은 원복할 수 있어도 계획은
+  /// 그렇지 않다) — 잘못 눌렀을 때 손으로라도 되살릴 길을 남긴다.
+  /// 파일이 없어지므로 [fileExists] 는 false 가 된다(트리의 "계획 파일 열기" 도 사라진다).
+  ///
+  /// 돌려주는 값: 보관한 경로. 파일이 없었으면 null. 옮기지 못하면
+  /// [PlaybookWriteException] — 비웠다고 믿었는데 옛 계획이 남아 있으면 안 된다.
+  Future<String?> reset({DateTime? now}) async {
+    for (final s in kPlaybookSections) {
+      _data[s] = <PlaybookItem>[];
+    }
+    _data.removeWhere((k, _) => !kPlaybookSections.contains(k));
+    if (!await file.exists()) {
+      _exists = false;
+      return null;
+    }
+    final t = now ?? DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final stamp = '${t.year}${two(t.month)}${two(t.day)}-${two(t.hour)}${two(t.minute)}${two(t.second)}';
+    try {
+      final dir = Directory(p.join(file.parent.path, archiveDirName));
+      await dir.create(recursive: true);
+      var dest = File(p.join(dir.path, 'PLAYBOOK-$stamp.md'));
+      for (var n = 2; await dest.exists(); n++) {
+        dest = File(p.join(dir.path, 'PLAYBOOK-$stamp-$n.md'));
+      }
+      try {
+        await file.rename(dest.path);
+      } on FileSystemException {
+        // 다른 볼륨·잠금 등으로 rename 이 안 되면 복사 후 지운다.
+        await file.copy(dest.path);
+        await file.delete();
+      }
+      _exists = false;
+      return dest.path;
+    } on FileSystemException catch (e) {
+      throw PlaybookWriteException(file.path, e.osError?.message ?? e.message);
+    }
+  }
+
   Future<void> setGoal(String goal) async {
     final g = goal.trim();
     if (g.isEmpty) return;

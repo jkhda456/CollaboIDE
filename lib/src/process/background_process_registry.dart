@@ -36,6 +36,7 @@ class BackgroundProcess {
     this.kind = BackgroundKind.command,
     this.name = '',
     this.hasPty = true,
+    this.sandbox = false,
     this.startedAt,
     this.exitCode,
     this.endedAt,
@@ -58,6 +59,10 @@ class BackgroundProcess {
 
   /// 터미널이 진짜 PTY 위에서 도는지. false 면 파이프 폴백이라 대화형이 안 된다.
   final bool hasPty;
+
+  /// collaboCore 샌드박스 안에서 도는가(meta.json 의 `sandbox`). 그렇다면 [pid] 는
+  /// **게스트 pid** 라 호스트에서 kill 하면 안 된다.
+  final bool sandbox;
 
   final DateTime? startedAt;
   final int? exitCode;
@@ -101,6 +106,7 @@ class BackgroundProcess {
             : BackgroundKind.command,
         name: (m['name'] as String?) ?? '',
         hasPty: m['pty'] != false,
+        sandbox: m['sandbox'] == true,
         startedAt: _epoch(m['started_at']),
         exitCode: (m['exit_code'] as num?)?.toInt(),
         endedAt: _epoch(m['ended_at']),
@@ -213,10 +219,23 @@ class BackgroundProcessRegistry extends ChangeNotifier {
     return null;
   }
 
+  /// 샌드박스 안의 프로세스를 끝내는 경로. 세션이 샌드박스를 만들 때 걸어 둔다.
+  Future<void> Function(BackgroundProcess proc)? sandboxKiller;
+
   /// 프로세스 트리를 종료한다. proc_runner 가 곧 meta.json 을 killed/exited 로 갱신한다.
   Future<void> kill(String id) async {
-    final pid = _byId(id)?.pid;
-    if (pid == null) return;
+    final proc = _byId(id);
+    final pid = proc?.pid;
+    if (proc == null || pid == null) return;
+    if (proc.sandbox) {
+      // ★ 게스트 pid 다 — 호스트에서 kill 하면 같은 번호의 **다른 프로세스**가 죽는다.
+      // 끝낼 경로가 없으면(샌드박스가 없다) 그 프로세스도 이미 없다.
+      try {
+        await sandboxKiller?.call(proc);
+      } catch (_) {}
+      _scheduleRefresh();
+      return;
+    }
     try {
       if (Platform.isWindows) {
         await Process.run('taskkill', ['/T', '/F', '/PID', '$pid']);

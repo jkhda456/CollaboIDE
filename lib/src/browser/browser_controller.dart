@@ -134,6 +134,24 @@ class BrowserController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 탭을 한꺼번에 닫는다. [owner] 를 주면 **그 주인의 탭만**. 닫은 수를 돌려준다.
+  ///
+  /// 에이전트 탭만 닫는 쪽이 따로 있는 이유: 탭 목록은 사용자와 에이전트가
+  /// 같이 쓰는 하나다(§12 — 나누지 않기로 했다). 그래서 조사 몇 번이면 에이전트
+  /// 탭이 쌓여 사용자가 보던 탭이 묻히는데, 그때 **자기 탭은 그대로 두고** 치우는
+  /// 길이 있어야 한다. 꼬리표(`owner`)를 이미 들고 있으니 그걸 그대로 쓴다.
+  Future<int> closeAll({TabOwner? owner}) async {
+    // 닫는 동안 `_tabs` 가 줄어드므로 id 를 먼저 떠 둔다.
+    final ids = [
+      for (final t in _tabs)
+        if (owner == null || t.owner == owner) t.id,
+    ];
+    for (final id in ids) {
+      await closeTab(id);
+    }
+    return ids.length;
+  }
+
   void activate(String id) {
     if (_indexOf(id) < 0 || _activeId == id) return;
     _activeId = id;
@@ -347,6 +365,44 @@ return s.length > $n ? s.slice(0, $n) : s;
       throw BrowserException(e.message);
     }
   }
+
+  // ------------------------------------------------------------------ 간격
+
+  /// 이름별로 "다음 차례는 언제부터" 를 들고 있는다. **메모리에만 둔다.**
+  ///
+  /// 정확히 관리할 값이 아니다 — 에이전트가 검색엔진을 초당 몇 번씩 두드리는
+  /// 것만 막으면 되고, "대충 이 간격은 지킨다" 면 충분하다. 앱을 껐다 켜면
+  /// 초기화되는 것도 오히려 맞다(그 사이엔 아무도 안 두드렸다).
+  ///
+  /// 값이 여기 있어야 하는 이유는 하나뿐이다: **도구 호출은 매번 새 프로세스**라
+  /// (§5 도구 계약) 파이썬 쪽 변수는 다음 호출에서 사라진다. 오래 사는 것은
+  /// 이 컨트롤러이고, 브라우저가 앱에 하나이므로(§1.5) 간격도 앱에 하나가 된다.
+  final Map<String, DateTime> _slots = {};
+
+  /// 같은 [key] 의 요청 사이에 최소 [minGap] 을 둔다. 기다린 밀리초를 돌려준다.
+  ///
+  /// **왜 오류가 아니라 대기인가**: 거절하면 모델이 곧바로 다시 부른다 —
+  /// 막으려던 것을 오히려 늘린다. 조용히 늦추는 편이 실제로 횟수를 줄인다.
+  ///
+  /// 자기 차례를 **기다리기 전에** 찍어 둔다. 그래야 거의 동시에 들어온 둘이
+  /// 같은 시각을 보고 나란히 나가지 않고 줄을 선다. Dart 는 단일 스레드라
+  /// 이 사이에 끼어들 수 없다 — 파일로 하던 때의 경합이 통째로 사라진다.
+  Future<int> waitForSlot(String key, Duration minGap) async {
+    if (minGap <= Duration.zero) return 0;
+    // 엉뚱한 값이 와도 한 번에 1분 넘게 붙잡지 않는다.
+    final gap = minGap > maxSlotGap ? maxSlotGap : minGap;
+    final now = DateTime.now();
+    final next = _slots[key];
+    final slot = (next == null || next.isBefore(now)) ? now : next;
+    _slots[key] = slot.add(gap);
+    final wait = slot.difference(now);
+    if (wait <= Duration.zero) return 0;
+    await Future<void>.delayed(wait);
+    return wait.inMilliseconds;
+  }
+
+  /// 한 번에 기다릴 수 있는 최대.
+  static const Duration maxSlotGap = Duration(minutes: 1);
 
   // ---------------------------------------------------------------- 내려받기
 

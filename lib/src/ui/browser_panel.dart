@@ -113,6 +113,13 @@ class _BrowserPanelState extends State<BrowserPanel> {
             _shownUrl = '';
             _addressFocus.requestFocus();
           }),
+          onCloseAll: () => _guard(() async {
+            await _browser.closeAll();
+            _address.clear();
+            _shownUrl = '';
+          }),
+          onCloseAgent: () =>
+              _guard(() => _browser.closeAll(owner: TabOwner.agent)),
         ),
         if (_error.isNotEmpty)
           Container(
@@ -264,6 +271,8 @@ class _TabStrip extends StatelessWidget {
     required this.onSelect,
     required this.onClose,
     required this.onNew,
+    required this.onCloseAll,
+    required this.onCloseAgent,
   });
 
   final List<BrowserTab> tabs;
@@ -271,11 +280,14 @@ class _TabStrip extends StatelessWidget {
   final ValueChanged<String> onSelect;
   final ValueChanged<String> onClose;
   final VoidCallback onNew;
+  final VoidCallback onCloseAll;
+  final VoidCallback onCloseAgent;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l = AppLocalizations.of(context);
+    final agentTabs = tabs.where((t) => t.owner == TabOwner.agent).length;
     return Container(
       height: 34,
       color: theme.colorScheme.surfaceContainerHigh,
@@ -301,6 +313,22 @@ class _TabStrip extends StatelessWidget {
             visualDensity: VisualDensity.compact,
             onPressed: tabs.length >= BrowserController.maxTabs ? null : onNew,
           ),
+          // 에이전트 탭만 치우는 쪽을 먼저 둔다 — 조사 몇 번이면 에이전트 탭이
+          // 쌓여 보던 탭이 묻히는데, 그때 필요한 게 대개 이쪽이다.
+          // 지울 게 없으면 꺼 둔다(누를 수 있는데 아무 일도 안 나는 편이 더 나쁘다).
+          IconButton(
+            icon: const Icon(Icons.smart_toy_outlined, size: 17),
+            tooltip: l.browserCloseAgentTabs,
+            visualDensity: VisualDensity.compact,
+            onPressed: agentTabs == 0 ? null : onCloseAgent,
+          ),
+          IconButton(
+            icon: const Icon(Icons.clear_all, size: 18),
+            tooltip: l.browserCloseAll,
+            visualDensity: VisualDensity.compact,
+            onPressed: tabs.isEmpty ? null : onCloseAll,
+          ),
+          const SizedBox(width: 2),
         ],
       ),
     );

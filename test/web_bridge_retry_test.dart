@@ -97,7 +97,7 @@ void main() {
     view = _FakeWebView();
     provider = _FailingProvider();
     bridge = WebBridge(wc, session,
-        llmClient: provider, viewerStager: (_) async => const []);
+        llmClient: provider);
     session.bridge = bridge;
     await bridge.start();
     await bridge.attachView(view);

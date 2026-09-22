@@ -23,7 +23,11 @@ class ConversationStore {
   final Database db;
   final String dbPath;
 
-  static const int _schemaVersion = 3;
+  static const int _schemaVersion = 4;
+
+  /// `tool_calls` 에 유지할 최대 행 수(DB 전체). 결과 원문이 건당 최대 32KB 라
+  /// 무한히 쌓이면 DB 가 커진다 — 오래된 것부터 버린다.
+  static const int maxToolCallRows = 1000;
 
   /// `file_changes` 에 유지할 최대 행 수. 오래된 것부터 버려 DB 가 무한히 크지
   /// 않게 한다(경로 기준 1행이라 실제로는 파일 개수만큼만 쌓인다).
@@ -113,6 +117,32 @@ class ConversationStore {
       'ON conversations(parent_conversation_id)',
     );
     await _createFileChanges(db);
+    await _createToolCalls(db);
+  }
+
+  /// v4: 도구 호출 내역(인자 + 결과 원문) — 호출 내역 창이 앱을 다시 켠 뒤에도 보이게.
+  /// 예전에는 메모리에만 있어서, 배지(대화 기록에서 다시 센 숫자)는 남는데 창은 비었다.
+  static Future<void> _createToolCalls(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tool_calls (
+        seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL
+          REFERENCES conversations(id) ON DELETE CASCADE,
+        call_id         TEXT NOT NULL,
+        scope           TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        args            TEXT NOT NULL,
+        result          TEXT NOT NULL DEFAULT '',
+        summary         TEXT NOT NULL DEFAULT '',
+        ok              INTEGER,
+        started_at      INTEGER NOT NULL,
+        finished_at     INTEGER
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_tool_calls_conv '
+      'ON tool_calls(conversation_id, started_at)',
+    );
   }
 
   /// v3: 도구가 바꾼 파일 이력. 신규 생성(onCreate)과 업그레이드(onUpgrade)가
@@ -163,6 +193,10 @@ class ConversationStore {
     if (oldVersion < 3) {
       // v2 → v3: 파일 변경 이력(에이전트 상태 요약용).
       await _createFileChanges(db);
+    }
+    if (oldVersion < 4) {
+      // v3 → v4: 도구 호출 내역.
+      await _createToolCalls(db);
     }
     await db.update('meta', {'value': '$newVersion'}, where: 'key = ?',
         whereArgs: ['schema_version']);
@@ -219,6 +253,66 @@ class ConversationStore {
 
   /// 파일 변경 이력을 모두 지운다(프로젝트 상태 요약 초기화용).
   Future<void> clearFileChanges() => db.delete('file_changes');
+
+  // --- 도구 호출 내역 (호출 내역 창) ---
+
+  /// 호출 시작을 남기고 행 번호를 돌려준다. 결과는 [finishToolCall] 이 채운다.
+  Future<int> insertToolCall({
+    required int conversationId,
+    required String callId,
+    required String scope,
+    required String name,
+    required String args,
+    required DateTime startedAt,
+  }) async {
+    final seq = await db.insert('tool_calls', {
+      'conversation_id': conversationId,
+      'call_id': callId,
+      'scope': scope,
+      'name': name,
+      'args': args,
+      'started_at': startedAt.millisecondsSinceEpoch,
+    });
+    await db.rawDelete('DELETE FROM tool_calls WHERE seq <= ?',
+        [seq - maxToolCallRows]);
+    return seq;
+  }
+
+  Future<void> finishToolCall(
+    int seq, {
+    required bool ok,
+    required String result,
+    required String summary,
+    required DateTime finishedAt,
+  }) =>
+      db.update(
+        'tool_calls',
+        {
+          'ok': ok ? 1 : 0,
+          'result': result,
+          'summary': summary,
+          'finished_at': finishedAt.millisecondsSinceEpoch,
+        },
+        where: 'seq = ?',
+        whereArgs: [seq],
+      );
+
+  /// 대화의 도구 호출 내역(오래된 것부터). [since] 이후(포함)에 시작한 것만,
+  /// 가장 최근 [limit] 건.
+  Future<List<ToolCallRow>> toolCalls(
+    int conversationId, {
+    DateTime? since,
+    int limit = 300,
+  }) async {
+    final rows = await db.query(
+      'tool_calls',
+      where: 'conversation_id = ? AND started_at >= ?',
+      whereArgs: [conversationId, since?.millisecondsSinceEpoch ?? 0],
+      orderBy: 'seq DESC',
+      limit: limit,
+    );
+    return rows.reversed.map(ToolCallRow.fromRow).toList();
+  }
 
   // --- conversations ---
 

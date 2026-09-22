@@ -786,29 +786,47 @@ def term_close(args):
     pid = meta.get("pid")
     status = meta.get("status") or "running"
     stopped = False
+    meta_path = os.path.join(proc_dir, "meta.json")
+
+    def wait_ended(seconds):
+        # 러너가 자식의 죽음을 알아채고 meta 를 갱신할 때까지 기다린다.
+        deadline = time.time() + seconds
+        while True:
+            cur = _read_json(meta_path, meta)
+            if (cur.get("status") or "running") != "running":
+                return cur, True
+            if time.time() >= deadline:
+                return cur, False
+            time.sleep(0.1)
+
     if status == "running" and pid:
-        try:
-            if os.name == "nt":
+        if os.name == "nt":
+            try:
                 subprocess.run(
                     ["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True
                 )
-            else:
-                import signal
+                stopped = True
+            except (OSError, subprocess.SubprocessError):
+                pass  # 이미 사라졌다 — 아래에서 상태로 확인한다
+            meta, _ = wait_ended(5)
+        else:
+            import signal
 
+            # ★ 대화형 셸은 SIGTERM 을 **무시한다**(POSIX). 진짜 터미널을 닫을 때처럼
+            # SIGHUP 부터 보낸다 — 셸은 끝나면서 자기 작업들에도 HUP 을 전한다.
+            # 그래도 안 끝나면(HUP 을 무시하는 프로그램) TERM, 마지막으로 KILL.
+            for sig, grace in ((signal.SIGHUP, 2), (signal.SIGTERM, 2), (signal.SIGKILL, 3)):
                 try:
-                    os.killpg(pid, signal.SIGTERM)
+                    try:
+                        os.killpg(pid, sig)
+                    except (OSError, ProcessLookupError):
+                        os.kill(pid, sig)
+                    stopped = True
                 except (OSError, ProcessLookupError):
-                    os.kill(pid, signal.SIGTERM)
-            stopped = True
-        except (OSError, ProcessLookupError, subprocess.SubprocessError):
-            pass  # 이미 사라졌다 — 아래에서 상태로 확인한다
-        # 러너가 자식의 죽음을 알아채고 meta 를 갱신할 때까지 잠깐 기다린다.
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            meta = _read_json(os.path.join(proc_dir, "meta.json"), meta)
-            if (meta.get("status") or "running") != "running":
-                break
-            time.sleep(0.1)
+                    pass  # 이미 사라졌다 — 상태로 확인한다
+                meta, ended = wait_ended(grace)
+                if ended:
+                    break
     result = _state(proc_dir, meta)
     result["stopped"] = stopped
     result["final_screen"] = _clip(_screen_text(_screen(proc_dir)))

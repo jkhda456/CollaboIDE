@@ -59,11 +59,19 @@ class WebViewRuntimeMissing implements Exception {
 /// 현재 플랫폼이 임베디드 웹뷰를 지원하는지.
 /// (Linux 는 추후 `webview_cef` 연결 전까지 false → 플레이스홀더 표시.)
 bool get isPlatformWebViewSupported =>
+    debugWebViewFactory != null ||
     Platform.isWindows || Platform.isMacOS || Platform.isAndroid || Platform.isIOS;
+
+/// 시험용: 실제 웹뷰 대신 이걸로 만든다(위젯 시험에서 WebView2 를 띄울 수 없다).
+/// 배치 시험이 "전체화면·숨기기로 뷰어 웹뷰를 다시 만들지 않는다" 를 세는 데 쓴다.
+@visibleForTesting
+PlatformWebView Function()? debugWebViewFactory;
 
 /// 플랫폼에 맞는 웹뷰 백엔드를 생성한다.
 /// 지원하지 않는 플랫폼(Linux)에서 호출하면 [UnsupportedError].
 PlatformWebView createPlatformWebView() {
+  final fake = debugWebViewFactory;
+  if (fake != null) return fake();
   if (Platform.isWindows) return WindowsWebView();
   if (Platform.isMacOS || Platform.isAndroid || Platform.isIOS) {
     return FlutterWebView();

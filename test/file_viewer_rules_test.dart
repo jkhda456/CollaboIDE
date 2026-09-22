@@ -7,13 +7,11 @@ import 'package:collabo_ide/src/app/workspace_controller.dart';
 import 'package:collabo_ide/src/browser/browser_controller.dart';
 import 'package:collabo_ide/src/data/app_database.dart';
 import 'package:collabo_ide/src/data/sqlite_init.dart';
-import 'package:collabo_ide/src/llm/llm_config.dart';
-import 'package:collabo_ide/src/llm/llm_provider.dart';
 import 'package:collabo_ide/src/viewers/viewer_assets.dart';
 import 'package:collabo_ide/src/viewers/viewer_rule.dart';
 import 'package:collabo_ide/src/viewers/viewer_source.dart';
 import 'package:collabo_ide/src/webview/platform_web_view.dart';
-import 'package:collabo_ide/src/webview/web_bridge.dart';
+import 'package:collabo_ide/src/files/file_viewer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -56,24 +54,6 @@ class _FakeWebView implements PlatformWebView {
   Future<void> dispose() async {
     await _messages.close();
   }
-}
-
-/// 네트워크를 타지 않는 LLM provider 스텁(브리지 생성에만 필요).
-class _StubProvider implements LlmProvider {
-  @override
-  Future<LlmTestResult> test(LlmConfig cfg) async =>
-      const LlmTestResult(true, 'ok');
-
-  @override
-  Stream<LlmEvent> streamChat({
-    required LlmConfig cfg,
-    required List<Map<String, Object?>> messages,
-    List<Map<String, Object?>>? tools,
-  }) =>
-      Stream<LlmEvent>.empty();
-
-  @override
-  void dispose() {}
 }
 
 /// 마지막 `collaboSyncUserViewers(...)` 주입의 URL 목록(없으면 null).
@@ -119,7 +99,7 @@ void main() {
   late _FakeWebView view;
   late WorkspaceController wc;
   late ProjectSession session;
-  late WebBridge bridge;
+  late FileViewerController viewer;
 
   /// 스테이징 스텁: 복사 없이 상대 URL 만 만들어 준다(호출 인자도 기록).
   late List<List<ViewerSource>> staged;
@@ -135,23 +115,27 @@ void main() {
     view = _FakeWebView();
     session = await ProjectSession.open(tmp.path,
         browser: BrowserController(), firstConversationTitle: 'test');
-    bridge = WebBridge(
+    // 뷰어 설정·사용자 뷰어는 이제 뷰어 웹뷰(viewer.html)의 일이다 — 대화 브리지가 아니라
+    // 파일 뷰어 컨트롤러가 붙는다.
+    viewer = FileViewerController(
       wc,
-      session,
-      llmClient: _StubProvider(),
+      session.files,
       viewerStager: (sources) async {
         staged.add(sources);
         return [for (final s in sources) './viewers/user/${s.stagedName}'];
       },
     );
-    session.bridge = bridge;
-    await bridge.start();
-    await bridge.attachView(view);
+    session.viewer = viewer;
+    await viewer.attachView(view);
     view.scripts.clear();
+    // 붙일 때의 첫 동기화(빈 목록)는 세지 않는다 — 아래 테스트는 "그 뒤 무엇이 일어나는가" 를 본다.
+    // (예전 브리지 테스트는 이걸 비우지 않아 이 VM 에서 늘 1 이 아니라 2 를 셌다.)
+    await pumpEventQueue();
+    staged.clear();
   });
 
   tearDown(() async {
-    await session.close(); // 브리지도 여기서 같이 정리된다.
+    await session.close(); // 뷰어 컨트롤러도 여기서 같이 정리된다.
     await view.dispose();
     await db.close();
     if (await tmp.exists()) await tmp.delete(recursive: true);
@@ -211,7 +195,7 @@ void main() {
   });
 
   test('dispose 후에는 더 얹지 않는다', () async {
-    await bridge.dispose();
+    viewer.dispose();
     view.scripts.clear();
 
     await wc.addViewerSource(const ViewerSource(path: '/a/image.js'));

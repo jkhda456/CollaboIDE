@@ -368,7 +368,9 @@ def _require_url(url):
 
 @tool(
     "web_search",
-    "Search the web and get a list of results (title, url, snippet). Runs the "
+    "Searches are spaced a few seconds apart, so a call may pause before it "
+    "runs - read what you already got before searching again. "
+    "Search the web and get a list of results (title, url, snippet). Runs the"
     "search in the app's browser tab that the user can also see, so sites that "
     "block automated browsers still work. Follow up with web_open on a result "
     "url to read the actual page - the snippets alone are rarely enough.",
@@ -414,8 +416,7 @@ def web_search(args):
 
     requested = _str_arg(args, "engine") or DEFAULT_ENGINE
     eng = _engine(requested)
-    results, tab_info = _run_search(eng, query, count, tab, name)
-
+    results, tab_info, waited = _run_search(eng, query, count, tab, name)
 
     hint = ""
     # Zero results usually means the layout moved or the page is an interstitial
@@ -423,16 +424,18 @@ def web_search(args):
     if not results and eng.NAME != FALLBACK_ENGINE:
         alt = ENGINES.get(FALLBACK_ENGINE)
         if alt is not None:
-            alt_results, alt_tab = _run_search(
+            alt_results, alt_tab, alt_waited = _run_search(
                 alt, query, count, tab_info.get("tab"), name
             )
+            waited += alt_waited
             if alt_results:
                 hint = (
                     "%s returned nothing (it may be showing a consent or "
                     "captcha page - the user can solve it in that tab). "
                     "These results are from %s." % (eng.LABEL, alt.LABEL)
                 )
-                return _search_result(alt, query, alt_results, alt_tab, hint)
+                return _search_result(alt, query, alt_results, alt_tab, hint,
+                                      waited)
 
     if not results:
         hint = (
@@ -440,7 +443,29 @@ def web_search(args):
             "see what %s actually returned - it may be a consent or captcha "
             "page that needs a person." % eng.LABEL
         )
-    return _search_result(eng, query, results, tab_info, hint)
+    return _search_result(eng, query, results, tab_info, hint, waited)
+
+
+# 검색 사이의 **최소 간격**(밀리초). 짧게 잡는다 — 사람을 기다리게 하려는 것이
+# 아니라 에이전트가 초당 몇 번씩 두드리는 것만 막으려는 것이다.
+# 환경변수로 바꾼다(0 이면 끈다 — 테스트가 그렇게 쓴다).
+#
+# ⚠️ **지키는 것은 네이티브다.** 도구 호출은 매번 새 프로세스라(§5 계약) 여기
+# 변수로는 지난 검색 시각을 들고 있을 수 없다 — 처음에는 통로 폴더에 파일로
+# 남겼는데, 그건 "대충 이 간격" 하나 지키자고 원자적 쓰기·손상 처리·경합까지
+# 떠안는 일이었다. 오래 사는 것은 `BrowserController` 이고 브라우저가 앱에
+# 하나이므로, 시각은 거기 **메모리**에 두고 여기서는 **간격만 실어 보낸다**.
+def _search_gap_ms():
+    try:
+        return max(0, int(float(os.environ.get("COLLABO_SEARCH_MIN_GAP") or 5) * 1000))
+    except (TypeError, ValueError):
+        return 5000
+
+
+SEARCH_GAP_MS = _search_gap_ms()
+
+# 네이티브가 같은 이름끼리 띄워 주는 통(bucket). 검색만 쓴다.
+SEARCH_GATE = "search"
 
 
 def _run_search(eng, query, count, tab, name):
@@ -448,11 +473,16 @@ def _run_search(eng, query, count, tab, name):
     # 새 탭에만 질의로 이름을 붙인다. 기존 탭을 재사용할 때 자동으로 이름을 씌우면
     # 에이전트가 web_tabs(action="name") 로 붙여 둔 이름을 검색할 때마다 지워 버린다.
     label = name if tab else (name or ("search: " + query[:40]))
-    tab_info = _channel("open", {
+    payload = {
         "url": url,
         "tab": tab or "",
         "name": label,
-    })
+    }
+    if SEARCH_GAP_MS > 0:
+        payload["gate"] = SEARCH_GATE
+        payload["min_gap_ms"] = SEARCH_GAP_MS
+    tab_info = _channel("open", payload)
+    waited = (tab_info.get("waited_ms") or 0) / 1000.0
     value = _channel("js", {
         "tab": tab_info.get("tab"),
         "script": eng.extract_js(count),
@@ -471,10 +501,10 @@ def _run_search(eng, query, count, tab, name):
             "url": u,
             "snippet": r.get("snippet") or "",
         })
-    return clean[:count], tab_info
+    return clean[:count], tab_info, waited
 
 
-def _search_result(eng, query, results, tab_info, hint):
+def _search_result(eng, query, results, tab_info, hint, waited=0.0):
     out = {
         "engine": eng.NAME,
         "query": query,
@@ -485,6 +515,14 @@ def _search_result(eng, query, results, tab_info, hint):
     }
     if hint:
         out["hint"] = hint
+    if waited > 0:
+        # 왜 늦었는지 보이게 한다 — 안 그러면 "검색이 느리다" 로만 읽힌다.
+        out["throttled_ms"] = int(waited * 1000)
+        out["throttle_note"] = (
+            "Searches are spaced at least %gs apart, so this one waited %.1fs. "
+            "Read the results you already have before searching again."
+            % (SEARCH_GAP_MS / 1000.0, waited)
+        )
     return out
 
 
@@ -861,6 +899,11 @@ def web_download(args):
     dest_dir, dest_name = _download_dest(
         _str_arg(args, "path"), _str_arg(args, "name"))
     payload = {"tab": tab, "url": url, "dir": dest_dir}
+    # 프로젝트 기준 상대 경로도 같이 보낸다. 도구가 collaboCore 샌드박스에서 돌면
+    # dest_dir 은 게스트 경로(/work/...)라 파일을 쓰는 네이티브(호스트)에는 뜻이 없다 —
+    # 네이티브는 이쪽을 자기 프로젝트 루트에 이어 붙인다(가드는 그대로 거친다).
+    payload["dir_rel"] = os.path.relpath(
+        dest_dir, os.path.realpath(os.path.abspath(WORKSPACE))).replace(os.sep, "/")
     if dest_name:
         payload["name"] = dest_name
     max_bytes = _int_arg(args, "max_bytes", DEFAULT_MAX_DOWNLOAD)

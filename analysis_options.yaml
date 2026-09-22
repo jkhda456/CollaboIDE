@@ -16,6 +16,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # 벤더링한 collabo_core(CollaboCore 복사본). 자기 test/ 는 package:test 에 기대는데
+    # 그 의존성은 이 앱에서 해석되지 않는다 — 그 패키지의 검사는 CollaboCore 쪽에서 한다.
+    - packages/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

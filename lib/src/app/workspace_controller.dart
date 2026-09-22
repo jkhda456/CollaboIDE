@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:collabo_core/collabo_core.dart' show CollaboRuntime;
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../browser/browser_controller.dart';
 import '../conversation/conversation_store.dart';
 import '../data/app_database.dart';
+import '../files/file_viewer.dart';
 import '../llm/llm_config.dart';
 import '../llm/llm_preset.dart';
 import '../llm/stream_budget.dart';
@@ -14,7 +16,9 @@ import '../llm/system_prompt.dart';
 import '../process/background_process_registry.dart';
 import '../process/process_manager.dart';
 import '../process/python_environment.dart';
+import '../sandbox/project_sandbox.dart';
 import '../tools/tool_assets.dart';
+import '../tools/tool_executor.dart';
 import '../tools/tool_source.dart';
 import '../ui/app_theme.dart';
 import '../viewers/viewer_assets.dart';
@@ -57,6 +61,15 @@ class WorkspaceController extends ChangeNotifier {
   /// 프로젝트별 venv 사용 여부(전역 정책, 기본 꺼짐). 켜면 각 프로젝트의
   /// `<project>/.collabo/venv` 에 venv 를 자동 생성해 그걸로 실행한다.
   bool _useVenv = false;
+
+  /// 도구 실행 환경: [toolRuntimeSandbox] | [toolRuntimeSystem]. 저장값이 없으면
+  /// 런타임이 있을 때 샌드박스, 없으면 시스템 파이썬([init]).
+  String _toolRuntime = toolRuntimeSystem;
+
+  /// 이 앱에 동봉된 collaboCore 런타임(없으면 null — 그 플랫폼 런타임을 안 넣었다).
+  CollaboRuntime? _sandboxRuntime;
+  String _sandboxRuntimeError = '';
+
   List<RecentProject> _recentProjects = const [];
 
   /// 테마 모드. 기본값은 라이트. (설정으로 관리, 메인 DB 에 영구 저장)
@@ -177,6 +190,13 @@ class WorkspaceController extends ChangeNotifier {
   static const String _viewerRegistryKey = 'viewer_registry';
   static const String _pythonKey = 'python_interpreter';
   static const String _useVenvKey = 'python_use_venv';
+  static const String _toolRuntimeKey = 'tool_runtime';
+
+  /// 도구를 collaboCore 샌드박스(WASM 리눅스)의 파이썬으로 실행한다.
+  static const String toolRuntimeSandbox = 'sandbox';
+
+  /// 도구를 시스템(또는 venv) 파이썬으로 실행한다 — 예전 방식.
+  static const String toolRuntimeSystem = 'system';
 
   /// 마지막 창 크기 설정 키(main.dart 가 부팅 시 직접 읽어 복원한다).
   static const String windowSizeKey = 'window_size';
@@ -473,10 +493,80 @@ class WorkspaceController extends ChangeNotifier {
   /// **`AgentLoop._buildToolRegistry` 의 전제조건과 같아야 한다.** false 면 도구가
   /// 하나도 없는 채로 대화만 돌아가므로(서브에이전트가 아무 작업도 못 한다),
   /// 대화 헤더에 설정 안내 버튼을 띄우는 근거로도 쓴다.
+  ///
+  /// 샌드박스 모드면 시스템 파이썬은 필요 없다 — 런타임만 있으면 된다. 샌드박스를
+  /// 골랐는데 런타임이 없으면 **시스템 파이썬으로 몰래 물러서지 않는다**(격리를
+  /// 기대한 사용자에게 호스트에서 명령이 도는 것은 놀라운 일이다) → 준비 안 됨.
   bool toolsReadyFor(ProjectSession session) =>
-      session.effectivePython != null &&
       _baseToolModulePaths.isNotEmpty &&
-      toolAdaptersDir != null;
+      toolAdaptersDir != null &&
+      (usesSandbox ? _sandboxRuntime != null : session.effectivePython != null);
+
+  /// 저장된 도구 실행 환경 설정값.
+  String get toolRuntime => _toolRuntime;
+
+  /// 도구를 샌드박스에서 실행하는가(설정 기준 — 런타임이 없으면 [toolsReady] 가 false).
+  bool get usesSandbox => _toolRuntime == toolRuntimeSandbox;
+
+  /// 이 플랫폼용 collaboCore 런타임이 앱에 들어 있는가.
+  bool get sandboxAvailable => _sandboxRuntime != null;
+
+  /// 런타임을 못 찾은 이유(설정 화면 표시용).
+  String get sandboxRuntimeError => _sandboxRuntimeError;
+
+  /// 도구 실행 환경을 바꾼다(설정 → 도구). 다음 생성부터 적용된다 — 레지스트리는
+  /// 생성마다 새로 만든다(`AgentLoop._buildToolRegistry`).
+  Future<void> setToolRuntime(String value) async {
+    if (value != toolRuntimeSandbox && value != toolRuntimeSystem) return;
+    if (value == _toolRuntime) return;
+    _toolRuntime = value;
+    notifyListeners();
+    await _appDb?.setSetting(_toolRuntimeKey, value);
+  }
+
+  /// 그 세션의 도구 실행기. [toolsReadyFor] 가 참일 때만 부른다.
+  ToolExecutor toolExecutorFor(ProjectSession session) {
+    if (usesSandbox) {
+      final box = session.sandboxFor(_sandboxRuntime!, toolsDir: toolAdaptersDir!);
+      return SandboxToolExecutor(box);
+    }
+    return HostToolExecutor(session.effectivePython!);
+  }
+
+  /// 샌드박스 화면용: 그 세션의 머신. 아직 없으면 **만들 수 있을 때만** 만든다
+  /// (샌드박스 모드 + 런타임 + 도구 폴더). 만들기만 하고 부팅은 하지 않는다.
+  ProjectSandbox? sandboxOf(ProjectSession session) {
+    final existing = session.sandbox;
+    if (existing != null) return existing;
+    final runtime = _sandboxRuntime;
+    final tools = toolAdaptersDir;
+    if (!usesSandbox || runtime == null || tools == null) return null;
+    return session.sandboxFor(runtime, toolsDir: tools);
+  }
+
+  /// 시험용: [init] 없이 샌드박스 모드를 세운다(런타임 + 기본 모듈 경로).
+  @visibleForTesting
+  void debugUseSandbox({required CollaboRuntime runtime, required List<String> baseModules}) {
+    _sandboxRuntime = runtime;
+    _baseToolModulePaths = baseModules;
+    _toolRuntime = toolRuntimeSandbox;
+  }
+
+  /// 지금 떠 있는 머신 수(좌측 메뉴 배지).
+  int get runningSandboxCount =>
+      _sessions.where((s) => s.sandbox?.isRunning ?? false).length;
+
+  /// 동봉 런타임을 찾는다. 개발 중에는 `COLLABO_CORE_RUNTIME` 으로 가리킬 수 있다
+  /// (`CollaboRuntime.locate` 의 순서 그대로).
+  void _locateSandboxRuntime() {
+    try {
+      _sandboxRuntime = CollaboRuntime.locate();
+      _sandboxRuntimeError = '';
+    } catch (e) {
+      _sandboxRuntime = null;
+      _sandboxRuntimeError = '$e';
+    }
+  }
 
   /// 활성 프로젝트 기준(설정 창이 본다).
   bool get toolsReady {
@@ -570,6 +660,12 @@ class WorkspaceController extends ChangeNotifier {
     _pythonInterpreterPath =
         (await _appDb!.getSetting(_pythonKey) as String?) ?? '';
     _useVenv = (await _appDb!.getSetting(_useVenvKey) as bool?) ?? false;
+    _locateSandboxRuntime();
+    final rt = await _appDb!.getSetting(_toolRuntimeKey);
+    _toolRuntime = rt == toolRuntimeSandbox || rt == toolRuntimeSystem
+        ? rt as String
+        // 고른 적이 없으면: 런타임이 있으면 샌드박스가 기본이다(도구 계층의 목표 위치).
+        : (_sandboxRuntime != null ? toolRuntimeSandbox : toolRuntimeSystem);
     _localeCode = (await _appDb!.getSetting(_localeKey) as String?) ?? 'system';
     _systemPrompt = (await _appDb!.getSetting(_systemPromptKey) as String?) ?? '';
     _setupDone = (await _appDb!.getSetting(_setupDoneKey) as bool?) ?? false;
@@ -1160,6 +1256,8 @@ class WorkspaceController extends ChangeNotifier {
       onOpenActivity: (id) => onOpenActivity?.call(session, id),
     );
     await session.bridge!.start();
+    // 파일 뷰어(네이티브 틀 + 뷰어 웹뷰). 뷰어 설정·사용자 뷰어가 이 컨트롤러에 있다.
+    session.viewer = FileViewerController(this, session.files);
     // 세션의 변화(프로세스 시작/종료, venv 상태)를 앱 알림으로 올린다 —
     // 좌측 메뉴의 배지와 설정 창이 컨트롤러만 듣기 때문이다.
     session.addListener(notifyListeners);

@@ -187,6 +187,12 @@ class AppLocalizationsKo extends AppLocalizations {
   String get browserCloseTab => '탭 닫기';
 
   @override
+  String get browserCloseAll => '모든 탭 닫기';
+
+  @override
+  String get browserCloseAgentTabs => '에이전트 탭 모두 닫기';
+
+  @override
   String get browserAddressHint => '검색어나 주소를 입력하세요';
 
   @override
@@ -597,6 +603,162 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get viewerReadFailed => '파일을 읽을 수 없습니다.';
+
+  @override
+  String get toolRuntime => '도구 실행 환경';
+
+  @override
+  String get toolRuntimeSandbox => '샌드박스';
+
+  @override
+  String get toolRuntimeSystem => '시스템 Python';
+
+  @override
+  String get toolRuntimeSandboxDesc =>
+      '도구를 격리된 리눅스(WebAssembly) 머신에서 실행합니다. 프로젝트 폴더만 보이고, 이 컴퓨터의 프로그램(git, node 등)은 쓸 수 없습니다.';
+
+  @override
+  String get toolRuntimeSystemDesc =>
+      '아래에서 고른 Python 으로 이 컴퓨터에서 바로 실행합니다. 이 컴퓨터의 프로그램과 파일을 모두 쓸 수 있습니다.';
+
+  @override
+  String get sandboxUnavailable =>
+      '이 플랫폼용 샌드박스 런타임이 앱에 들어 있지 않습니다. 시스템 Python 으로 바꾸기 전까지 도구를 쓸 수 없습니다.';
+
+  @override
+  String get sandboxIdle => '도구를 처음 실행할 때 시작합니다';
+
+  @override
+  String get sandboxStarting => '샌드박스를 시작하는 중입니다…';
+
+  @override
+  String get sandboxRunning => '샌드박스가 실행 중입니다';
+
+  @override
+  String sandboxFailed(String error) {
+    return '샌드박스 오류: $error';
+  }
+
+  @override
+  String get navSandboxes => '샌드박스';
+
+  @override
+  String navSandboxesRunning(int count) {
+    return '$count개 실행 중';
+  }
+
+  @override
+  String get sandboxNoProjects =>
+      '열린 프로젝트가 없습니다. 프로젝트를 열면 그 프로젝트의 샌드박스가 여기 나타납니다.';
+
+  @override
+  String get sandboxSystemMode =>
+      '도구가 시스템 Python 으로 실행되도록 설정되어 있습니다. 설정 → 도구에서 샌드박스로 바꿀 수 있습니다.';
+
+  @override
+  String get sandboxStart => '시작';
+
+  @override
+  String get sandboxRestart => '다시 시작';
+
+  @override
+  String get sandboxStop => '중지';
+
+  @override
+  String get sandboxStopTitle => '샌드박스 중지';
+
+  @override
+  String get sandboxStopBody =>
+      '샌드박스를 중지하면 그 안에서 실행 중인 명령과 터미널도 모두 끝납니다. 프로젝트 폴더의 파일은 그대로입니다.';
+
+  @override
+  String get sandboxConsole => '콘솔';
+
+  @override
+  String get sandboxNetwork => '네트워크';
+
+  @override
+  String get sandboxConsoleHint => 'root 셸에 보낼 명령';
+
+  @override
+  String get sandboxNotRunning => '샌드박스가 꺼져 있습니다. 시작하면 root 셸을 쓸 수 있습니다.';
+
+  @override
+  String get sandboxNetworkEmpty => '아직 네트워크 접근이 없습니다.';
+
+  @override
+  String get sandboxMountRo => '읽기 전용';
+
+  @override
+  String sandboxUptime(String since) {
+    return '$since부터 실행 중';
+  }
+
+  @override
+  String get newFile => '새 파일';
+
+  @override
+  String get newFolder => '새 폴더';
+
+  @override
+  String get rename => '이름 변경';
+
+  @override
+  String get delete => '삭제';
+
+  @override
+  String get deleteWarn => '되돌릴 수 없습니다(휴지통으로 가지 않습니다).';
+
+  @override
+  String get deleteFolderWarn => '폴더와 그 안의 모든 내용이 지워집니다. 되돌릴 수 없습니다.';
+
+  @override
+  String get copyPath => '전체 경로 복사';
+
+  @override
+  String get openWith => '연결 프로그램으로 열기';
+
+  @override
+  String get openInExplorer => '탐색기에서 열기';
+
+  @override
+  String get openPlaybook => '계획 파일 열기 (.collabo/PLAYBOOK.md)';
+
+  @override
+  String get fileSearchPlaceholder => '파일 이름 검색…';
+
+  @override
+  String get fileSearchTitle => '파일 이름 검색';
+
+  @override
+  String get contentSearchTitle => '파일 내용 검색';
+
+  @override
+  String get contentSearchPlaceholder => '파일 내용 검색…';
+
+  @override
+  String get fileNone => '선택한 파일이 없습니다';
+
+  @override
+  String get copySelection => '선택 영역 복사';
+
+  @override
+  String get fullscreenTitle => '전체화면 보기';
+
+  @override
+  String get fullscreenExitTitle => '전체화면 종료';
+
+  @override
+  String get folderEmpty => '(빈 폴더)';
+
+  @override
+  String get noResults => '검색 결과가 없습니다';
+
+  @override
+  String get treeLoading => '불러오는 중입니다…';
+
+  @override
+  String get viewerModeTitle => '보기 방식';
 
   @override
   String get pythonEnv => 'Python 환경';

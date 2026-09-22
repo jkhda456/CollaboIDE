@@ -6,10 +6,8 @@ import 'package:collabo_ide/src/app/project_session.dart';
 import 'package:collabo_ide/src/app/workspace_controller.dart';
 import 'package:collabo_ide/src/browser/browser_controller.dart';
 import 'package:collabo_ide/src/data/sqlite_init.dart';
-import 'package:collabo_ide/src/llm/llm_config.dart';
-import 'package:collabo_ide/src/llm/llm_provider.dart';
 import 'package:collabo_ide/src/webview/platform_web_view.dart';
-import 'package:collabo_ide/src/webview/web_bridge.dart';
+import 'package:collabo_ide/src/files/file_viewer.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -54,23 +52,6 @@ class _FakeWebView implements PlatformWebView {
   }
 }
 
-class _StubProvider implements LlmProvider {
-  @override
-  Future<LlmTestResult> test(LlmConfig cfg) async =>
-      const LlmTestResult(true, 'ok');
-
-  @override
-  Stream<LlmEvent> streamChat({
-    required LlmConfig cfg,
-    required List<Map<String, Object?>> messages,
-    List<Map<String, Object?>>? tools,
-  }) =>
-      Stream<LlmEvent>.empty();
-
-  @override
-  void dispose() {}
-}
-
 Map<String, Object?>? _lastSaved(List<Map<String, Object?>> posted) {
   for (final m in posted.reversed) {
     if (m['type'] == 'file.saved') return m;
@@ -84,7 +65,7 @@ void main() {
   late _FakeWebView view;
   late WorkspaceController wc;
   late ProjectSession session;
-  late WebBridge bridge;
+  late FileViewerController viewer;
 
   /// 웹이 보내는 저장 요청. 결과가 올 때까지 이벤트 큐를 돌린다.
   Future<Map<String, Object?>?> save(String path, String content) async {
@@ -107,15 +88,10 @@ void main() {
       browser: BrowserController(),
       firstConversationTitle: 'test',
     );
-    bridge = WebBridge(
-      wc,
-      session,
-      llmClient: _StubProvider(),
-      viewerStager: (_) async => const [],
-    );
-    session.bridge = bridge;
-    await bridge.start();
-    await bridge.attachView(view);
+    // 사용자가 직접 누른 저장은 뷰어 웹뷰(viewer.html)의 요청이다 → 파일 뷰어 컨트롤러가 받는다.
+    viewer = FileViewerController(wc, session.files, viewerStager: (_) async => const []);
+    session.viewer = viewer;
+    await viewer.attachView(view);
   });
 
   tearDown(() async {
@@ -165,8 +141,8 @@ void main() {
     expect(File(missing).existsSync(), isFalse);
   });
 
-  // 예전에는 "프로젝트가 열려 있지 않으면 거부한다" 를 여기서 봤다. 브리지가
-  // 세션의 것이 된 뒤로는 프로젝트 없는 브리지를 만들 수 없어 그 경우가 사라졌다.
+  // 예전에는 "프로젝트가 열려 있지 않으면 거부한다" 를 여기서 봤다. 뷰어가
+  // 세션의 것이 된 뒤로는 프로젝트 없는 뷰어를 만들 수 없어 그 경우가 사라졌다.
   // 대신 **다른 프로젝트의 파일**은 여전히 남이라는 것을 본다 — 여러 프로젝트가
   // 동시에 열려 있으므로 이쪽이 실제로 일어나는 상황이다.
   test('다른 프로젝트의 파일은 저장하지 않는다', () async {

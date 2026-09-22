@@ -276,6 +276,85 @@ def run():
                            {"tab": "t9"}, script=WEB_TOOL)
     s.check("메시지가 보존된다", "no such tab" in err, err)
 
+    # === 검색 간격 =========================================================
+    #
+    # 에이전트가 초당 몇 번씩 검색엔진을 두드리면 막힌다. **지키는 것은
+    # 네이티브**이고(도구 호출은 매번 새 프로세스라 여기서는 시각을 들고 있을 수
+    # 없다) 파이썬은 "이 통은 이만큼 띄워 달라" 고 말할 뿐이다. 그래서 여기서
+    # 볼 것은 **무엇을 실어 보내는가**와 **받은 값을 어떻게 결과로 바꾸는가** 다.
+    # 진짜로 기다리는지는 Dart 쪽(`browser_channel_test.dart`)이 잠근다.
+
+    search_ok = {
+        "open": lambda a: _tab(url=a.get("url", "")),
+        "js": lambda a: {"value": _results(2)},
+    }
+
+    with FakeBrowser(s.ws, search_ok) as fake:
+        s.call_ok("검색이 간격을 실어 보낸다", "web_search", {"query": "x"},
+                  script=WEB_TOOL)
+    sent = fake.args_for("open") or {}
+    s.equal("검색끼리만 띄운다(통 이름)", sent.get("gate"), "search")
+    s.equal("기본 간격은 5초", sent.get("min_gap_ms"), 5000)
+
+    # 사용자가 페이지를 여는 것은 제한 대상이 아니다.
+    with FakeBrowser(s.ws, {"open": lambda a: _tab(), "read": lambda a: {}}) as fake:
+        s.call_ok("web_open 은 제한하지 않는다", "web_open",
+                  {"url": "https://a.test/", "format": "none"}, script=WEB_TOOL)
+    sent = fake.args_for("open") or {}
+    s.check("web_open 에는 간격이 안 실린다",
+            "min_gap_ms" not in sent and "gate" not in sent, sent)
+
+    # 설정으로 값을 바꾼다.
+    with FakeBrowser(s.ws, search_ok) as fake:
+        s.call_ok("환경변수로 간격을 바꾼다", "web_search", {"query": "x"},
+                  script=WEB_TOOL,
+                  env_extra={"COLLABO_SEARCH_MIN_GAP": "2.5"})
+    s.equal("소수도 받는다", (fake.args_for("open") or {}).get("min_gap_ms"), 2500)
+
+    with FakeBrowser(s.ws, search_ok) as fake:
+        s.call_ok("0 이면 끈다", "web_search", {"query": "x"}, script=WEB_TOOL,
+                  env_extra={"COLLABO_SEARCH_MIN_GAP": "0"})
+    sent = fake.args_for("open") or {}
+    s.check("아예 안 실어 보낸다",
+            "min_gap_ms" not in sent and "gate" not in sent, sent)
+
+    # 네이티브가 기다렸다고 하면 결과에 옮겨 적는다.
+    waited_open = dict(search_ok)
+    waited_open["open"] = lambda a: dict(_tab(url=a.get("url", "")),
+                                         waited_ms=3200)
+    with FakeBrowser(s.ws, waited_open):
+        r = s.call_ok("기다린 시간이 결과에 실린다", "web_search", {"query": "x"},
+                      script=WEB_TOOL)
+    if r is not None:
+        s.equal("네이티브가 준 값 그대로", r.get("throttled_ms"), 3200)
+        s.check("왜 늦었는지도 적는다",
+                "searching again" in (r.get("throttle_note") or ""),
+                r.get("throttle_note"))
+        s.equal("결과는 그대로 온다", r.get("count"), 2)
+
+    with FakeBrowser(s.ws, search_ok):
+        r = s.call_ok("안 기다렸으면 아무 말도 안 한다", "web_search",
+                      {"query": "x"}, script=WEB_TOOL)
+    s.check("throttled_ms 가 없다", r is not None and "throttled_ms" not in r, r)
+
+    # 폴백 엔진으로 한 번 더 갈 때도 각각 띄운다(검색 두 번이니 간격도 두 번).
+    def js_empty_then_full2(a):
+        js_empty_then_full2.n += 1
+        return {"value": [] if js_empty_then_full2.n == 1 else _results(2)}
+
+    js_empty_then_full2.n = 0
+    with FakeBrowser(s.ws, {
+        "open": lambda a: dict(_tab(url=a.get("url", "")), waited_ms=1000),
+        "js": js_empty_then_full2,
+    }) as fake:
+        r = s.call_ok("폴백 검색도 간격을 지킨다", "web_search",
+                      {"query": "blocked"}, script=WEB_TOOL)
+    opens = [a for o, a in fake.seen if o == "open"]
+    s.equal("두 번 다 간격을 실어 보낸다",
+            [a.get("min_gap_ms") for a in opens], [5000, 5000])
+    if r is not None:
+        s.equal("기다린 시간은 합산한다", r.get("throttled_ms"), 2000)
+
     # === web_download ======================================================
     #
     # 여기서 잠그는 것은 **정책**이다: 어느 탭으로 받는지, 링크를 어떻게 고르는지,
@@ -321,6 +400,9 @@ def run():
         s.check("기본 저장 폴더는 .collabo/downloads",
                 sent.get("dir", "").replace("\\", "/").endswith(
                     ".collabo/downloads"), sent.get("dir"))
+        # 샌드박스에서 돌면 dir 은 게스트 경로라 네이티브(호스트)에 뜻이 없다 —
+        # 프로젝트 기준 상대 경로를 같이 보내고 네이티브는 그걸 쓴다(browser_channel.dart).
+        s.equal("프로젝트 기준 상대 경로도 보낸다", sent.get("dir_rel"), ".collabo/downloads")
         s.check("기본 상한이 실린다", sent.get("max_bytes", 0) > 0, sent)
         s.equal("어느 경로로 받았는지 알려 준다", r.get("via"), "page")
 

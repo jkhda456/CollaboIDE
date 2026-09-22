@@ -1,15 +1,19 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:collabo_core/collabo_core.dart' show CollaboRuntime;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../browser/browser_channel.dart';
 import '../browser/browser_controller.dart';
 import '../conversation/conversation_store.dart';
+import '../files/file_viewer.dart';
+import '../files/project_files.dart';
 import '../process/background_process_registry.dart';
 import '../process/process_manager.dart';
 import '../process/python_environment.dart';
+import '../sandbox/project_sandbox.dart';
 import '../webview/web_bridge.dart';
 
 /// 프로젝트별 venv 준비 상태.
@@ -44,7 +48,11 @@ class ProjectSession extends ChangeNotifier {
     required String firstConversationTitle,
   }) async {
     final store = await ConversationStore.openForProject(path);
+    // 지난 실행의 샌드박스는 이미 없다 — 그 안에서 돌던 기록이 running 으로 남지 않게.
+    ProjectSandbox.sweepStaleIn(path);
     final session = ProjectSession._(path, store, browser);
+    // 트리를 읽고 감시를 시작한다 — 화면이 붙기 전에도 필요하다(에이전트가 먼저 일한다).
+    await session.files.start();
     // 활성(메인) 대화 확보: 최근 메인 대화가 있으면 재사용, 없으면 새로 만든다.
     final mains = await store.listMainConversations();
     session.activeConversationId = mains.isNotEmpty
@@ -73,6 +81,26 @@ class ProjectSession extends ChangeNotifier {
   /// 지금 보고 있는 메인 대화 id.
   int? activeConversationId;
 
+  /// 이 프로젝트의 파일 트리(네이티브 트리의 모델 + 파일 조작 창구 + 감시).
+  late final ProjectFiles files = ProjectFiles(path);
+
+  /// 파일 뷰어(네이티브 틀 + 뷰어 웹뷰). 세션을 만들 때 [WorkspaceController] 가 채운다
+  /// (뷰어 설정·사용자 뷰어가 컨트롤러에 있다).
+  FileViewerController? viewer;
+
+  /// 우측 패널(트리 + 뷰어)을 보이는가. 대화 헤더의 토글 버튼이 바꾼다.
+  final ValueNotifier<bool> sidePanelVisible = ValueNotifier(true);
+
+  void toggleSidePanel() => sidePanelVisible.value = !sidePanelVisible.value;
+
+  /// 파일을 뷰어로 연다 — 패널이 접혀 있으면 펴고, 트리에서 그 파일이 보이게 펼친다.
+  /// (대화 쪽의 계획 파일 열기, 트리 머리의 계획 버튼 등이 부른다.)
+  void openInViewer(String filePath) {
+    sidePanelVisible.value = true;
+    files.reveal(filePath);
+    viewer?.open(filePath);
+  }
+
   /// 이 프로젝트의 웹 브리지(트리/뷰어 창구 + **에이전트 루프의 소유자**).
   ///
   /// 루프 자체는 `bridge.loop`([AgentLoop])이고 브리지는 그 이벤트를 웹으로
@@ -86,6 +114,23 @@ class ProjectSession extends ChangeNotifier {
   PythonEnvironment? pythonEnv;
   VenvStatus venvStatus = VenvStatus.idle;
   String venvError = '';
+
+  /// 이 프로젝트의 리눅스 머신(도구 실행 환경이 샌드박스일 때). 처음 필요할 때 만든다.
+  ProjectSandbox? _sandbox;
+  ProjectSandbox? get sandbox => _sandbox;
+
+  /// 샌드박스를 (없으면 만들어) 준다. 부팅은 첫 도구 실행 때 한다([ProjectSandbox.ready]).
+  ProjectSandbox sandboxFor(CollaboRuntime runtime, {required String toolsDir}) {
+    final existing = _sandbox;
+    if (existing != null) return existing;
+    final box = ProjectSandbox(projectPath: path, toolsDir: toolsDir, runtime: runtime);
+    box.addListener(notifyListeners);
+    // 진행 상태 화면의 "종료" 가 샌드박스 프로세스를 게스트 안에서 끝내게 한다.
+    backgroundProcesses.sandboxKiller =
+        (proc) => box.killGroup(proc.pid!, terminal: proc.isTerminal);
+    _sandbox = box;
+    return box;
+  }
 
   /// 지금 이 프로젝트에서 생성이 돌고 있는지(좌측 메뉴 표시 + 닫기 확인).
   bool get isBusy => bridge?.isGenerating ?? false;
@@ -195,10 +240,18 @@ class ProjectSession extends ChangeNotifier {
     bridge?.stopGeneration();
     await bridge?.dispose();
     bridge = null;
+    viewer?.dispose();
+    viewer = null;
+    files.dispose();
+    sidePanelVisible.dispose();
     browserChannel.dispose();
     backgroundProcesses.removeListener(notifyListeners);
     backgroundProcesses.dispose();
     processManager?.dispose();
+    final box = _sandbox;
+    _sandbox = null;
+    box?.removeListener(notifyListeners);
+    await box?.close();
     await conversation.close();
   }
 

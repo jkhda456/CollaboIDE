@@ -9,6 +9,7 @@ import '../app/project_session.dart';
 /// - 최상단: 새 프로젝트 / 프로젝트 열기 (동작)
 /// - **열린 프로젝트** — 남는 공간을 전부 차지한다 (화면)
 /// - 웹 검색 (화면)
+/// - 샌드박스 — 떠 있는 머신 수 배지 (화면, 샌드박스 모드일 때)
 /// - 진행 상태 — 실행 중 명령 개수 배지 (화면)
 /// - 최하단: 설정 (모달) + 접기/펼치기
 ///
@@ -43,6 +44,9 @@ class LeftNav extends StatefulWidget {
     this.browserSelected = false,
     this.browserTabCount = 0,
     this.onToggleBrowser,
+    this.sandboxesSelected = false,
+    this.runningSandboxCount = 0,
+    this.onToggleSandboxes,
   });
 
   final VoidCallback onNewProject;
@@ -79,6 +83,15 @@ class LeftNav extends StatefulWidget {
 
   /// 웹 검색 화면 토글. null 이면 항목을 감춘다.
   final VoidCallback? onToggleBrowser;
+
+  /// 지금 우측 영역이 샌드박스 화면인지(선택 표시).
+  final bool sandboxesSelected;
+
+  /// 떠 있는 샌드박스 머신 수(0 이면 배지 없음).
+  final int runningSandboxCount;
+
+  /// 샌드박스 화면 토글. null 이면 항목을 감춘다(시스템 Python 모드이고 떠 있는 머신이 없을 때).
+  final VoidCallback? onToggleSandboxes;
 
   static const double collapsedWidth = 56;
   static const double expandedWidth = 220;
@@ -173,6 +186,20 @@ class _LeftNavState extends State<LeftNav> {
               selected: widget.browserSelected,
               badgeCount: widget.browserTabCount,
               onTap: widget.onToggleBrowser!,
+            ),
+
+          // 샌드박스 — 프로젝트마다 하나씩 도는 리눅스 머신(콘솔·네트워크 기록).
+          if (widget.onToggleSandboxes != null)
+            _NavItem(
+              icon: Icons.shield_outlined,
+              label: l.navSandboxes,
+              tooltip: widget.runningSandboxCount > 0
+                  ? l.navSandboxesRunning(widget.runningSandboxCount)
+                  : null,
+              expanded: _expanded,
+              selected: widget.sandboxesSelected,
+              badgeCount: widget.runningSandboxCount,
+              onTap: widget.onToggleSandboxes!,
             ),
 
           // 진행 상태 (설정 바로 위) — 이것도 화면이다(예전엔 모달이었다).

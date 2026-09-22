@@ -16,6 +16,7 @@ import '../llm/stream_budget.dart';
 import '../llm/system_prompt.dart';
 import '../process/background_process_registry.dart';
 import '../tools/tool_call_log.dart';
+import '../tools/tool_executor.dart';
 import '../tools/tool_module.dart';
 import '../tools/tool_registry.dart';
 import '../tools/tool_runner.dart';
@@ -48,7 +49,9 @@ class AgentLoop {
     required FileService fileService,
     LlmProvider? llmClient,
   })  : _fs = fileService,
-        _defaultProvider = llmClient ?? OpenAiClient();
+        _defaultProvider = llmClient ?? OpenAiClient() {
+    toolCalls.addListener(_pushActivityCount);
+  }
 
   /// 이 루프가 맡은 프로젝트. **한 세션에 루프 하나**이고 바뀌지 않는다.
   final ProjectSession _session;
@@ -71,8 +74,91 @@ class AgentLoop {
     if (!_out.isClosed) _out.add(msg);
   }
 
-  /// 이번 세션의 도구 호출 기록(인자 + 결과 원문). 네이티브 창이 이걸 보여 준다.
+  /// 지금 대화의 도구 호출 기록(마지막 시작점 이후, 인자 + 결과 원문). 네이티브 창이
+  /// 이걸 보여 주고, 대화 헤더의 배지도 이 개수다. 원본은 대화 DB(`tool_calls`).
   final ToolCallLog toolCalls = ToolCallLog();
+
+  int? _sentActivityCount;
+
+  /// 배지 숫자를 웹에 알린다(바뀔 때만 — 끝남 알림은 개수를 바꾸지 않는다).
+  void _pushActivityCount({bool force = false}) {
+    final n = toolCalls.length;
+    if (!force && n == _sentActivityCount) return;
+    _sentActivityCount = n;
+    _post({'type': 'activity.count', 'count': n});
+  }
+
+  /// 호출 시작을 기록한다 — 창에 바로 보이고, DB 에는 뒤따라 저장된다.
+  ///
+  /// 저장은 기다리지 않는다(도구 실행을 늦추지 않게). 끝남 저장([_logFinish])은
+  /// 이 저장이 끝난 뒤로 이어 붙는다 — 행 번호가 있어야 고칠 수 있다.
+  ToolCallRecord _logStart(ConversationStore store, int convId,
+      {required String id, required String scope, required String name, required String args}) {
+    final rec = toolCalls.start(id: id, scope: scope, name: name, args: args);
+    rec.saving = store
+        .insertToolCall(
+          conversationId: convId,
+          callId: id,
+          scope: scope,
+          name: name,
+          args: args,
+          startedAt: rec.startedAt,
+        )
+        .then<int?>((seq) => rec.storeId = seq)
+        .catchError((Object _) => null); // 기록 실패로 대화를 막지 않는다.
+    return rec;
+  }
+
+  void _logFinish(ConversationStore store, ToolCallRecord rec,
+      {required bool ok, required String result, required String summary}) {
+    toolCalls.finish(rec, ok: ok, result: result, summary: summary);
+    final saved = rec.saving;
+    rec.saving = null;
+    if (saved == null) return;
+    unawaited(saved.then((seq) async {
+      if (seq == null) return;
+      await store.finishToolCall(seq,
+          ok: ok, result: rec.result, summary: summary, finishedAt: rec.finishedAt!);
+    }).catchError((Object _) {}));
+  }
+
+  /// 호출 내역을 DB 에서 다시 채운다 — **마지막 시작점 이후**만.
+  ///
+  /// 배지가 대화 기록에서 다시 센 숫자라, 앱을 다시 켜면 숫자는 남는데 창은 비어
+  /// 있었다(내역이 메모리에만 있었다). 시작점을 만들면 0 부터 다시 센다.
+  Future<void> _reloadToolCalls(
+      ConversationStore store, int convId, List<Message> msgs) async {
+    DateTime? since;
+    for (var i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].pipeline == 'checkpoint') {
+        since = msgs[i].createdAt;
+        break;
+      }
+    }
+    List<ToolCallRow> rows;
+    try {
+      rows = await store.toolCalls(convId, since: since, limit: ToolCallLog.maxRecords);
+    } catch (_) {
+      rows = const [];
+    }
+    toolCalls.replaceAll([
+      for (final r in rows)
+        ToolCallRecord(
+          id: r.callId,
+          scope: r.scope,
+          name: r.name,
+          args: r.args,
+          startedAt: r.startedAt,
+        )
+          ..storeId = r.seq
+          ..result = r.result
+          ..summary = r.summary
+          // 끝나기 전에 앱이 꺼진 호출은 "실패" 로 닫아 보인다(영원히 도는 것처럼 보이지 않게).
+          ..ok = r.ok ?? false
+          ..finishedAt = r.finishedAt ?? r.startedAt,
+    ], since: since);
+    _pushActivityCount(force: true);
+  }
 
   /// 기본 provider(주입되면 OpenAI 연결에 재사용). 다른 연결 방식은 [_providerFor]
   /// 가 연결별로 만들어 캐시한다.
@@ -130,7 +216,11 @@ class AgentLoop {
   ///
   /// 도구에는 기본 타임아웃이 없다(길게 기다리는 게 정상인 도구가 있다) — 그래서
   /// 이 목록이 없으면 "중지" 가 실행 중인 도구가 끝날 때까지 기다리게 된다.
-  final Set<Process> _toolProcesses = {};
+  final Set<ToolHandle> _toolProcesses = {};
+
+  /// 도구 실행 환경 설명(샌드박스일 때). 레지스트리를 만들 때 실행기에서 받는다.
+  /// 모델이 명령이 어디서 도는지 모르면 없는 `git` 을 부르거나 호스트 경로로 `cd` 한다.
+  String? _environmentNote;
 
   /// 생성 중 들어온 전송은 큐에 쌓아 두고, 끝나면 순서대로 처리한다.
   /// 각 항목 {id,text}. 웹은 상태 풍선의 큐 칩/모달로 보여주고 취소할 수 있다.
@@ -157,7 +247,7 @@ class AgentLoop {
     if (_generating) {
       // 떠나 있는 동안 시작·진행된 생성이 있으면 화면에도 알린다. 본문은 DB 에
       // 이미 있으므로(pushHistory) 여기서는 "돌고 있다" 는 사실만 세운다.
-      _status('Working…');
+      _status('Working…', key: 'statusWorking');
     }
     _emitQueue();
   }
@@ -233,6 +323,7 @@ class AgentLoop {
     final store = _store, convId = _convId;
     if (store == null || convId == null) return;
     final msgs = await store.messages(convId);
+    await _reloadToolCalls(store, convId, msgs);
     _post({
       'type': 'chat.history',
       'messages': msgs
@@ -584,7 +675,7 @@ class AgentLoop {
     final store = _store, convId = _convId;
     if (store == null || convId == null || _generating) return;
     _generating = true;
-    _status('Generating preview…');
+    _status('Generating preview…', key: 'statusPreview');
     String summary = '';
     try {
       summary = await _compressHistory(
@@ -598,6 +689,11 @@ class AgentLoop {
 
   /// 시작점 생성. [compress] 면 미리보기에서 받은(편집 가능) [content] 를 그대로
   /// 시작점에 보관한다. 이후 대화는 그 요약 + 시작점 이후 메시지만 컨텍스트에 쓴다.
+  ///
+  /// ★ **계획(PLAYBOOK)도 같이 비운다.** 계획은 대화가 접혀도 살아남도록 파일에 둔
+  /// 것이라, 시작점을 만들어도 옛 목표·단계가 매 턴 컨텍스트에 그대로 실린다 — 새로
+  /// 시작한 대화가 끝난 일의 계획에 끌려가고, 종료 차단이 남은 TODO 를 근거로 새
+  /// 대화를 붙잡는다. 옛 계획은 보관본으로 남는다([Playbook.reset]).
   Future<void> checkpointCreate(bool compress, String? content) async {
     final store = _store, convId = _convId;
     if (store == null || convId == null || _generating) return;
@@ -608,8 +704,57 @@ class AgentLoop {
       content: summary,
       pipeline: 'checkpoint',
     );
+    final note = await _resetPlaybook();
     await pushHistory();
+    // 알림은 기록을 다시 그린 **뒤에** — 먼저 보내면 pushHistory 가 지운다.
+    if (note != null) _notice(note.text, key: note.key, args: note.args);
     if (_queue.isNotEmpty) await _drainQueue(store, convId);
+  }
+
+  /// **시작점은 만들지 않고 계획만 비운다**(대화 시작점 창의 "계획만 초기화").
+  ///
+  /// 대화 맥락은 그대로 두고 싶은데 계획이 엉뚱하게 굳었을 때 — 예전에는 파일을 직접
+  /// 지우거나 고치는 수밖에 없었다.
+  Future<void> planReset() async {
+    if (_generating) return;
+    final note = await _resetPlaybook();
+    if (note != null) {
+      _notice(note.text, key: note.key, args: note.args);
+    } else {
+      _notice('There was no plan to clear.', key: 'noticeNoPlan');
+    }
+  }
+
+  /// 계획 파일을 보관 후 비우고 카드를 갱신한다. 계획 메모리 설정과 **무관하게** 파일을
+  /// 치운다 — 꺼 둔 사이 남은 옛 계획이 다시 켰을 때 되살아나지 않게.
+  ///
+  /// 돌려주는 값: 대화에 남길 알림 문구(비울 파일이 없었으면 null). 보내는 것은 호출측이
+  /// 한다 — 시작점을 만들 때는 기록을 다시 그린 뒤에 보내야 지워지지 않는다.
+  /// 실패도 알림으로 알린다(`chat.error` 는 "다시 시도" 가 붙는 생성 오류 자리다).
+  Future<({String text, String key, Map<String, Object?> args})?> _resetPlaybook() async {
+    final root = _session.path;
+    if (root.isEmpty) return null;
+    ({String text, String key, Map<String, Object?> args})? note;
+    try {
+      final archived = await Playbook.forProject(root).reset();
+      if (archived != null) {
+        final rel = p.relative(archived, from: root).replaceAll('\\', '/');
+        note = (
+          text: 'Plan cleared (the previous plan is kept in $rel).',
+          key: 'noticePlanCleared',
+          args: {'path': rel},
+        );
+      }
+    } on PlaybookWriteException catch (e) {
+      note = (
+        text: 'Could not clear the plan: $e',
+        key: 'noticePlanClearFailed',
+        args: {'error': '$e'},
+      );
+    }
+    await reloadPlaybook();
+    _pushPlan();
+    return note;
   }
 
   /// 마지막 시작점 이후 메시지(+이전 요약)를 LLM 으로 요약한다. 실패하면 ''.
@@ -887,7 +1032,7 @@ class AgentLoop {
   /// 그게 사실상 능력 화이트리스트처럼 읽혀 **모듈을 더 붙여도 모델이 모르는** 문제가
   /// 있었다(문서 도구를 두고도 파이썬 스크립트를 짜는 원인). 레지스트리에서 그대로
   /// 뽑아 쓰면 도구가 늘거나 사용자가 추가해도 문구가 저절로 따라온다.
-  static String _toolInventory(ToolRegistry? registry) {
+  static String _toolInventory(ToolRegistry? registry, [String? environmentNote]) {
     final names = registry?.toolNames ?? const <String>[];
     if (names.isEmpty) {
       return 'You have NO tools available right now — say so instead of '
@@ -895,13 +1040,14 @@ class AgentLoop {
     }
     return 'These are ALL the tools you have: ${names.join(', ')}. '
         'Read that list before deciding how to do something — if one of them '
-        'covers the job, use it instead of writing your own script.';
+        'covers the job, use it instead of writing your own script.'
+        '${environmentNote == null ? '' : ' $environmentNote'}';
   }
 
-  static String _subAgentSystemFor(ToolRegistry? registry) =>
+  String _subAgentSystemFor(ToolRegistry? registry) =>
       'You are a focused sub-agent in Collabo IDE. Complete the given task using '
       'your tools. Work only within the project. '
-      '${_toolInventory(registry)} '
+      '${_toolInventory(registry, _environmentNote)} '
       'A purpose-built tool understands the format and its pitfalls, while a '
       'hand-written script silently corrupts what it does not know about. '
       'If no tool fits and you must write a throwaway helper script, create it '
@@ -910,10 +1056,10 @@ class AgentLoop {
       '(real source, tests, config they asked for) still go in their normal '
       'place. Return a concise result of what you did or found.';
 
-  static String _verifySystemFor(ToolRegistry? registry) =>
+  String _verifySystemFor(ToolRegistry? registry) =>
       'You are a verification sub-agent in Collabo IDE. Inspect the project and '
       'verify whether the described work was completed correctly. '
-      '${_toolInventory(registry)} '
+      '${_toolInventory(registry, _environmentNote)} '
       'If no tool fits and you need a throwaway check script, put it under '
       '`$kAgentScratchDir`. Be concise. End with a clear verdict: '
       'PASS or FAIL, with brief reasons.';
@@ -942,7 +1088,8 @@ class AgentLoop {
     if (!cfg.isConfigured) {
       _post({
         'type': 'chat.error',
-        'message': 'LLM is not configured. Enter connection info in settings.'
+        'message': 'LLM is not configured. Enter connection info in settings.',
+        'key': 'errorLlmNotConfigured',
       });
       return;
     }
@@ -958,7 +1105,7 @@ class AgentLoop {
       // 직전 턴의 백그라운드 요약이 아직 돌고 있으면 여기서만 기다린다
       // (요약은 아래 _buildContextMessages 에서 처음 쓰인다).
       await _awaitTurnSummaries();
-      _status('Preparing…');
+      _status('Preparing…', key: 'statusPreparing');
 
       // 계획 메모리는 **파일이 정본**이라 생성마다 다시 읽는다(사용자가 고쳤을 수 있다).
       // 감독자는 이번 생성 동안만 산다 — 궤적은 턴 단위로만 의미가 있다.
@@ -1000,10 +1147,8 @@ class AgentLoop {
           // "다시 시도" 를 누르면 이 상태가 된다(시작점 이후가 비어 있다) — 지시만
           // 있고 대화가 없는 요청이라, 로컬 서버는 템플릿 단계에서 그대로 실패한다.
           if (!messages.any((m) => m['role'] == 'user')) {
-            _post({
-              'type': 'chat.notice',
-              'text': 'Nothing to send yet — write a message first.',
-            });
+            _notice('Nothing to send yet — write a message first.',
+                key: 'noticeNothingToSend');
             return;
           }
           var converged = false;
@@ -1087,10 +1232,8 @@ class AgentLoop {
           // 계획 카드는 계획 도구가 부를 때마다 이미 갱신된다(_runPlanTool → _pushPlan).
           // 비수렴(반복 한도 초과)이어도 수행한 작업은 그대로 두고 종료한다.
           if (!converged) {
-            _post({
-              'type': 'chat.notice',
-              'text': 'reached step limit ($_maxToolIterations)'
-            });
+            _notice('Reached the step limit ($_maxToolIterations).',
+                key: 'noticeStepLimit', args: {'max': _maxToolIterations});
           }
           await pushChatMeta();
           return;
@@ -1114,10 +1257,8 @@ class AgentLoop {
             _post({'type': 'chat.error', 'message': '$e'});
             return;
           }
-          _post({
-            'type': 'chat.notice',
-            'text': 'retry ${attempt + 2}/$_maxAttempts'
-          });
+          _notice('Retrying (${attempt + 2}/$_maxAttempts)',
+              key: 'noticeRetry', args: {'n': attempt + 2, 'max': _maxAttempts});
           await _retryDelay(attempt + 2, _maxAttempts, _briefErr(e));
         }
       }
@@ -1156,7 +1297,7 @@ class AgentLoop {
       }
     }
     if (lastUser == null) return null;
-    _status('Assessing request…');
+    _status('Assessing request…', key: 'statusAssessing');
     try {
       final turn = await _withLlmRetry(
         () => _runSubModelTurn(
@@ -1235,6 +1376,8 @@ class AgentLoop {
         // 저장했으면 이 문단이 통째로 없다. 계획 메모리가 꺼져 있으면 넣지 않는다
         // (`_playbook == null`) — 없는 도구를 설명하지 않는다.
         if (_playbook != null && !prompt.contains(kPlaybookPath)) kPlanningNote,
+        // 도구가 샌드박스에서 돌면 그 사실을 메인에게도 알린다(메인도 도구를 직접 부른다).
+        _environmentNote,
         // 계획은 상태보다 **먼저** 온다 — "무엇을 하려는가" 를 읽고 나서 "지금 어떤
         // 상태인가" 를 읽는 순서가 자연스럽다.
         _planContext(forSubAgent: false),
@@ -1359,14 +1502,14 @@ class AgentLoop {
     var errorSig = '';
     final changesBefore = _fileChangeSeq;
     // 호출 내역(네이티브 창)에 남길 기록. 결과 원문은 아래에서 채운다.
-    final logRec = toolCalls.start(
+    final logRec = _logStart(store, convId,
       id: tid,
       scope: _nativeToolNames.contains(c.name) ? 'delegate' : 'main',
       name: c.name,
       args: c.arguments,
     );
     if (_planToolNames.contains(c.name)) {
-      _status('Plan: ${c.name}…');
+      _status('Plan: ${c.name}…', key: 'statusPlanTool', args: {'name': c.name});
       final res = await _runPlanTool(c.name, argMap);
       ok = res.ok;
       resultStr = res.result;
@@ -1376,7 +1519,8 @@ class AgentLoop {
       if (!res.ok) errorSig = errorSignature(res.summary);
     } else if (_nativeToolNames.contains(c.name)) {
       final verify = c.name == 'verify_work';
-      _status(verify ? 'Sub-agent: verifying…' : 'Sub-agent: working…');
+      _status(verify ? 'Sub-agent: verifying…' : 'Sub-agent: working…',
+          key: verify ? 'statusSubVerify' : 'statusSubWork');
       final prompt = (argMap['prompt'] as String?) ?? '';
       // 도구별 지정 프리셋 → (없으면) 지금 이 프로젝트의 대화 모델 → 기본 프리셋.
       final subCfg = _workspace.configForTool(c.name, _session.path);
@@ -1404,7 +1548,7 @@ class AgentLoop {
       // 때만** 진전으로 센다. 같은 프롬프트를 반복 위임하는 것은 반복 탐지가 잡는다.
       progress = _fileChangeSeq != changesBefore;
     } else {
-      _status('Tool: ${c.name}…');
+      _status('Tool: ${c.name}…', key: 'statusTool', args: {'name': c.name});
       final res = registry == null
           ? const ToolCallResult(ok: false, error: 'No tools available')
           : await registry.call(c.name, argMap,
@@ -1424,7 +1568,7 @@ class AgentLoop {
       }
     }
 
-    toolCalls.finish(logRec, ok: ok, result: resultStr, summary: summary);
+    _logFinish(store, logRec, ok: ok, result: resultStr, summary: summary);
     await store.addMessage(
       conversationId: convId,
       role: MessageRole.tool,
@@ -1620,7 +1764,7 @@ class AgentLoop {
           final tid = 'sub_${parentConvId}_${sub++}_${c.id}';
           // 호출 내역(네이티브 창)에도 남긴다. 실제 파일 작업 대부분이 여기라
           // 결과 원문을 볼 수 있어야 하는 곳도 사실상 여기다.
-          final logRec = toolCalls.start(
+          final logRec = _logStart(store, parentConvId,
             id: tid,
             scope: verify ? 'verify' : 'subagent',
             name: c.name,
@@ -1670,7 +1814,7 @@ class AgentLoop {
                   errorSignature(res.error ?? res.reason ?? subSummary);
             }
           }
-          toolCalls.finish(logRec,
+          _logFinish(store, logRec,
               ok: subOk, result: subResultStr, summary: subSummary);
           subMessages.add({
             'role': 'tool',
@@ -1840,7 +1984,7 @@ class AgentLoop {
     if (_pendingSummaries.isEmpty) return;
     final skip = Completer<void>();
     _summarySkip = skip;
-    _status('Summarizing previous turn…', skippable: true);
+    _status('Summarizing previous turn…', key: 'statusSummarizing', skippable: true);
     try {
       await Future.any([
         Future.wait(List<Future<void>>.from(_pendingSummaries)),
@@ -2309,8 +2453,23 @@ class AgentLoop {
 
   /// 진행 상태를 대화창 풍선으로 표시한다(빈 문자열이면 제거). 작업이 끝나면 지운다.
   /// [skippable] 이면 풍선에 "건너뛰기" 버튼이 붙는다(턴 요약 대기 전용).
-  void _status(String text, {bool skippable = false}) =>
-      _post({'type': 'status', 'text': text, 'skippable': skippable});
+  ///
+  /// [key]·[args] 는 웹 언어팩의 키와 `{이름}` 자리 값이다 — 웹이 지금 언어로 바꿔
+  /// 보여 주고, 키가 없는 언어팩이면 [text](영어)를 그대로 쓴다. 네이티브 루프는
+  /// 화면 언어를 모르므로(§1.5) 번역은 웹이 한다.
+  void _status(String text,
+          {String? key, Map<String, Object?>? args, bool skippable = false}) =>
+      _post({
+        'type': 'status',
+        'text': text,
+        'key': ?key,
+        'args': ?args,
+        'skippable': skippable,
+      });
+
+  /// 대화창에 한 줄 알림을 남긴다. [key]·[args] 는 [_status] 와 같다.
+  void _notice(String text, {String? key, Map<String, Object?>? args}) =>
+      _post({'type': 'chat.notice', 'text': text, 'key': ?key, 'args': ?args});
 
   /// 상태 풍선을 지운다. 단, 처리할 큐가 남아 있으면(곧 이어서 생성) 유지한다.
   void _clearStatus() {
@@ -2332,7 +2491,9 @@ class AgentLoop {
     final secs = nextAttempt.clamp(2, 5); // 2~5초
     for (var r = secs; r > 0; r--) {
       if (_cancelRequested) return; // 중지 요청 시 대기 즉시 종료
-      _status('$reason — retrying in ${r}s ($nextAttempt/$maxAttempts)');
+      _status('$reason — retrying in ${r}s ($nextAttempt/$maxAttempts)',
+          key: 'statusRetrying',
+          args: {'reason': reason, 'sec': r, 'n': nextAttempt, 'max': maxAttempts});
       await Future.delayed(const Duration(seconds: 1));
     }
   }
@@ -2544,12 +2705,12 @@ class AgentLoop {
 
     emitStats(phase);
     // 요청을 보내고 첫 데이터가 오기 전까지는 대기, 데이터가 오기 시작하면 수신 중.
-    _status('Waiting for response…');
+    _status('Waiting for response…', key: 'statusWaiting');
     var receiving = false;
     void markReceiving() {
       if (receiving) return;
       receiving = true;
-      _status('Receiving response…');
+      _status('Receiving response…', key: 'statusReceiving');
     }
 
     // 이벤트가 없는 동안에도 경과 시간/토큰이 살아 움직이도록 매초 통계를 보낸다.
@@ -2639,16 +2800,20 @@ class AgentLoop {
     // 전제조건은 WorkspaceController.toolsReady 한 곳에서 판단한다(헤더의 설정
     // 안내 버튼도 같은 값을 쓰므로, 안내와 실제 동작이 어긋나지 않는다).
     if (!_workspace.toolsReadyFor(_session)) return null;
+    // 실행 위치(시스템 파이썬 / collaboCore 샌드박스)는 설정이 정한다. 도구 계약과
+    // 경로(호스트 기준)는 어느 쪽이든 같다 — 차이는 실행기 안에서 흡수된다.
+    final executor = _workspace.toolExecutorFor(_session);
+    _environmentNote = executor.environmentNote;
     final registry = ToolRegistry(
-      runner: ToolRunner(
-        _session.effectivePython!,
+      runner: ToolRunner.withExecutor(
+        executor,
         // 언어·기본 검색엔진 등 앱 설정에서 오는 환경변수(기본 모듈과 사용자
         // 소스가 같은 환경을 보도록 한 곳에서 넣는다).
         baseEnv: _workspace.toolEnv,
         // 중지를 눌렀을 때 곧바로 끊을 수 있도록 실행 중인 도구를 추적한다.
-        onProcessStart: (proc) {
-          _toolProcesses.add(proc);
-          proc.exitCode.whenComplete(() => _toolProcesses.remove(proc));
+        onStart: (handle) {
+          _toolProcesses.add(handle);
+          handle.done.whenComplete(() => _toolProcesses.remove(handle));
         },
       ),
       baseScripts: _workspace.baseToolModulePaths,

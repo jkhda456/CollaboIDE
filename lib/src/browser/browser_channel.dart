@@ -147,6 +147,13 @@ class BrowserChannel {
       case 'open':
         final url = (args['url'] as String?) ?? '';
         if (url.isEmpty) throw const BrowserException('open needs a url');
+        // 부른 쪽이 "이런 요청끼리는 띄워 달라" 고 하면 그만큼 기다린 뒤 연다.
+        // **왜 그래야 하는지는 여기서 모른다** — 검색이 잦으면 막힌다는 것은
+        // 파이썬의 지식이고(§12 층 가르기), 이 층은 이름과 간격만 받는다.
+        final waited = await controller.waitForSlot(
+          (args['gate'] as String?) ?? '',
+          Duration(milliseconds: (args['min_gap_ms'] as num?)?.toInt() ?? 0),
+        );
         final tab = await controller.openUrl(
           url,
           tabId: _tabArg(args),
@@ -154,7 +161,7 @@ class BrowserChannel {
           owner: TabOwner.agent,
           timeout: _timeoutArg(args),
         );
-        return tab.toJson();
+        return {...tab.toJson(), if (waited > 0) 'waited_ms': waited};
 
       case 'read':
         final id = _requireTab(args);
@@ -206,7 +213,7 @@ class BrowserChannel {
         return controller.downloadToFile(
           id,
           url,
-          destDir: await _requireProjectDir((args['dir'] as String?) ?? ''),
+          destDir: await _requireProjectDir(_downloadDir(args)),
           fileName: (args['name'] as String?),
           maxBytes: (args['max_bytes'] as num?)?.toInt(),
           timeout: _timeoutArg(args),
@@ -222,6 +229,20 @@ class BrowserChannel {
     final root = _root;
     if (root == null) return null;
     return p.dirname(p.dirname(root));
+  }
+
+  /// 내려받을 폴더. **프로젝트 기준 상대 경로(`dir_rel`)가 있으면 그것을 쓴다.**
+  ///
+  /// 도구가 collaboCore 샌드박스에서 돌면 `dir` 은 게스트 경로(`/work/...`)라
+  /// 호스트에서는 뜻이 없다 — 상대 경로는 어디서 돌든 같다. 예전 도구는 `dir` 만
+  /// 보내므로 그쪽도 받는다. 어느 쪽이든 [_requireProjectDir] 의 가드를 거친다.
+  String _downloadDir(Map<String, Object?> args) {
+    final rel = args['dir_rel'];
+    final root = projectRoot;
+    if (rel is String && rel.isNotEmpty && root != null) {
+      return p.normalize(p.joinAll([root, ...rel.split('/')]));
+    }
+    return (args['dir'] as String?) ?? '';
   }
 
   /// 내려받은 파일을 쓸 폴더가 **이 프로젝트 안인지** 확인하고 실제 경로를 준다.
@@ -345,6 +366,10 @@ class BrowserChannel {
       'ok': res['ok'],
       if (res['error'] != null) 'error': res['error'],
       'ms': took.inMilliseconds,
+      // 일부러 기다린 시간은 따로 남긴다 — 안 그러면 나중에 로그를 읽을 때
+      // "느린 페이지" 와 구분이 안 된다.
+      if (result is Map && result['waited_ms'] is int)
+        'waited': result['waited_ms'],
       if (result is Map && result['content'] is String)
         'chars': (result['content'] as String).length,
       // 내려받기는 **무엇이 디스크에 생겼는지**가 기록의 핵심이다.

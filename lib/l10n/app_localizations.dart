@@ -440,6 +440,18 @@ abstract class AppLocalizations {
   /// **'Close tab'**
   String get browserCloseTab;
 
+  /// No description provided for @browserCloseAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Close all tabs'**
+  String get browserCloseAll;
+
+  /// No description provided for @browserCloseAgentTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Close the agent\'s tabs'**
+  String get browserCloseAgentTabs;
+
   /// No description provided for @browserAddressHint.
   ///
   /// In en, this message translates to:
@@ -1207,6 +1219,294 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not read the file.'**
   String get viewerReadFailed;
+
+  /// No description provided for @toolRuntime.
+  ///
+  /// In en, this message translates to:
+  /// **'Tool runtime'**
+  String get toolRuntime;
+
+  /// No description provided for @toolRuntimeSandbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Sandbox'**
+  String get toolRuntimeSandbox;
+
+  /// No description provided for @toolRuntimeSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'System Python'**
+  String get toolRuntimeSystem;
+
+  /// No description provided for @toolRuntimeSandboxDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Tools run in an isolated Linux (WebAssembly) machine that sees only the project folder. Programs on this computer (git, node…) are not available there.'**
+  String get toolRuntimeSandboxDesc;
+
+  /// No description provided for @toolRuntimeSystemDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Tools run directly on this computer with the Python selected below, and can use every program and file it can reach.'**
+  String get toolRuntimeSystemDesc;
+
+  /// No description provided for @sandboxUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This app has no sandbox runtime for this platform. Tools cannot run until you switch to System Python.'**
+  String get sandboxUnavailable;
+
+  /// No description provided for @sandboxIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'Starts when a tool first runs'**
+  String get sandboxIdle;
+
+  /// No description provided for @sandboxStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting the sandbox…'**
+  String get sandboxStarting;
+
+  /// No description provided for @sandboxRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Sandbox running'**
+  String get sandboxRunning;
+
+  /// No description provided for @sandboxFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Sandbox error: {error}'**
+  String sandboxFailed(String error);
+
+  /// No description provided for @navSandboxes.
+  ///
+  /// In en, this message translates to:
+  /// **'Sandboxes'**
+  String get navSandboxes;
+
+  /// No description provided for @navSandboxesRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} running'**
+  String navSandboxesRunning(int count);
+
+  /// No description provided for @sandboxNoProjects.
+  ///
+  /// In en, this message translates to:
+  /// **'No project is open. Each open project gets its own sandbox here.'**
+  String get sandboxNoProjects;
+
+  /// No description provided for @sandboxSystemMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Tools are set to run with System Python. You can switch to the sandbox in Settings → Tools.'**
+  String get sandboxSystemMode;
+
+  /// No description provided for @sandboxStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get sandboxStart;
+
+  /// No description provided for @sandboxRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart'**
+  String get sandboxRestart;
+
+  /// No description provided for @sandboxStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get sandboxStop;
+
+  /// No description provided for @sandboxStopTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the sandbox'**
+  String get sandboxStopTitle;
+
+  /// No description provided for @sandboxStopBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopping the sandbox ends every command and terminal running in it. Files in the project folder stay as they are.'**
+  String get sandboxStopBody;
+
+  /// No description provided for @sandboxConsole.
+  ///
+  /// In en, this message translates to:
+  /// **'Console'**
+  String get sandboxConsole;
+
+  /// No description provided for @sandboxNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Network'**
+  String get sandboxNetwork;
+
+  /// No description provided for @sandboxConsoleHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Command for the root shell'**
+  String get sandboxConsoleHint;
+
+  /// No description provided for @sandboxNotRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'The sandbox is off. Start it to use its root shell.'**
+  String get sandboxNotRunning;
+
+  /// No description provided for @sandboxNetworkEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No network access yet.'**
+  String get sandboxNetworkEmpty;
+
+  /// No description provided for @sandboxMountRo.
+  ///
+  /// In en, this message translates to:
+  /// **'read-only'**
+  String get sandboxMountRo;
+
+  /// No description provided for @sandboxUptime.
+  ///
+  /// In en, this message translates to:
+  /// **'Running since {since}'**
+  String sandboxUptime(String since);
+
+  /// No description provided for @newFile.
+  ///
+  /// In en, this message translates to:
+  /// **'New file'**
+  String get newFile;
+
+  /// No description provided for @newFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'New folder'**
+  String get newFolder;
+
+  /// No description provided for @rename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get rename;
+
+  /// No description provided for @delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get delete;
+
+  /// No description provided for @deleteWarn.
+  ///
+  /// In en, this message translates to:
+  /// **'This cannot be undone (it does not go to the trash).'**
+  String get deleteWarn;
+
+  /// No description provided for @deleteFolderWarn.
+  ///
+  /// In en, this message translates to:
+  /// **'The folder and everything in it will be removed. This cannot be undone.'**
+  String get deleteFolderWarn;
+
+  /// No description provided for @copyPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy full path'**
+  String get copyPath;
+
+  /// No description provided for @openWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Open with default app'**
+  String get openWith;
+
+  /// No description provided for @openInExplorer.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in file explorer'**
+  String get openInExplorer;
+
+  /// No description provided for @openPlaybook.
+  ///
+  /// In en, this message translates to:
+  /// **'Open the plan file (.collabo/PLAYBOOK.md)'**
+  String get openPlaybook;
+
+  /// No description provided for @fileSearchPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Search file names…'**
+  String get fileSearchPlaceholder;
+
+  /// No description provided for @fileSearchTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search file names'**
+  String get fileSearchTitle;
+
+  /// No description provided for @contentSearchTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Search file content'**
+  String get contentSearchTitle;
+
+  /// No description provided for @contentSearchPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Search file content…'**
+  String get contentSearchPlaceholder;
+
+  /// No description provided for @fileNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No file selected'**
+  String get fileNone;
+
+  /// No description provided for @copySelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy selection'**
+  String get copySelection;
+
+  /// No description provided for @fullscreenTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Fullscreen'**
+  String get fullscreenTitle;
+
+  /// No description provided for @fullscreenExitTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Exit fullscreen'**
+  String get fullscreenExitTitle;
+
+  /// No description provided for @folderEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'(empty folder)'**
+  String get folderEmpty;
+
+  /// No description provided for @noResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No results'**
+  String get noResults;
+
+  /// No description provided for @treeLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading…'**
+  String get treeLoading;
+
+  /// No description provided for @viewerModeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'View as'**
+  String get viewerModeTitle;
 
   /// No description provided for @pythonEnv.
   ///

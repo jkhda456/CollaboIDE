@@ -100,7 +100,7 @@ void main() {
     );
     view = _FakeWebView();
     bridge = WebBridge(wc, session,
-        llmClient: _StubProvider(), viewerStager: (_) async => const []);
+        llmClient: _StubProvider());
     session.bridge = bridge;
     await bridge.start();
     await bridge.attachView(view);
@@ -172,6 +172,151 @@ void main() {
     await pumpEventQueue();
 
     expect(view.types, contains('chat.stopped'));
+  });
+
+  group('시작점과 계획(PLAYBOOK)', () {
+    File playbook() => File('${tmp.path}/.collabo/PLAYBOOK.md');
+    Directory archive() => Directory('${tmp.path}/.collabo/playbook-archive');
+
+    Future<void> seedPlan() async {
+      playbook()
+        ..parent.createSync(recursive: true)
+        ..writeAsStringSync('# PLAYBOOK\n\n## GOAL\n- [ASSUMED] 옛 목표\n\n## PLAN\n- [TODO] 남은 일\n');
+      // 루프가 들고 있는 계획도 디스크와 맞춘다(생성 때마다 다시 읽는 것과 같다).
+      await bridge.loop.reloadPlaybook();
+    }
+
+    Future<List<String>> pipelines() async => [
+          for (final m in await session.conversation.messages(session.activeConversationId!))
+            m.pipeline ?? '',
+        ];
+
+    Future<void> settle() async {
+      for (var i = 0; i < 20; i++) {
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    }
+
+    test('시작점을 만들면 계획도 비우고 옛 계획은 보관한다', () async {
+      await seedPlan();
+      view.posted.clear();
+
+      view.emit(jsonEncode({'type': 'chat.checkpoint.create', 'compress': false, 'content': ''}));
+      await settle();
+
+      expect(await pipelines(), contains('checkpoint'));
+      expect(playbook().existsSync(), isFalse);
+      expect(archive().listSync(), hasLength(1));
+      final plan = view.posted.lastWhere((m) => m['type'] == 'chat.plan');
+      expect(plan['plan'], isNull, reason: '계획 카드가 사라져야 한다');
+      expect(plan['path'], isNull, reason: '"계획 파일 열기" 버튼도');
+      // 알림은 기록을 다시 그린 뒤에 와야 지워지지 않는다.
+      final types = view.types;
+      expect(types.lastIndexOf('chat.notice'), greaterThan(types.lastIndexOf('chat.history')));
+      // 문구는 웹이 지금 언어로 바꾼다 — 키와 자리 값이 같이 가야 한다.
+      final notice = view.posted.lastWhere((m) => m['type'] == 'chat.notice');
+      expect(notice['key'], 'noticePlanCleared');
+      expect((notice['args'] as Map)['path'], startsWith('.collabo/playbook-archive/'));
+    });
+
+    test('계획만 초기화 — 시작점은 만들지 않는다', () async {
+      await seedPlan();
+      final before = await pipelines();
+
+      view.emit(jsonEncode({'type': 'chat.plan.reset'}));
+      await settle();
+
+      expect(await pipelines(), before, reason: '대화는 그대로');
+      expect(playbook().existsSync(), isFalse);
+      expect(archive().listSync(), hasLength(1));
+      expect(view.types, contains('chat.notice'));
+    });
+
+    test('비울 계획이 없어도 조용히 끝나지 않고 알려 준다', () async {
+      view.emit(jsonEncode({'type': 'chat.plan.reset'}));
+      await settle();
+      final notice = view.posted.lastWhere((m) => m['type'] == 'chat.notice');
+      expect('${notice['text']}', contains('no plan'));
+      expect(notice['key'], 'noticeNoPlan');
+      expect(archive().existsSync(), isFalse);
+    });
+  });
+
+  group('호출 내역 — 배지와 창이 같은 것을 센다', () {
+    Future<void> settle() async {
+      for (var i = 0; i < 20; i++) {
+        await pumpEventQueue();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    }
+
+    Future<void> seed(String name, DateTime at, {bool finished = true}) async {
+      final store = session.conversation;
+      final seq = await store.insertToolCall(
+        conversationId: session.activeConversationId!,
+        callId: 't_$name',
+        scope: 'main',
+        name: name,
+        args: '{}',
+        startedAt: at,
+      );
+      if (finished) {
+        await store.finishToolCall(seq,
+            ok: true, result: '{"ok":true}', summary: 'ok', finishedAt: at);
+      }
+    }
+
+    int lastCount() =>
+        view.posted.lastWhere((m) => m['type'] == 'activity.count')['count'] as int;
+
+    test('다시 열면(화면이 다시 붙으면) 저장된 내역이 창과 배지에 같이 돌아온다', () async {
+      final past = DateTime.now().subtract(const Duration(seconds: 5));
+      await seed('read_file', past);
+      await seed('edit_file', past);
+      // 앱이 꺼질 때 돌던 호출 — 영원히 도는 것처럼 보이면 안 된다.
+      await seed('run_command', past, finished: false);
+
+      await bridge.detachView();
+      await bridge.attachView(view);
+      await settle();
+
+      final log = bridge.loop.toolCalls;
+      expect(log.length, 3);
+      expect(lastCount(), 3, reason: '배지는 창과 같은 숫자');
+      expect(log.records.first.name, 'run_command', reason: '최신이 앞');
+      expect(log.records.first.running, isFalse);
+      expect(log.records.first.ok, isFalse);
+      expect(log.records.last.result, '{"ok":true}', reason: '결과 원문도 남는다');
+    });
+
+    test('시작점을 만들면 0 부터 — 되돌리면 앞의 내역이 돌아온다', () async {
+      await seed('read_file', DateTime.now().subtract(const Duration(seconds: 5)));
+      await bridge.detachView();
+      await bridge.attachView(view);
+      await settle();
+      expect(lastCount(), 1);
+
+      view.emit(jsonEncode({'type': 'chat.checkpoint.create', 'compress': false, 'content': ''}));
+      await settle();
+      expect(bridge.loop.toolCalls.length, 0);
+      expect(lastCount(), 0);
+
+      // 시작점 뒤의 호출은 센다.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await seed('write_file', DateTime.now());
+      await bridge.detachView();
+      await bridge.attachView(view);
+      await settle();
+      expect(lastCount(), 1);
+      expect(bridge.loop.toolCalls.records.single.name, 'write_file');
+
+      final cp = (await session.conversation.messages(session.activeConversationId!))
+          .lastWhere((m) => m.pipeline == 'checkpoint');
+      view.emit(jsonEncode({'type': 'chat.checkpoint.revert', 'id': cp.id}));
+      await settle();
+      expect(lastCount(), 2, reason: '시작점을 지우면 그 앞도 다시 보인다');
+    });
   });
 
   test('AgentLoop 은 브리지 없이도 만들 수 있다', () async {

@@ -49,6 +49,12 @@ dependencies:
   webview_flutter: ^4.14.0
   package_info_plus: ^10.1.0
   window_manager: ^0.5.1
+  # WASM 리눅스 샌드박스(collaboCore). CollaboCore/dart/collabo_core 의 복사본이다 —
+  # 런타임(collabo_core_runtime/)과 짝이 맞아야 하므로 둘을 같이 갱신한다.
+  collabo_core:
+    path: packages/collabo_core
+  # 샌드박스 root 셸의 터미널 에뮬레이터(VT/xterm 이스케이프·키 입력·IME·스크롤백).
+  xterm: ^4.0.0
 
 dev_dependencies:
   flutter_test:

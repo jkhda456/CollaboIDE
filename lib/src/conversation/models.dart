@@ -108,6 +108,52 @@ class FileChange {
       );
 }
 
+/// 저장된 도구 호출 한 건(`tool_calls` 행). 호출 내역 창의 재료.
+class ToolCallRow {
+  const ToolCallRow({
+    required this.seq,
+    required this.callId,
+    required this.scope,
+    required this.name,
+    required this.args,
+    required this.result,
+    required this.summary,
+    required this.ok,
+    required this.startedAt,
+    required this.finishedAt,
+  });
+
+  final int seq;
+  final String callId;
+  final String scope;
+  final String name;
+  final String args;
+  final String result;
+  final String summary;
+
+  /// 끝나기 전에 앱이 꺼졌으면 null 이다(끝 시각도 null).
+  final bool? ok;
+  final DateTime startedAt;
+  final DateTime? finishedAt;
+
+  factory ToolCallRow.fromRow(Map<String, Object?> row) {
+    final ok = row['ok'] as int?;
+    final fin = row['finished_at'] as int?;
+    return ToolCallRow(
+      seq: row['seq'] as int,
+      callId: row['call_id'] as String? ?? '',
+      scope: row['scope'] as String? ?? 'main',
+      name: row['name'] as String? ?? '',
+      args: row['args'] as String? ?? '',
+      result: row['result'] as String? ?? '',
+      summary: row['summary'] as String? ?? '',
+      ok: ok == null ? null : ok != 0,
+      startedAt: DateTime.fromMillisecondsSinceEpoch(row['started_at'] as int),
+      finishedAt: fin == null ? null : DateTime.fromMillisecondsSinceEpoch(fin),
+    );
+  }
+}
+
 /// 대화 메시지 한 건.
 ///
 /// function calling 지원: assistant 의 [toolCalls](tool_use 목록, JSON),

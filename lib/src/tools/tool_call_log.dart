@@ -30,21 +30,30 @@ class ToolCallRecord {
   /// 한 줄 요약(목록에 표시).
   String summary = '';
 
+  /// 대화 DB 의 행 번호(`tool_calls.seq`). 저장이 끝나기 전이나 실패했으면 null.
+  int? storeId;
+
+  /// 시작 저장이 진행 중이면 그 결과(행 번호). 끝남 저장이 이걸 기다린다.
+  Future<int?>? saving;
+
   bool get running => finishedAt == null;
 
   Duration get elapsed => (finishedAt ?? DateTime.now()).difference(startedAt);
 }
 
-/// 이번 세션의 도구 호출 기록.
+/// 지금 대화의 도구 호출 기록 — **마지막 시작점 이후**만 담는다.
 ///
 /// **왜 네이티브에 두는가**: 결과 원문은 수십 KB 가 되기도 한다(파일 읽기, 검색,
 /// 문서 구조…). 그걸 대화 버블에 그대로 뿌리면 대화가 읽을 수 없게 되고, 웹으로
 /// 전부 밀면 메시지도 커진다. 그래서 원문은 네이티브가 들고 있고, 사용자가 호출
 /// 내역 창을 열 때만 보여 준다(프로세스 뷰어와 같은 방식).
 ///
-/// 대화 DB 와 다른 점: DB 에는 **메인 에이전트의** 도구 호출만 남는다(서브에이전트
-/// 내부 호출은 하위 대화에 요약만 남는다). 이 로그는 **서브에이전트 내부 호출까지**
-/// 포함해 "방금 무슨 일이 있었나" 를 그대로 보여 주는 용도다. 세션 한정(휘발성).
+/// 대화 DB 의 메시지와 다른 점: 메시지에는 **메인 에이전트의** 도구 호출만 남는다
+/// (서브에이전트 내부 호출은 하위 대화에 요약만 남는다). 이 로그는 **서브에이전트 내부
+/// 호출까지** 포함해 "무슨 일이 있었나" 를 그대로 보여 주는 용도다.
+///
+/// 원본은 대화 DB 의 `tool_calls` 이고(앱을 다시 켜도 남는다), 이건 그 창에 보일
+/// 몫이다. 대화 헤더의 배지도 **이 개수**를 쓴다 — 배지와 창이 어긋나지 않게.
 class ToolCallLog extends ChangeNotifier {
   /// 기록 상한(오래된 것부터 버린다).
   static const int maxRecords = 300;
@@ -75,9 +84,7 @@ class ToolCallLog extends ChangeNotifier {
       startedAt: DateTime.now(),
     );
     _records.add(rec);
-    if (_records.length > maxRecords) {
-      _records.removeRange(0, _records.length - maxRecords);
-    }
+    _trim();
     notifyListeners();
     return rec;
   }
@@ -93,9 +100,29 @@ class ToolCallLog extends ChangeNotifier {
     rec.finishedAt = DateTime.now();
     rec.ok = ok;
     rec.summary = summary;
-    rec.result = result.length > maxResultChars
-        ? '${result.substring(0, maxResultChars)}\n… (truncated)'
-        : result;
+    rec.result = clipResult(result);
+    notifyListeners();
+  }
+
+  /// 저장본으로 통째로 바꾼다(대화를 다시 그릴 때 — 앱 시작·시작점·대화 전환).
+  ///
+  /// [stored] 는 오래된 것부터. **지금 돌고 있는 호출은 잃지 않는다**: 같은 행의 기록이
+  /// 메모리에 있으면 그 객체를 그대로 쓰고(끝나면 그 객체가 채워진다), 아직 저장이 안
+  /// 끝난 기록([ToolCallRecord.storeId] 가 null)은 [since] 이후면 뒤에 붙인다.
+  void replaceAll(List<ToolCallRecord> stored, {DateTime? since}) {
+    final live = {
+      for (final r in _records)
+        if (r.storeId != null) r.storeId!: r,
+    };
+    final pending = [
+      for (final r in _records)
+        if (r.storeId == null && (since == null || !r.startedAt.isBefore(since))) r,
+    ];
+    _records
+      ..clear()
+      ..addAll([for (final r in stored) live[r.storeId] ?? r])
+      ..addAll(pending);
+    _trim();
     notifyListeners();
   }
 
@@ -103,4 +130,14 @@ class ToolCallLog extends ChangeNotifier {
     _records.clear();
     notifyListeners();
   }
+
+  void _trim() {
+    if (_records.length > maxRecords) {
+      _records.removeRange(0, _records.length - maxRecords);
+    }
+  }
+
+  static String clipResult(String result) => result.length > maxResultChars
+      ? '${result.substring(0, maxResultChars)}\n… (truncated)'
+      : result;
 }

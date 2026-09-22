@@ -230,4 +230,47 @@ void main() {
     final notes = j['notes'] as Map;
     expect((notes['ruled_out'] as List).length, 1);
   });
+
+  group('reset — 시작점 만들기 / 계획만 초기화', () {
+    Directory archiveOf(Directory d) =>
+        Directory(p.join(d.path, '.collabo', Playbook.archiveDirName));
+
+    test('비우고, 옛 파일은 보관본으로 옮긴다', () async {
+      await pb.setGoal('옛 목표');
+      await pb.setPlan(['끝난 일', '남은 일']);
+      final before = fileOf(dir).readAsStringSync();
+
+      final archived = await pb.reset(now: DateTime(2026, 9, 22, 13, 5, 9));
+
+      expect(pb.isEmpty, isTrue);
+      expect(pb.openSteps, isEmpty, reason: '종료 차단이 옛 TODO 를 근거로 붙잡으면 안 된다');
+      expect(pb.digest(), isNull, reason: '다음 턴 컨텍스트에 옛 계획이 실리면 안 된다');
+      expect(pb.fileExists, isFalse);
+      expect(fileOf(dir).existsSync(), isFalse);
+      expect(p.basename(archived!), 'PLAYBOOK-20260922-130509.md');
+      expect(File(archived).readAsStringSync(), before, reason: '보관본은 원본 그대로');
+
+      // 다시 읽어도 비어 있다(파일이 정본이다).
+      final again = Playbook.forProject(dir.path);
+      await again.load();
+      expect(again.isEmpty, isTrue);
+    });
+
+    test('파일이 없으면 보관할 것도 없다 (null)', () async {
+      expect(await pb.reset(), isNull);
+      expect(archiveOf(dir).existsSync(), isFalse);
+    });
+
+    test('같은 초에 두 번 비워도 보관본을 덮어쓰지 않는다', () async {
+      final t = DateTime(2026, 9, 22, 13, 5, 9);
+      await pb.setGoal('첫째');
+      final a = await pb.reset(now: t);
+      await pb.setGoal('둘째');
+      final b = await pb.reset(now: t);
+      expect(a, isNot(b));
+      expect(p.basename(b!), 'PLAYBOOK-20260922-130509-2.md');
+      expect(File(a!).readAsStringSync(), contains('첫째'));
+      expect(File(b).readAsStringSync(), contains('둘째'));
+    });
+  });
 }

@@ -360,6 +360,39 @@ void main() {
       expect(File(result['path'] as String).readAsStringSync(), 'via channel');
     });
 
+    /// 샌드박스에서 돈 도구는 `dir` 에 **게스트 경로**를 적는다 — 호스트에는 뜻이 없다.
+    /// 같이 온 프로젝트 기준 상대 경로(`dir_rel`)를 써야 제자리에 떨어진다.
+    test('dir_rel 이 있으면 그걸 프로젝트 루트에 이어 붙인다 (dir 은 게스트 경로)', () async {
+      view.body = utf8.encode('from sandbox');
+      final id = await openTab();
+
+      final res = await ask('download', {
+        'tab': id,
+        'url': 'https://site.test/y.txt',
+        'dir': '/work/.collabo/downloads',
+        'dir_rel': '.collabo/downloads',
+      });
+
+      expect(res['ok'], isTrue, reason: '${res['error']}');
+      final path = (res['result'] as Map)['path'] as String;
+      expect(p.equals(path, p.join(project.path, '.collabo', 'downloads', 'y.txt')), isTrue,
+          reason: path);
+      expect(File(path).readAsStringSync(), 'from sandbox');
+    });
+
+    test('dir_rel 로도 프로젝트 밖으로는 못 나간다', () async {
+      view.body = [1, 2, 3];
+      final id = await openTab();
+      final res = await ask('download', {
+        'tab': id,
+        'url': 'https://site.test/x.txt',
+        'dir': '/work/../escape',
+        'dir_rel': '../escape',
+      });
+      expect(res['ok'], isFalse);
+      expect('${res['error']}', contains('outside the project'));
+    });
+
     /// ★ 파이썬도 이미 워크스페이스로 가두지만, **디스크에 쓰는 유일한 브라우저
     /// 동사**라 통로에서 한 번 더 본다 — 파일 도구의 경계를 브라우저로 우회하는
     /// 길이 되면 안 된다.

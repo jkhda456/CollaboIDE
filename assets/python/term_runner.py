@@ -90,7 +90,12 @@ def _default_shell():
                 if os.path.isfile(cand):
                     return cand
         return os.environ.get("COMSPEC", "cmd.exe")
-    return os.environ.get("SHELL") or "/bin/bash"
+    # $SHELL 이 가리키는 게 실제로 있어야 한다 — collaboCore 게스트(busybox)에는
+    # bash 가 없고 /bin/sh 뿐이다. 예전엔 /bin/bash 를 그대로 믿어 폴백까지 죽었다.
+    for cand in (os.environ.get("SHELL"), "/bin/bash", "/bin/sh"):
+        if cand and os.path.exists(cand):
+            return cand
+    return "/bin/sh"
 
 
 def _child_env(cols, rows):
@@ -111,6 +116,44 @@ def _child_env(cols, rows):
 # ============================================================ PTY 백엔드(POSIX)
 
 
+# fork 없이 PosixPty 의 _setup 과 같은 일을 한다: argv = [tty 경로, 프로그램, 인자...].
+# 세션 리더가 O_NOCTTY 없이 처음 연 tty 는 제어 터미널이 된다(TIOCSCTTY 는 확인 사살).
+# exec 하므로 pid 는 그대로 프로그램의 것이 된다(meta.json 의 pid·killpg 가 그대로 맞는다).
+_CTTY_TRAMPOLINE = """\
+import os, sys
+os.setsid()
+fd = os.open(sys.argv[1], os.O_RDWR)
+try:
+    import fcntl, termios
+    fcntl.ioctl(fd, termios.TIOCSCTTY, 0)
+except OSError:
+    pass
+for i in (0, 1, 2):
+    os.dup2(fd, i)
+if fd > 2:
+    os.close(fd)
+os.execvp(sys.argv[2], sys.argv[2:])
+"""
+
+
+def _openpty(pty):
+    """(master, slave). slave 는 **반드시 O_NOCTTY** 로 연다.
+
+    `pty.openpty()` 는 `os.openpty()`(UNIX98, /dev/pts)가 안 되면 구식 BSD pty
+    (/dev/ptyXY ↔ /dev/ttyXY)로 물러서는데, 그때 slave 를 O_NOCTTY 없이 연다. 러너는
+    세션 리더(start_new_session)라 그 tty 가 **러너의 제어 터미널**이 돼 버린다 —
+    셸은 제어 터미널을 못 얻고(ctrl-c 가 셸이 아니라 러너로 간다), 셸이 끝나면 행업
+    SIGHUP 이 러너를 죽여 meta.json 이 영영 running 으로 남는다.
+    devpts 가 없는 collaboCore 게스트에서 실제로 그랬다(2026-09-22).
+    """
+    try:
+        return os.openpty()
+    except OSError:
+        pass
+    master, slave_name = pty._open_terminal()  # BSD 방식 탐색(stdlib 내부 함수)
+    return master, os.open(slave_name, os.O_RDWR | os.O_NOCTTY)
+
+
 class PosixPty(object):
     """stdlib `pty` 로 연 의사 터미널."""
 
@@ -121,7 +164,7 @@ class PosixPty(object):
         import termios
 
         self._fcntl, self._termios, self._struct = fcntl, termios, struct
-        self.master, slave = pty.openpty()
+        self.master, slave = _openpty(pty)
         self._set_winsize(slave, cols, rows)
 
         def _setup():
@@ -130,15 +173,22 @@ class PosixPty(object):
             os.setsid()
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
+        if hasattr(os, "fork"):
+            spawn_argv, extra = argv, {"preexec_fn": _setup}
+        else:
+            # fork 가 없는 곳(collaboCore 게스트: subprocess 가 posix_spawn 으로만 돈다)
+            # 에서는 preexec_fn 을 못 쓴다 → 같은 일을 하는 트램펄린을 거쳐 exec 한다.
+            spawn_argv = [sys.executable, "-c", _CTTY_TRAMPOLINE, os.ttyname(slave)] + list(argv)
+            extra = {}
         self.proc = subprocess.Popen(
-            argv,
+            spawn_argv,
             stdin=slave,
             stdout=slave,
             stderr=slave,
             cwd=cwd,
             env=env,
             close_fds=True,
-            preexec_fn=_setup,
+            **extra
         )
         os.close(slave)
         self.pid = self.proc.pid
@@ -552,6 +602,9 @@ class Session(object):
             "started_at": time.time(),
             "status": "running",
         }
+        # 게스트 pid 표시 — proc_runner.py 와 같은 이유(앱이 호스트에서 kill 하지 않게).
+        if os.environ.get("COLLABO_SANDBOX"):
+            self.meta["sandbox"] = True
         self._write_meta()
 
     def _write_meta(self):

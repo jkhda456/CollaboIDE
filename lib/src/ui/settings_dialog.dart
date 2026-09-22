@@ -16,6 +16,8 @@ import '../llm/llm_preset.dart';
 import '../llm/openai_client.dart';
 import '../llm/system_prompt.dart';
 import '../platform/mac_file_picker.dart';
+import '../sandbox/project_sandbox.dart' show SandboxState;
+import '../tools/tool_executor.dart';
 import '../tools/tool_module.dart';
 import '../tools/tool_runner.dart';
 import '../tools/tool_source.dart';
@@ -279,7 +281,8 @@ class _AboutTab extends StatelessWidget {
   static const String _openSourceList =
       'Flutter · webview_windows · webview_flutter · sqflite · sqlite3 · '
       'path · path_provider · http · url_launcher · file_selector · archive · '
-      'intl · package_info_plus · Bootstrap (MIT) · marked (MIT)';
+      'intl · package_info_plus · xterm.dart (MIT) · collaboCore · '
+      'Bootstrap (MIT) · marked (MIT)';
 
   @override
   Widget build(BuildContext context) {
@@ -1245,6 +1248,8 @@ class _ToolsTabState extends State<_ToolsTab> {
   void _onWorkspaceChanged() => _loadModules();
 
   String _configSignature() => [
+        workspace.toolRuntime,
+        workspace.projectPath ?? '',
         workspace.effectivePython ?? '',
         ...workspace.baseToolModulePaths,
         ...workspace.toolSources.map((s) => s.id),
@@ -1256,9 +1261,18 @@ class _ToolsTabState extends State<_ToolsTab> {
     if (sig == _signature) return;
     _signature = sig;
 
+    // 실제 도구를 돌리는 **같은 실행기**로 물어야 목록이 실제와 같다(샌드박스면 게스트
+    // 파이썬 — 필요하면 여기서 부팅된다). 프로젝트가 없으면 시스템 파이썬으로라도 보여 준다.
+    final session = workspace.activeSession;
     final interp = workspace.effectivePython;
     final dir = workspace.toolAdaptersDir;
-    if (!workspace.pythonInstalled || interp == null || dir == null) {
+    ToolExecutor? executor;
+    if (session != null && workspace.toolsReadyFor(session)) {
+      executor = workspace.toolExecutorFor(session);
+    } else if (workspace.pythonInstalled && interp != null) {
+      executor = HostToolExecutor(interp);
+    }
+    if (executor == null || dir == null) {
       if (mounted) {
         setState(() {
           _modules = const {};
@@ -1269,8 +1283,7 @@ class _ToolsTabState extends State<_ToolsTab> {
     }
     setState(() => _loading = true);
 
-    // 런타임과 같은 실효 파이썬·작업 디렉토리로 물어야 도구 목록이 실제와 같다.
-    final runner = ToolRunner(interp);
+    final runner = ToolRunner.withExecutor(executor, baseEnv: workspace.toolEnv);
     final out = <String, ToolModule?>{};
     for (final script in workspace.baseToolModulePaths) {
       out[baseSourceId(script)] = await runner.describe(script,
@@ -1426,7 +1439,15 @@ class _ToolsTabState extends State<_ToolsTab> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _PythonStatusBar(workspace: workspace),
+            _RuntimeBar(workspace: workspace),
+            // 시스템 Python 은 **시스템 모드의 하위 설정**이다 — 샌드박스 모드에서는
+            // 도구가 게스트 파이썬으로 돌아 인터프리터·venv·pip 이 아무 뜻이 없다.
+            if (!workspace.usesSandbox)
+              Padding(
+                padding: const EdgeInsets.only(left: 24),
+                child: _PythonStatusBar(workspace: workspace),
+              ),
+            const SizedBox(height: 8),
             const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -2077,6 +2098,80 @@ class _ViewerRuleTileState extends State<_ViewerRuleTile> {
 }
 
 /// 도구 탭 상단: Python 환경 + 상태 확인(콘솔 점검) / Python 설정 버튼.
+/// 도구 실행 환경 선택: 샌드박스(collaboCore) / 시스템 Python.
+///
+/// 샌드박스를 골랐는데 런타임이 없으면 **시스템으로 몰래 물러서지 않는다**
+/// (`WorkspaceController.toolsReadyFor`) — 그래서 여기서 그 사실을 분명히 보여 준다.
+class _RuntimeBar extends StatelessWidget {
+  const _RuntimeBar({required this.workspace});
+  final WorkspaceController workspace;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final sandbox = workspace.usesSandbox;
+    final box = workspace.activeSession?.sandbox;
+    final String status;
+    var error = false;
+    if (!sandbox) {
+      status = l.toolRuntimeSystemDesc;
+    } else if (!workspace.sandboxAvailable) {
+      status = l.sandboxUnavailable;
+      error = true;
+    } else {
+      final state = box?.state ?? SandboxState.idle;
+      final line = switch (state) {
+        SandboxState.idle => l.sandboxIdle,
+        SandboxState.starting => l.sandboxStarting,
+        SandboxState.running => l.sandboxRunning,
+        SandboxState.failed => l.sandboxFailed(box?.error ?? ''),
+      };
+      error = state == SandboxState.failed;
+      status = '${l.toolRuntimeSandboxDesc}\n$line';
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.shield_outlined, size: 18),
+              const SizedBox(width: 6),
+              Text(l.toolRuntime),
+              const Spacer(),
+              SegmentedButton<String>(
+                segments: [
+                  ButtonSegment(
+                    value: WorkspaceController.toolRuntimeSandbox,
+                    label: Text(l.toolRuntimeSandbox),
+                    icon: const Icon(Icons.shield_outlined, size: 16),
+                  ),
+                  ButtonSegment(
+                    value: WorkspaceController.toolRuntimeSystem,
+                    label: Text(l.toolRuntimeSystem),
+                    icon: const Icon(Icons.computer, size: 16),
+                  ),
+                ],
+                selected: {workspace.toolRuntime},
+                onSelectionChanged: (v) => workspace.setToolRuntime(v.first),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            status,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: error ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PythonStatusBar extends StatelessWidget {
   const _PythonStatusBar({required this.workspace});
   final WorkspaceController workspace;
