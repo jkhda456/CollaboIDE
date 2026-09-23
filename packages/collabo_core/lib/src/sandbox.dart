@@ -37,7 +37,8 @@ class CollaboCore {
   final _exit = Completer<SandboxExit>();
   final _hostFunctions = <String, HostFunction>{};
 
-  /// Decides "ask" permission requests (hostExec: ask). Without a handler they are refused.
+  /// Decides "ask" permission requests: host programs (hostExec: ask), unlisted hosts
+  /// (NetworkPolicy.ask) and ssh-agent use (sshAgent: ask). Without a handler they are refused.
   PermissionHandler? onPermission;
 
   /// Starts a sandbox and returns once its guest agent accepts commands (a few seconds).
@@ -55,7 +56,13 @@ class CollaboCore {
   }
 
   /// Everything the guest console prints (its root shell, and kernel messages while booting).
+  /// Raw bytes: a multibyte character may be split between two chunks, so decode with a decoder
+  /// that keeps state across them (a terminal widget does), or use [consoleText].
   Stream<Uint8List> get console => _console.stream;
+
+  /// The console as text (UTF-8, decoded across chunk boundaries: Korean, emoji and every other
+  /// script arrive whole). Each listener gets its own decoder.
+  Stream<String> get consoleText => _console.stream.cast<List<int>>().transform(const Utf8Decoder(allowMalformed: true));
 
   /// Every network access attempt of the sandbox.
   Stream<NetworkEvent> get networkEvents => _network.stream;
@@ -221,7 +228,8 @@ class CollaboCore {
     } catch (_) {
       allow = false;
     }
-    await _call('reply', {'id': request.id, 'allow': allow}).catchError((_) => const <String, Object?>{});
+    await _call('reply', {'id': request.id, 'allow': allow, 'remember': request.remember})
+        .catchError((_) => const <String, Object?>{});
   }
 
   void _onRuntimeGone() => _finish(SandboxExit('runtime-exited', _exitCode == null ? null : 'exit code $_exitCode'));

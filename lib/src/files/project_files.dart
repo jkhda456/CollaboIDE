@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../fs/entry_name.dart';
 import '../fs/file_service.dart';
+import '../platform/platform_features.dart';
 
 /// 파일이 바뀌었다(감시자 · 사용자 조작). [dirs] 는 다시 읽을 부모 디렉토리, [files] 는
 /// 바뀐 경로 자체(뷰어가 보고 있는 파일이면 다시 읽는다).
@@ -472,6 +473,8 @@ class ProjectFiles extends ChangeNotifier {
 
   /// OS 기본(연결) 프로그램 · 탐색기로 연다.
   Future<void> openExternal(String path) async {
+    // iOS 에는 OS 기본 프로그램·탐색기로 여는 길이 없다(메뉴에서도 감춘다).
+    if (!PlatformFeatures.canOpenExternally) return;
     try {
       if (Platform.isWindows) {
         // start 는 cmd 내장 명령. 빈 "" 는 창 제목 인자(경로가 제목으로 먹히지 않게).

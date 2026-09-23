@@ -13,9 +13,8 @@ import '../llm/llm_config.dart';
 import '../llm/llm_preset.dart';
 import '../llm/stream_budget.dart';
 import '../llm/system_prompt.dart';
+import '../platform/platform_features.dart';
 import '../process/background_process_registry.dart';
-import '../process/process_manager.dart';
-import '../process/python_environment.dart';
 import '../sandbox/project_sandbox.dart';
 import '../tools/tool_assets.dart';
 import '../tools/tool_executor.dart';
@@ -57,14 +56,6 @@ class WorkspaceController extends ChangeNotifier {
   /// 지난 실행에서 열려 있던 경로들. [restoreOpenProjects] 가 비우며 처리한다.
   List<String> _pendingRestore = const [];
   String _pendingActive = '';
-
-  /// 프로젝트별 venv 사용 여부(전역 정책, 기본 꺼짐). 켜면 각 프로젝트의
-  /// `<project>/.collabo/venv` 에 venv 를 자동 생성해 그걸로 실행한다.
-  bool _useVenv = false;
-
-  /// 도구 실행 환경: [toolRuntimeSandbox] | [toolRuntimeSystem]. 저장값이 없으면
-  /// 런타임이 있을 때 샌드박스, 없으면 시스템 파이썬([init]).
-  String _toolRuntime = toolRuntimeSystem;
 
   /// 이 앱에 동봉된 collaboCore 런타임(없으면 null — 그 플랫폼 런타임을 안 넣었다).
   CollaboRuntime? _sandboxRuntime;
@@ -123,9 +114,6 @@ class WorkspaceController extends ChangeNotifier {
 
   /// 앱에 담겨 오는 예제 뷰어(기본으로 붙지 않는다). init 에서 에셋 목록을 읽는다.
   List<ViewerExample> _viewerExamples = const [];
-
-  /// 사용자가 선택한 Python 인터프리터 경로.
-  String _pythonInterpreterPath = '';
 
   /// 언어 설정 코드: 'system' | 'ko' | 'en'. 기본 시스템.
   String _localeCode = 'system';
@@ -188,15 +176,6 @@ class WorkspaceController extends ChangeNotifier {
   static const String _viewerOrderKey = 'viewer_order';
   /// 웹이 마지막으로 보고한 뷰어 목록(캐시 — 원본은 웹 레지스트리).
   static const String _viewerRegistryKey = 'viewer_registry';
-  static const String _pythonKey = 'python_interpreter';
-  static const String _useVenvKey = 'python_use_venv';
-  static const String _toolRuntimeKey = 'tool_runtime';
-
-  /// 도구를 collaboCore 샌드박스(WASM 리눅스)의 파이썬으로 실행한다.
-  static const String toolRuntimeSandbox = 'sandbox';
-
-  /// 도구를 시스템(또는 venv) 파이썬으로 실행한다 — 예전 방식.
-  static const String toolRuntimeSystem = 'system';
 
   /// 마지막 창 크기 설정 키(main.dart 가 부팅 시 직접 읽어 복원한다).
   static const String windowSizeKey = 'window_size';
@@ -244,8 +223,6 @@ class WorkspaceController extends ChangeNotifier {
   bool get hasProject => activeSession != null;
   ConversationStore? get conversation => activeSession?.conversation;
   int? get activeConversationId => activeSession?.activeConversationId;
-
-  ProcessManager? get processManager => activeSession?.processManager;
 
   /// 활성 프로젝트의 백그라운드 명령 레지스트리(프로세스 뷰어가 사용).
   ///
@@ -410,13 +387,15 @@ class WorkspaceController extends ChangeNotifier {
   String presetIdForProject([String? projectPath]) =>
       _projectModels[projectPath ?? _activePath] ?? '';
 
-  /// 현재 시스템 프롬프트(미설정이면 기본값).
-  String get systemPrompt =>
-      _systemPrompt.trim().isEmpty ? kDefaultSystemPrompt : _systemPrompt;
+  /// 현재 시스템 프롬프트(미설정이거나 (옛) 기본값 그대로면 지금 기본값).
+  String get systemPrompt => usesDefaultPrompt ? kDefaultSystemPrompt : _systemPrompt;
 
-  /// 사용자가 저장한 원본(편집 화면 표시용; 비어 있으면 기본값을 보여준다).
-  String get systemPromptRaw =>
-      _systemPrompt.isEmpty ? kDefaultSystemPrompt : _systemPrompt;
+  /// 기본 프롬프트를 쓰는 중인가. 옛 기본값을 그대로 저장해 둔 것도 기본값으로 본다
+  /// ([isDefaultPromptText]) — 그래야 기본 프롬프트가 바뀌면 따라온다.
+  bool get usesDefaultPrompt => isDefaultPromptText(_systemPrompt);
+
+  /// 편집 화면 표시용(기본값을 쓰는 중이면 지금 기본값을 보여준다).
+  String get systemPromptRaw => usesDefaultPrompt ? kDefaultSystemPrompt : _systemPrompt;
   /// 대표 기본 모듈 경로(없으면 null).
   String? get baseToolModulePath =>
       _baseToolModulePaths.isEmpty ? null : _baseToolModulePaths.first;
@@ -457,13 +436,13 @@ class WorkspaceController extends ChangeNotifier {
       _viewerRules[info.id]?.extensions ?? info.defaultExtensions;
 
   /// 첫 실행(데이터가 전혀 준비되지 않음) 여부 → 초기 설정 마법사 표시 조건.
-  /// 초기화 완료 후, 설정 미완료 + LLM 미설정 + Python 미선택 + 최근 프로젝트 없음.
+  /// 초기화 완료 후, 설정 미완료 + LLM 미설정 + 최근 프로젝트 없음.
+  ///
+  /// **Python 선택 여부는 보지 않는다**(2026-09-23). 샌드박스 모드에서는 시스템 파이썬이
+  /// 아예 필요 없어서, 파이썬을 고른 적 있다는 이유로 마법사를 건너뛸 까닭이 없다 —
+  /// 첫 실행에 정말 필요한 것은 LLM 연결이다.
   bool get needsFirstRunSetup =>
-      _initialized &&
-      !_setupDone &&
-      !llmConfig.isConfigured &&
-      _pythonInterpreterPath.isEmpty &&
-      _recentProjects.isEmpty;
+      _initialized && !_setupDone && !llmConfig.isConfigured && _recentProjects.isEmpty;
 
   /// 추출된 도구 모듈/어댑터 디렉토리(cli_adapter.py, mcp_adapter.py 위치).
   String? get toolAdaptersDir {
@@ -471,42 +450,13 @@ class WorkspaceController extends ChangeNotifier {
     return base != null ? p.dirname(base) : null;
   }
 
-  /// 선택된 base Python 인터프리터 경로(미설정이면 null).
-  String? get pythonInterpreter =>
-      _pythonInterpreterPath.isEmpty ? null : _pythonInterpreterPath;
-
-  /// 활성 프로젝트의 **실효 파이썬**(venv 준비 시 venv, 아니면 base). 미설정이면 null.
+  /// 그 프로젝트에서 에이전트가 도구를 실제로 실행할 수 있는 상태인지.
   ///
-  /// 상태확인(env_check)·pip 도 이걸 써야 tools 와 동일 환경을 대상으로 한다
-  /// (base 로 설치하면 Homebrew/시스템 파이썬의 PEP 668 로 막힌다).
-  /// **프로젝트마다 다를 수 있다** — venv 가 프로젝트별이기 때문이다.
-  String? get effectivePython => activeSession?.effectivePython;
-
-  bool get pythonInstalled => _pythonInterpreterPath.isNotEmpty &&
-      File(_pythonInterpreterPath).existsSync();
-
-  PythonEnvironment? get pythonEnv => activeSession?.pythonEnv;
-
-  /// 그 프로젝트에서 에이전트가 Python 도구를 실제로 실행할 수 있는 상태인지.
-  /// (인터프리터 선택 + 그 파일이 존재 + 기본 모듈/어댑터 추출 완료)
-  ///
-  /// **`AgentLoop._buildToolRegistry` 의 전제조건과 같아야 한다.** false 면 도구가
-  /// 하나도 없는 채로 대화만 돌아가므로(서브에이전트가 아무 작업도 못 한다),
-  /// 대화 헤더에 설정 안내 버튼을 띄우는 근거로도 쓴다.
-  ///
-  /// 샌드박스 모드면 시스템 파이썬은 필요 없다 — 런타임만 있으면 된다. 샌드박스를
-  /// 골랐는데 런타임이 없으면 **시스템 파이썬으로 몰래 물러서지 않는다**(격리를
-  /// 기대한 사용자에게 호스트에서 명령이 도는 것은 놀라운 일이다) → 준비 안 됨.
+  /// 도구 모듈이 추출됐고 이 플랫폼용 collaboCore 런타임이 있으면 준비된 것이다.
+  /// 도구는 **언제나 샌드박스(게스트 CPython)** 에서 돈다 — 시스템 파이썬으로 도는 길은
+  /// 없앴다(2026-09-23). 런타임이 없으면 도구 없이 대화만 돈다(헤더에 안내 버튼).
   bool toolsReadyFor(ProjectSession session) =>
-      _baseToolModulePaths.isNotEmpty &&
-      toolAdaptersDir != null &&
-      (usesSandbox ? _sandboxRuntime != null : session.effectivePython != null);
-
-  /// 저장된 도구 실행 환경 설정값.
-  String get toolRuntime => _toolRuntime;
-
-  /// 도구를 샌드박스에서 실행하는가(설정 기준 — 런타임이 없으면 [toolsReady] 가 false).
-  bool get usesSandbox => _toolRuntime == toolRuntimeSandbox;
+      _baseToolModulePaths.isNotEmpty && toolAdaptersDir != null && _sandboxRuntime != null;
 
   /// 이 플랫폼용 collaboCore 런타임이 앱에 들어 있는가.
   bool get sandboxAvailable => _sandboxRuntime != null;
@@ -514,42 +464,91 @@ class WorkspaceController extends ChangeNotifier {
   /// 런타임을 못 찾은 이유(설정 화면 표시용).
   String get sandboxRuntimeError => _sandboxRuntimeError;
 
-  /// 도구 실행 환경을 바꾼다(설정 → 도구). 다음 생성부터 적용된다 — 레지스트리는
-  /// 생성마다 새로 만든다(`AgentLoop._buildToolRegistry`).
-  Future<void> setToolRuntime(String value) async {
-    if (value != toolRuntimeSandbox && value != toolRuntimeSystem) return;
-    if (value == _toolRuntime) return;
-    _toolRuntime = value;
-    notifyListeners();
-    await _appDb?.setSetting(_toolRuntimeKey, value);
-  }
-
-  /// 그 세션의 도구 실행기. [toolsReadyFor] 가 참일 때만 부른다.
-  ToolExecutor toolExecutorFor(ProjectSession session) {
-    if (usesSandbox) {
-      final box = session.sandboxFor(_sandboxRuntime!, toolsDir: toolAdaptersDir!);
-      return SandboxToolExecutor(box);
-    }
-    return HostToolExecutor(session.effectivePython!);
-  }
+  /// 그 세션의 도구 실행기(게스트 CPython). [toolsReadyFor] 가 참일 때만 부른다.
+  ToolExecutor toolExecutorFor(ProjectSession session) =>
+      SandboxToolExecutor(session.sandboxFor(_sandboxRuntime!, toolsDir: toolAdaptersDir!));
 
   /// 샌드박스 화면용: 그 세션의 머신. 아직 없으면 **만들 수 있을 때만** 만든다
-  /// (샌드박스 모드 + 런타임 + 도구 폴더). 만들기만 하고 부팅은 하지 않는다.
+  /// (런타임 + 도구 폴더). 만들기만 하고 부팅은 하지 않는다.
   ProjectSandbox? sandboxOf(ProjectSession session) {
     final existing = session.sandbox;
     if (existing != null) return existing;
     final runtime = _sandboxRuntime;
     final tools = toolAdaptersDir;
-    if (!usesSandbox || runtime == null || tools == null) return null;
+    if (runtime == null || tools == null) return null;
     return session.sandboxFor(runtime, toolsDir: tools);
   }
+
+  /// **시스템 샌드박스 — 앱에 하나 고정.** 프로젝트에 속하지 않는 일(설정 → 도구의 목록처럼
+  /// 도구에 물어보는 것)은 전부 이 한 대가 맡는다.
+  ///
+  /// 왜 고정인가: 예전에는 그런 일도 **그때 활성이던 프로젝트의 머신**을 띄웠다 — 설정 창을
+  /// 여는 것만으로 프로젝트 머신 하나가 임의로 켜졌다. 프로젝트 머신은 그 프로젝트의 작업에만
+  /// 쓰고, 나머지는 여기로 모은다.
+  ///
+  /// 프로젝트 머신과 같은 모양이라 `/work` 가 있어야 한다 — **빈 임시 폴더**를 마운트한다
+  /// (프로젝트를 물리면 그 프로젝트가 보이게 되므로). 도구가 여기에 무엇을 써도 사라진다.
+  /// 샌드박스 모드가 아니거나 런타임·도구 폴더가 없으면 null.
+  ProjectSandbox? systemSandbox() {
+    final existing = _systemSandbox;
+    if (existing != null) return existing;
+    final runtime = _sandboxRuntime;
+    final tools = toolAdaptersDir;
+    if (runtime == null || tools == null) return null;
+    try {
+      _systemScratch ??= Directory.systemTemp.createTempSync('collabo-system-');
+    } catch (_) {
+      return null;
+    }
+    final box = _systemSandbox =
+        ProjectSandbox(projectPath: _systemScratch!.path, toolsDir: tools, runtime: runtime);
+    box.addListener(notifyListeners); // 좌측 메뉴 배지·샌드박스 화면이 상태를 따라간다
+    return box;
+  }
+
+  ProjectSandbox? _systemSandbox;
+  Directory? _systemScratch;
+
+  /// 만들어 둔 시스템 머신(아직 없으면 null — 만들지 않는다).
+  ProjectSandbox? get systemSandboxOrNull => _systemSandbox;
+
+  /// 시스템 머신이 떠 있는가.
+  bool get systemSandboxRunning => _systemSandbox?.isRunning ?? false;
+
+  /// 시스템 머신을 띄운다(이미 떠 있으면 아무것도 안 한다). 앱 시작과 실행 환경 전환에서
+  /// 부른다 — 설정 창을 열었을 때 그제서야 부팅하느라 기다리지 않게.
+  Future<void> ensureSystemSandbox() async {
+    final box = systemSandbox();
+    if (box == null) return;
+    await box.start();
+  }
+
+  /// 시스템 머신을 아주 내린다(앱 종료). 임시 폴더도 치운다.
+  Future<void> stopSystemSandbox() async {
+    final box = _systemSandbox;
+    final scratch = _systemScratch;
+    _systemSandbox = null;
+    _systemScratch = null;
+    if (box != null) {
+      box.removeListener(notifyListeners);
+      await box.close();
+    }
+    try {
+      if (scratch != null && scratch.existsSync()) scratch.deleteSync(recursive: true);
+    } catch (_) {
+      // 임시 폴더가 남는 것은 큰 일이 아니다.
+    }
+  }
+
+  /// 시험용: [init](메인 DB)을 거치지 않고 "초기화 끝" 으로 친다 — 첫 실행 판정을 본다.
+  @visibleForTesting
+  void debugMarkInitialized() => _initialized = true;
 
   /// 시험용: [init] 없이 샌드박스 모드를 세운다(런타임 + 기본 모듈 경로).
   @visibleForTesting
   void debugUseSandbox({required CollaboRuntime runtime, required List<String> baseModules}) {
     _sandboxRuntime = runtime;
     _baseToolModulePaths = baseModules;
-    _toolRuntime = toolRuntimeSandbox;
   }
 
   /// 지금 떠 있는 머신 수(좌측 메뉴 배지).
@@ -559,6 +558,12 @@ class WorkspaceController extends ChangeNotifier {
   /// 동봉 런타임을 찾는다. 개발 중에는 `COLLABO_CORE_RUNTIME` 으로 가리킬 수 있다
   /// (`CollaboRuntime.locate` 의 순서 그대로).
   void _locateSandboxRuntime() {
+    // iOS·iPadOS 는 하위 프로세스·JIT 가 막혀 샌드박스 엔진을 띄울 수 없다(런타임도 동봉하지 않는다).
+    if (PlatformFeatures.isIOS) {
+      _sandboxRuntime = null;
+      _sandboxRuntimeError = 'collaboCore sandbox is not available on iOS/iPadOS';
+      return;
+    }
     try {
       _sandboxRuntime = CollaboRuntime.locate();
       _sandboxRuntimeError = '';
@@ -572,59 +577,6 @@ class WorkspaceController extends ChangeNotifier {
   bool get toolsReady {
     final s = activeSession;
     return s != null && toolsReadyFor(s);
-  }
-
-  /// 프로젝트별 venv 사용 여부(전역 정책).
-  bool get useVenv => _useVenv;
-
-  /// 활성 프로젝트의 venv 준비 상태.
-  VenvStatus get venvStatus => activeSession?.venvStatus ?? VenvStatus.idle;
-
-  /// venv 생성 실패 메시지(없으면 빈 문자열).
-  String get venvError => activeSession?.venvError ?? '';
-
-  /// 활성 프로젝트에 적용될 venv 경로(미사용/프로젝트 없음이면 null).
-  String? get venvPath => activeSession?.venvPathFor(useVenv: _useVenv);
-
-  /// 열린 **모든** 세션의 파이썬 환경을 현재 설정으로 다시 만든다.
-  ///
-  /// ⚠️ 한 세션만 갱신하면 나머지는 옛 인터프리터로 계속 돈다 — 인터프리터와 venv
-  /// 정책은 전역 설정이므로 바뀌면 전부가 따라와야 한다.
-  void _rebuildAllPythonEnvs() {
-    for (final s in _sessions) {
-      s.rebuildPythonEnv(_pythonInterpreterPath, useVenv: _useVenv);
-    }
-  }
-
-  /// 프로젝트별 venv 사용 여부를 변경/저장한다(설정 → 도구 → Python).
-  Future<void> setUseVenv(bool value) async {
-    if (value == _useVenv) return;
-    _useVenv = value;
-    _rebuildAllPythonEnvs();
-    notifyListeners();
-    await _appDb?.setSetting(_useVenvKey, value);
-    for (final s in _sessions) {
-      await s.ensureVenv();
-    }
-  }
-
-  /// 활성 프로젝트의 venv 를 삭제 후 재생성한다(설정의 "재생성" 버튼).
-  Future<void> recreateVenv() async {
-    final s = activeSession;
-    if (s == null) return;
-    await s.recreateVenv(useVenv: _useVenv);
-  }
-
-  /// 언어 설정 코드('system'|'ko'|'en').
-  String get localeCode => _localeCode;
-
-  /// MaterialApp 에 줄 Locale. 'system' 이면 null(플랫폼 따름).
-  Locale? get locale => _localeCode == 'system' ? null : Locale(_localeCode);
-
-  /// 실제 적용 언어 코드('ko' | 'en'). 'system' 이면 플랫폼 언어로 환원.
-  String get langCode {
-    if (_localeCode != 'system') return _localeCode == 'ko' ? 'ko' : 'en';
-    return Platform.localeName.toLowerCase().startsWith('ko') ? 'ko' : 'en';
   }
 
   /// Python 스크립트에 넘길 언어팩 JSON 경로(`<adapters>/lang/<code>.json`).
@@ -657,15 +609,8 @@ class WorkspaceController extends ChangeNotifier {
     if (vo is List) _viewerOrder = vo.whereType<String>().toList();
     final vg = await _appDb!.getSetting(_viewerRegistryKey);
     if (vg is List) _registeredViewers = _parseViewerInfos(vg);
-    _pythonInterpreterPath =
-        (await _appDb!.getSetting(_pythonKey) as String?) ?? '';
-    _useVenv = (await _appDb!.getSetting(_useVenvKey) as bool?) ?? false;
+    // 도구는 언제나 샌드박스에서 돈다 — 이 플랫폼 런타임이 앱에 들어 있는지 여기서 찾는다.
     _locateSandboxRuntime();
-    final rt = await _appDb!.getSetting(_toolRuntimeKey);
-    _toolRuntime = rt == toolRuntimeSandbox || rt == toolRuntimeSystem
-        ? rt as String
-        // 고른 적이 없으면: 런타임이 있으면 샌드박스가 기본이다(도구 계층의 목표 위치).
-        : (_sandboxRuntime != null ? toolRuntimeSandbox : toolRuntimeSystem);
     _localeCode = (await _appDb!.getSetting(_localeKey) as String?) ?? 'system';
     _systemPrompt = (await _appDb!.getSetting(_systemPromptKey) as String?) ?? '';
     _setupDone = (await _appDb!.getSetting(_setupDoneKey) as bool?) ?? false;
@@ -692,11 +637,14 @@ class WorkspaceController extends ChangeNotifier {
     _viewerExamples = await ViewerAssets.examples();
     _initialized = true;
     notifyListeners();
+    // 시스템 머신은 앱에 하나 고정이다 — 기다리지 않고 미리 띄운다(설정을 열었을 때
+    // 그제서야 부팅하느라 몇 초 멈추지 않게). 도구 폴더가 준비된 **뒤**여야 한다.
+    unawaited(ensureSystemSandbox());
   }
 
   /// 새 프로젝트/열기에서 마지막으로 쓴 상위(워크스페이스) 경로(없으면 null).
   String? get lastWorkspaceDir =>
-      _lastWorkspaceDir.isEmpty ? null : _lastWorkspaceDir;
+      _lastWorkspaceDir.isEmpty ? null : PlatformFeatures.remap(_lastWorkspaceDir);
 
   /// 상위(워크스페이스) 경로를 기억한다(다음 새 프로젝트/열기의 기본값).
   Future<void> setLastWorkspaceDir(String dir) async {
@@ -784,7 +732,9 @@ class WorkspaceController extends ChangeNotifier {
 
   /// 시스템 프롬프트를 저장한다(빈 문자열이면 기본값으로 되돌아간다).
   Future<void> setSystemPrompt(String prompt) async {
-    _systemPrompt = prompt;
+    // 기본값 그대로 저장하면 빈 값으로 둔다 — "기본값 사용" 으로 남아 기본 프롬프트가 바뀌면 따라온다.
+    _systemPrompt = isDefaultPromptText(prompt) ? '' : prompt;
+    prompt = _systemPrompt;
     notifyListeners();
     await _appDb?.setSetting(_systemPromptKey, prompt);
   }
@@ -794,24 +744,26 @@ class WorkspaceController extends ChangeNotifier {
     await _appDb?.setSetting(windowSizeKey, {'w': width, 'h': height});
   }
 
+  /// 저장된 언어 설정('system' | 'ko' | 'en').
+  String get localeCode => _localeCode;
+
+  /// 앱에 적용할 로케일. 'system' 이면 null — 플랫폼 언어를 따른다(`MaterialApp.locale`).
+  Locale? get locale => _localeCode == 'system' ? null : Locale(_localeCode);
+
+  /// 실제로 쓰이는 언어 코드. 웹 언어팩·Python 도구(`COLLABO_LANG`)에 넘긴다.
+  /// 'system' 이면 플랫폼 언어를 보고, 지원하지 않는 언어면 영어로 떨어진다.
+  String get langCode {
+    if (_localeCode != 'system') return _localeCode;
+    final sys = WidgetsBinding.instance.platformDispatcher.locale.languageCode;
+    return sys == 'ko' ? 'ko' : 'en';
+  }
+
   /// 언어를 변경/저장한다('system'|'ko'|'en').
   Future<void> setLocaleCode(String code) async {
     if (code == _localeCode) return;
     _localeCode = code;
     notifyListeners();
     await _appDb?.setSetting(_localeKey, code);
-  }
-
-  /// 사용할 base Python 인터프리터를 선택/저장한다.
-  /// venv 를 쓰는 프로젝트라면, 바뀐 base 로 venv 를 (없으면) 다시 준비한다.
-  Future<void> setPythonInterpreter(String path) async {
-    _pythonInterpreterPath = path;
-    _rebuildAllPythonEnvs();
-    notifyListeners();
-    await _appDb?.setSetting(_pythonKey, path);
-    for (final s in _sessions) {
-      await s.ensureVenv();
-    }
   }
 
   static List<ToolSource> _parseSources(List<Object?> raw) {
@@ -1227,12 +1179,18 @@ class WorkspaceController extends ChangeNotifier {
   void Function(String section)? onOpenSettings;
   void Function(ProjectSession session, String callId)? onOpenActivity;
 
+  /// 중지 선택 창(여기까지 남길지) · 대화 시작점 창. 둘 다 앱의 다이얼로그다.
+  void Function(ProjectSession session)? onStopChoice;
+  void Function(ProjectSession session)? onOpenCheckpoint;
+
   /// 프로젝트를 연다. **이미 열려 있으면 그리로 이동만 한다.**
   ///
   /// ★ 예전에는 이 함수가 이전 프로젝트의 대화 DB 를 닫고 그 자리를 덮어썼다.
   /// 지금은 열린 것을 건드리지 않는다 — 돌고 있던 생성, 도구 호출 기록, 큐,
   /// 속도 실측이 그대로 남는다.
   Future<void> openProject(String path) async {
+    // iOS: 앱 업데이트로 컨테이너 경로가 바뀌었으면 지금 경로로(최근 목록·복원 경로 포함).
+    path = PlatformFeatures.remap(path);
     final existing = sessionFor(path);
     if (existing != null) {
       activateProject(path);
@@ -1248,12 +1206,13 @@ class WorkspaceController extends ChangeNotifier {
       browser: _browser,
       firstConversationTitle: newConversationTitle,
     );
-    session.rebuildPythonEnv(_pythonInterpreterPath, useVenv: _useVenv);
     session.bridge = WebBridge(
       this,
       session,
       onOpenSettings: (s) => onOpenSettings?.call(s),
       onOpenActivity: (id) => onOpenActivity?.call(session, id),
+      onStopChoice: () => onStopChoice?.call(session),
+      onOpenCheckpoint: () => onOpenCheckpoint?.call(session),
     );
     await session.bridge!.start();
     // 파일 뷰어(네이티브 틀 + 뷰어 웹뷰). 뷰어 설정·사용자 뷰어가 이 컨트롤러에 있다.
@@ -1269,8 +1228,6 @@ class WorkspaceController extends ChangeNotifier {
     notifyListeners();
     await _saveOpenProjects();
 
-    // venv 생성은 시간이 걸릴 수 있어 프로젝트 열기를 막지 않고 백그라운드로.
-    unawaited(session.ensureVenv());
   }
 
   /// 지난 실행에서 열려 있던 프로젝트들을 다시 연다.
@@ -1352,6 +1309,7 @@ class WorkspaceController extends ChangeNotifier {
       unawaited(s.close());
     }
     _sessions.clear();
+    unawaited(stopSystemSandbox());
     _browser.dispose();
     _appDb?.close();
     super.dispose();

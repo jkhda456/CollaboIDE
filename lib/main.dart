@@ -8,6 +8,7 @@ import 'l10n/app_localizations.dart';
 import 'src/app/workspace_controller.dart';
 import 'src/data/app_database.dart';
 import 'src/data/sqlite_init.dart';
+import 'src/platform/platform_features.dart';
 import 'src/ui/app_layout.dart';
 import 'src/ui/app_theme.dart';
 
@@ -18,6 +19,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 데스크톱 SQLite(FFI) 백엔드 활성화 — 메인 DB/대화 DB 사용 전 1회.
   initSqliteFfi();
+  // iOS: 앱 Documents 경로·기본 프로젝트 폴더(Documents/Projects) 준비.
+  await PlatformFeatures.init();
   await _restoreWindowSize();
   runApp(const CollaboIdeApp());
 }

@@ -132,7 +132,7 @@ void main() {
 
   test('터미널: 대화형 셸도 끝난다 (HUP)', () async {
     final t = await call('term_open', {'name': 'sbx', 'wait': 2});
-    expect(t['pty'], isTrue, reason: 'devpts 를 올렸으니 진짜 PTY 여야 한다');
+    expect(t['pty'], isTrue, reason: '게스트 /init 이 devpts 를 올리니 진짜 PTY 여야 한다');
     final id = t['id'] as String;
     expect(_meta(project.path, id)['sandbox'], isTrue);
     await box.killGroup(t['pid'] as int, terminal: true);

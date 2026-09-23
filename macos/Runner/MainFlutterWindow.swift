@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import WebKit
 
 class MainFlutterWindow: NSWindow {
   /// 파일 선택 채널 핸들러(생명주기 동안 유지).
@@ -18,6 +19,44 @@ class MainFlutterWindow: NSWindow {
     filePicker = NativeFilePicker(messenger: registrar.messenger, window: self)
 
     super.awakeFromNib()
+  }
+
+  /// 웹뷰(WKWebView — 채팅·뷰어·웹 검색)가 한 번 키보드 포커스(first responder)를 가져가면,
+  /// 그 뒤 Flutter 쪽(트리·버튼·다른 패널)을 눌러도 되찾지 못한다 — Flutter 의 마우스 처리는
+  /// first responder 를 바꾸지 않고, 웹뷰 플러그인도 돌려주지 않는다. 그래서 키 입력·단축키가
+  /// 계속 웹뷰로 가서 "메인 창이 포커스를 못 받는" 것처럼 보였다.
+  ///
+  /// 창 단계에서 클릭을 보고, **웹뷰 바깥을 눌렀는데 포커스가 웹뷰 안에 있으면** Flutter 뷰로
+  /// 돌려준다. 웹뷰 안을 누른 경우는 건드리지 않는다(웹뷰가 스스로 포커스를 가져간다).
+  override func sendEvent(_ event: NSEvent) {
+    switch event.type {
+    case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+      reclaimFocusFromWebViewIfNeeded(for: event)
+    default:
+      break
+    }
+    super.sendEvent(event)
+  }
+
+  private func reclaimFocusFromWebViewIfNeeded(for event: NSEvent) {
+    guard let flutterView = contentViewController?.view,
+      let responder = firstResponder as? NSView,
+      Self.enclosingWebView(of: responder) != nil,
+      let content = contentView
+    else { return }
+    let point = content.convert(event.locationInWindow, from: nil)
+    guard let hit = content.hitTest(point), Self.enclosingWebView(of: hit) == nil else { return }
+    makeFirstResponder(flutterView)
+  }
+
+  /// [view] 자신이나 조상 중 WKWebView (웹뷰 내부 뷰에서 눌려도 찾도록 위로 올라간다).
+  private static func enclosingWebView(of view: NSView) -> WKWebView? {
+    var current: NSView? = view
+    while let v = current {
+      if let web = v as? WKWebView { return web }
+      current = v.superview
+    }
+    return nil
   }
 }
 

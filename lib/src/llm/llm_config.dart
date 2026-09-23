@@ -5,7 +5,13 @@ import 'stream_budget.dart' show kDefaultTokPerSec;
 /// - [openaiPrompted]: OpenAI 호환 API 지만 도구를 **프롬프트로 주입**하고 응답
 ///   본문(content)에서 도구 호출을 파싱한다. tools 를 무시하거나 본문에 텍스트로
 ///   내뱉는 로컬 서버(Ollama/LM Studio/MLX 등)용 폴백.
-enum LlmConnection { openai, openaiPrompted }
+/// - [appleFoundation]: **Apple Foundation Models**(기기 안에서 도는 온디바이스 모델).
+///   네트워크가 아니라 플러그인 채널로 부른다(`afm_bridge`) — mac/iOS 에서만 보인다.
+///   요청·응답 모양은 OpenAI 와 같아서 위 둘과 같은 배관을 그대로 쓴다.
+enum LlmConnection { openai, openaiPrompted, appleFoundation }
+
+/// 이 연결이 **네트워크 주소**를 쓰는가. Apple 온디바이스는 주소도 키도 없다.
+bool connectionUsesNetwork(LlmConnection c) => c != LlmConnection.appleFoundation;
 
 LlmConnection _connFromName(String? n) => LlmConnection.values.firstWhere(
       (c) => c.name == n,
@@ -26,7 +32,17 @@ class LlmConfig {
     this.responseTokenBudget = defaultResponseTokenBudget,
     this.speedTps = 0,
     this.measuredTps = 0,
+    this.afmPromptedTools = false,
+    this.afmPermissiveGuardrails = true,
+    this.afmPrewarm = true,
+    this.afmMaxConcurrent = 0,
+    this.afmTrimHistory = true,
+    this.contextWindow = 0,
+    this.autoFitContext = true,
   });
+
+  /// Apple 온디바이스 모델의 이름(고정). 사용자가 고를 것이 없다.
+  static const String appleModel = 'apple-on-device';
 
   /// [firstResponseTimeoutSec] 기본값 — **0, 제한 없음**.
   ///
@@ -88,6 +104,37 @@ class LlmConfig {
   /// 재시작 후에도 첫 턴부터 맞는 상한을 쓰도록 프리셋에 저장된다. 0 이면 아직 없음.
   final double measuredTps;
 
+  // --- Apple Foundation Models 전용 (connection == appleFoundation 일 때만 쓰인다) ---
+
+  /// 도구를 **프롬프트로 주입**하고 본문에서 호출을 파싱한다([LlmConnection.openaiPrompted]
+  /// 와 같은 방식). 온디바이스 모델이 `tools` 를 무시하거나 도구 호출이 안 나올 때 켠다.
+  final bool afmPromptedTools;
+
+  /// 기본 가드레일을 느슨하게(`permissiveGuardrails`). 플러그인 README 의 권고대로
+  /// **기본 켬** — 기본 가드레일은 평범한 한국어 질문도 종종 막는다.
+  final bool afmPermissiveGuardrails;
+
+  /// 연결 확인·첫 요청 전에 모델을 미리 올린다(첫 응답 지연 감소).
+  final bool afmPrewarm;
+
+  /// 동시 요청 수 상한(`maxConcurrentRequests`). 0 이면 엔진 기본값.
+  final int afmMaxConcurrent;
+
+  /// 컨텍스트가 넘칠 때 엔진이 앞 대화를 잘라내게 한다(`trimHistory`).
+  final bool afmTrimHistory;
+
+  /// 모델의 컨텍스트 창(토큰). 0 = 모름(제한 없이 보낸다).
+  /// Apple 온디바이스는 설정 화면이 기기에서 읽어 채운다([effectiveContextWindow] 참고).
+  final int contextWindow;
+
+  /// 작은 컨텍스트(≤16K)면 도구·프롬프트·보조 주입을 자동으로 줄여 창에 맞춘다(`ContextFit`).
+  final bool autoFitContext;
+
+  /// 실제로 쓸 컨텍스트 창. Apple 온디바이스가 아직 감지 전(0)이면 가장 작은 4096 으로 본다
+  /// (macOS/iOS 26 의 창. 27 의 큰 변형은 감지되면 그 값을 쓴다).
+  int get effectiveContextWindow =>
+      contextWindow > 0 ? contextWindow : (connection == LlmConnection.appleFoundation ? 4096 : 0);
+
   /// 첫 응답 대기 시간. `0` 이하면 **제한 없음**(null).
   Duration? get firstResponseTimeout => firstResponseTimeoutSec > 0
       ? Duration(seconds: firstResponseTimeoutSec)
@@ -99,7 +146,18 @@ class LlmConfig {
       ? speedTps
       : (measuredTps > 0 ? measuredTps : kDefaultTokPerSec);
 
-  bool get isConfigured => baseUrl.isNotEmpty && model.isNotEmpty;
+  /// 이 설정만으로 생성을 시작할 수 있는가.
+  ///
+  /// Apple 온디바이스는 주소·키·모델 이름이 필요 없다(기기에 하나뿐이다) — **연결을
+  /// 고른 것만으로 설정된 것**이다. 실제 사용 가능 여부(기기 지원·Apple Intelligence
+  /// 켜짐)는 연결 확인이 알려 준다.
+  bool get isConfigured => connection == LlmConnection.appleFoundation
+      ? true
+      : baseUrl.isNotEmpty && model.isNotEmpty;
+
+  /// 화면·기록에 쓰는 모델 이름. Apple 온디바이스는 고정 이름을 돌려준다.
+  String get effectiveModel =>
+      connection == LlmConnection.appleFoundation ? appleModel : model;
 
   LlmConfig copyWith({
     LlmConnection? connection,
@@ -113,6 +171,13 @@ class LlmConfig {
     int? responseTokenBudget,
     double? speedTps,
     double? measuredTps,
+    bool? afmPromptedTools,
+    bool? afmPermissiveGuardrails,
+    bool? afmPrewarm,
+    int? afmMaxConcurrent,
+    bool? afmTrimHistory,
+    int? contextWindow,
+    bool? autoFitContext,
   }) =>
       LlmConfig(
         connection: connection ?? this.connection,
@@ -127,6 +192,14 @@ class LlmConfig {
         responseTokenBudget: responseTokenBudget ?? this.responseTokenBudget,
         speedTps: speedTps ?? this.speedTps,
         measuredTps: measuredTps ?? this.measuredTps,
+        afmPromptedTools: afmPromptedTools ?? this.afmPromptedTools,
+        afmPermissiveGuardrails:
+            afmPermissiveGuardrails ?? this.afmPermissiveGuardrails,
+        afmPrewarm: afmPrewarm ?? this.afmPrewarm,
+        afmMaxConcurrent: afmMaxConcurrent ?? this.afmMaxConcurrent,
+        afmTrimHistory: afmTrimHistory ?? this.afmTrimHistory,
+        contextWindow: contextWindow ?? this.contextWindow,
+        autoFitContext: autoFitContext ?? this.autoFitContext,
       );
 
   Map<String, Object?> toJson() => {
@@ -141,6 +214,13 @@ class LlmConfig {
         'responseTokenBudget': responseTokenBudget,
         'speedTps': speedTps,
         'measuredTps': measuredTps,
+        'afmPromptedTools': afmPromptedTools,
+        'afmPermissiveGuardrails': afmPermissiveGuardrails,
+        'afmPrewarm': afmPrewarm,
+        'afmMaxConcurrent': afmMaxConcurrent,
+        'afmTrimHistory': afmTrimHistory,
+        'contextWindow': contextWindow,
+        'autoFitContext': autoFitContext,
       };
 
   factory LlmConfig.fromJson(Map<String, Object?> json) => LlmConfig(
@@ -163,6 +243,20 @@ class LlmConfig {
         },
         speedTps: _positive(json['speedTps']),
         measuredTps: _positive(json['measuredTps']),
+        afmPromptedTools: (json['afmPromptedTools'] as bool?) ?? false,
+        afmPermissiveGuardrails:
+            (json['afmPermissiveGuardrails'] as bool?) ?? true,
+        afmPrewarm: (json['afmPrewarm'] as bool?) ?? true,
+        afmMaxConcurrent: switch (json['afmMaxConcurrent']) {
+          final num v => v.toInt() < 0 ? 0 : v.toInt(),
+          _ => 0,
+        },
+        afmTrimHistory: (json['afmTrimHistory'] as bool?) ?? true,
+        contextWindow: switch (json['contextWindow']) {
+          final num v => v.toInt() < 0 ? 0 : v.toInt(),
+          _ => 0,
+        },
+        autoFitContext: (json['autoFitContext'] as bool?) ?? true,
       );
 
   /// 0 이상의 실수로 읽는다(없거나 이상하면 0 = 미지정).

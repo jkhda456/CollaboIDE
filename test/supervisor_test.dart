@@ -151,12 +151,29 @@ void main() {
       expect(v.first, contains('update_plan'));
     });
 
-    test('재주입은 상한이 있다', () {
+    test('같은 계획 상태로 헛돌면 상한에서 멈춘다', () {
       final t = Supervisor(maxReinjections: 2);
-      expect(t.mayReinject, isTrue);
-      t.noteReinjection();
-      t.noteReinjection();
-      expect(t.mayReinject, isFalse);
+      const open = ['테스트 돌리기'];
+      expect(t.mayReinjectFor(open), isTrue);
+      t.noteReinjection(open);
+      expect(t.mayReinjectFor(open), isTrue);
+      t.noteReinjection(open);
+      expect(t.mayReinjectFor(open), isFalse, reason: '두 번 밀어도 그대로면 그만둔다');
+      expect(t.exhaustedFor(open), isTrue);
+    });
+
+    test('★ 계획이 움직이면 예산이 되살아난다 — 단계가 많아도 차단이 사라지지 않는다', () {
+      // 예전에는 생성 한 번에 두 번이 전부였다. 단계가 여럿인 작업은 세 번째부터
+      // 종료 차단이 조용히 빠져, 할 일이 남은 채로 턴이 끝났다.
+      final t = Supervisor(maxReinjections: 2);
+      t.noteReinjection(['a', 'b', 'c']);
+      t.noteReinjection(['a', 'b', 'c']);
+      expect(t.mayReinjectFor(['a', 'b', 'c']), isFalse);
+
+      // 모델이 a 를 끝냈다(계획이 움직였다) → 다시 밀어 준다.
+      expect(t.mayReinjectFor(['b', 'c']), isTrue);
+      t.noteReinjection(['b', 'c']);
+      expect(t.mayReinjectFor(['b', 'c']), isTrue, reason: '그 상태에서는 다시 처음부터 센다');
     });
   });
 }

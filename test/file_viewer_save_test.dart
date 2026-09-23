@@ -67,12 +67,20 @@ void main() {
   late ProjectSession session;
   late FileViewerController viewer;
 
-  /// 웹이 보내는 저장 요청. 결과가 올 때까지 이벤트 큐를 돌린다.
+  /// 웹이 보내는 저장 요청. 결과가 올 때까지 기다린다.
+  ///
+  /// 저장은 실제 파일 IO 를 여러 번 지난다(존재 확인 → realpath → 쓰기). 큐를 한 번만
+  /// 돌리면 그 전에 돌아와 가끔 빈손이었다 — 답이 올 때까지(최대 ~1초) 돈다.
   Future<Map<String, Object?>?> save(String path, String content) async {
     view.posted.clear();
     view.emit(jsonEncode({'type': 'file.save', 'path': path, 'content': content}));
-    await pumpEventQueue();
-    return _lastSaved(view.posted);
+    for (var i = 0; i < 100; i++) {
+      await pumpEventQueue();
+      final m = _lastSaved(view.posted);
+      if (m != null) return m;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    return null;
   }
 
   setUpAll(initSqliteFfi);

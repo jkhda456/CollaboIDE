@@ -39,6 +39,8 @@ class WebBridge {
     LlmProvider? llmClient,
     this.onOpenSettings,
     this.onOpenActivity,
+    this.onStopChoice,
+    this.onOpenCheckpoint,
   }) : _fs = fileService ?? FileService() {
     loop = AgentLoop(_workspace, _session,
         fileService: _fs, llmClient: llmClient);
@@ -66,6 +68,13 @@ class WebBridge {
   /// 웹의 "호출 내역" 링크 → 네이티브 도구 호출 내역 창 열기.
   /// [id] 를 주면 그 호출을 선택한 상태로 연다(빈 문자열이면 최신).
   final void Function(String id)? onOpenActivity;
+
+  /// 웹의 중지 버튼 → **네이티브 선택 창**(여기까지 남길지, 전부 취소할지).
+  /// 이번 요청에서 이미 뭔가 나왔을 때만 온다(아무것도 없으면 웹이 바로 `chat.stop`).
+  final void Function()? onStopChoice;
+
+  /// 웹의 "대화 시작점" 버튼 → 네이티브 시작점 창.
+  final void Function()? onOpenCheckpoint;
 
   /// 이번 세션의 도구 호출 기록(인자 + 결과 원문). 네이티브 창이 이걸 보여 준다.
   /// 실제 소유자는 루프다 — 화면(`app_layout.dart`)이 브리지를 통해 집는다.
@@ -183,7 +192,15 @@ class WebBridge {
         loop.send(msg['text'] as String?, msg['attachments']);
         break;
       case 'chat.stop':
-        loop.stop();
+        // keep: 지금까지 한 것을 남기고 멈춘다(기본은 이번 요청의 기록을 되돌린다).
+        loop.stop(keep: msg['keep'] == true);
+        break;
+      case 'chat.stop.ask':
+        // 이미 진행된 것이 있다 — 어떻게 할지 네이티브 창이 묻고, 그 창이 loop.stop 을 부른다.
+        onStopChoice?.call();
+        break;
+      case 'chat.checkpoint.open':
+        onOpenCheckpoint?.call();
         break;
       case 'chat.queue.cancel':
         loop.cancelQueued((msg['id'] as num?)?.toInt());

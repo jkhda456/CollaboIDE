@@ -514,8 +514,8 @@ class AppLocalizationsKo extends AppLocalizations {
   String get toolInspect => '도구 검사';
 
   @override
-  String get pythonNotReadyInspect =>
-      'Python 환경이 준비되지 않았습니다. 인터프리터를 선택한 뒤 다시 시도하세요.';
+  String get sandboxNotReadyInspect =>
+      '도구 실행 환경이 준비되지 않았습니다. 설정 → 도구에서 샌드박스 상태를 확인하세요.';
 
   @override
   String get toolInfoFailed => '도구 정보를 가져오지 못했습니다.';
@@ -605,23 +605,6 @@ class AppLocalizationsKo extends AppLocalizations {
   String get viewerReadFailed => '파일을 읽을 수 없습니다.';
 
   @override
-  String get toolRuntime => '도구 실행 환경';
-
-  @override
-  String get toolRuntimeSandbox => '샌드박스';
-
-  @override
-  String get toolRuntimeSystem => '시스템 Python';
-
-  @override
-  String get toolRuntimeSandboxDesc =>
-      '도구를 격리된 리눅스(WebAssembly) 머신에서 실행합니다. 프로젝트 폴더만 보이고, 이 컴퓨터의 프로그램(git, node 등)은 쓸 수 없습니다.';
-
-  @override
-  String get toolRuntimeSystemDesc =>
-      '아래에서 고른 Python 으로 이 컴퓨터에서 바로 실행합니다. 이 컴퓨터의 프로그램과 파일을 모두 쓸 수 있습니다.';
-
-  @override
   String get sandboxUnavailable =>
       '이 플랫폼용 샌드박스 런타임이 앱에 들어 있지 않습니다. 시스템 Python 으로 바꾸기 전까지 도구를 쓸 수 없습니다.';
 
@@ -652,8 +635,11 @@ class AppLocalizationsKo extends AppLocalizations {
       '열린 프로젝트가 없습니다. 프로젝트를 열면 그 프로젝트의 샌드박스가 여기 나타납니다.';
 
   @override
-  String get sandboxSystemMode =>
-      '도구가 시스템 Python 으로 실행되도록 설정되어 있습니다. 설정 → 도구에서 샌드박스로 바꿀 수 있습니다.';
+  String get sandboxSystemMachine => '시스템 샌드박스';
+
+  @override
+  String get sandboxSystemMachineDesc =>
+      '프로젝트에 속하지 않는 도구 작업(설정의 도구 목록 등)을 여기서 합니다. 앱에 한 대만 있습니다.';
 
   @override
   String get sandboxStart => '시작';
@@ -761,74 +747,13 @@ class AppLocalizationsKo extends AppLocalizations {
   String get viewerModeTitle => '보기 방식';
 
   @override
-  String get pythonEnv => 'Python 환경';
-
-  @override
   String get statusCheck => '상태 확인';
-
-  @override
-  String get pythonSettings => 'Python 설정';
-
-  @override
-  String get pythonNotSetTitle => 'Python 미설정';
-
-  @override
-  String get pythonNotSetBody => '먼저 \"Python 설정\"에서 인터프리터를 선택하세요.';
-
-  @override
-  String get pythonCheckTitle => 'Python 환경 점검';
-
-  @override
-  String get selectPythonPrompt => '사용할 Python 인터프리터를 선택하세요.';
 
   @override
   String get notSelected => '인터프리터 경로를 선택하세요';
 
   @override
-  String get selectPython => 'Python 선택';
-
-  @override
-  String get pythonVerified => '확인했습니다';
-
-  @override
-  String get pythonMissing => '해당 경로에 인터프리터가 없습니다.';
-
-  @override
-  String get pythonMissingQuestion => 'Python 이 없나요? ';
-
-  @override
-  String get downloadFromPythonOrg => 'python.org 에서 다운로드';
-
-  @override
   String get allFiles => '모든 파일';
-
-  @override
-  String get usePerProjectVenv => '프로젝트별 가상환경(venv) 사용';
-
-  @override
-  String get usePerProjectVenvDesc =>
-      '프로젝트의 .collabo/venv 에 전용 환경을 만들고 그 안에서 pip 와 도구를 실행합니다. 설치가 막히거나 권한이 필요한 macOS·Linux 에서 권장합니다.';
-
-  @override
-  String get venvNoProject => '프로젝트를 열면 전용 venv 를 자동으로 만듭니다.';
-
-  @override
-  String get venvCreating => '가상환경을 만드는 중입니다…';
-
-  @override
-  String get venvReady => '가상환경이 준비되었습니다.';
-
-  @override
-  String get venvNotCreated => '아직 만들지 않았습니다.';
-
-  @override
-  String get venvFailed => '가상환경을 만들지 못했습니다.';
-
-  @override
-  String get venvCreate => '생성';
-
-  @override
-  String get venvRecreate => '재생성';
 
   @override
   String get console => '콘솔';
@@ -893,4 +818,170 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get skipSetup => '건너뛰기';
+
+  @override
+  String get stopChoiceTitle => '생성 중지';
+
+  @override
+  String get stopChoiceBody => '지금까지 진행된 내용을 어떻게 할까요?';
+
+  @override
+  String get stopChoiceNote => '도구가 이미 고친 파일은 어느 쪽을 골라도 그대로입니다.';
+
+  @override
+  String get stopKeep => '여기까지 남기기';
+
+  @override
+  String get stopDiscard => '전부 취소';
+
+  @override
+  String get stopContinue => '계속 진행';
+
+  @override
+  String get checkpointTitle => '대화 시작점 만들기';
+
+  @override
+  String get checkpointDesc => '지금까지의 대화를 접고 새 시작점을 만듭니다. 이후 AI는 시작점 이후만 봅니다.';
+
+  @override
+  String get checkpointPlanNote =>
+      '계획(PLAYBOOK)도 함께 비웁니다. 이전 계획은 .collabo/playbook-archive 에 보관됩니다.';
+
+  @override
+  String get checkpointCurrentContext => '시작 전 컨텍스트';
+
+  @override
+  String get checkpointCompress => '기존 내용을 압축해서 보관';
+
+  @override
+  String get checkpointSize => '압축 크기';
+
+  @override
+  String get checkpointPreview => '미리보기 생성';
+
+  @override
+  String get checkpointGenerating => '만드는 중입니다…';
+
+  @override
+  String get checkpointMemory => '지난 기억';
+
+  @override
+  String get checkpointCreate => '시작점 만들기';
+
+  @override
+  String get checkpointModeCheckpoint => '시작점 만들기';
+
+  @override
+  String get checkpointModePlan => '계획만 초기화';
+
+  @override
+  String get planResetDesc =>
+      '대화는 그대로 두고 계획(PLAYBOOK)만 비웁니다. 이전 계획은 .collabo/playbook-archive 에 보관됩니다.';
+
+  @override
+  String get planResetButton => '계획 초기화';
+
+  @override
+  String get appleFoundation => 'Apple Foundation Models';
+
+  @override
+  String get appleFoundationDesc =>
+      '기기 안의 Apple 모델로 실행하며 대화가 기기 밖으로 나가지 않습니다. macOS·iOS 26.4 이상에서 Apple Intelligence 를 켜야 합니다.';
+
+  @override
+  String get afmPermissive => '가드레일 느슨하게';
+
+  @override
+  String get afmPermissiveDesc => '기본 가드레일이 평범한 한국어 질문도 막는 경우가 있어 권장합니다.';
+
+  @override
+  String get afmPromptedTools => '도구를 프롬프트로 주입';
+
+  @override
+  String get afmPromptedToolsDesc =>
+      '모델이 도구 호출을 내지 않으면 켜세요. 도구 설명을 프롬프트에 넣고 답변 본문에서 호출을 읽습니다.';
+
+  @override
+  String get afmPrewarm => '미리 올리기';
+
+  @override
+  String get afmPrewarmDesc => '연결을 확인할 때 모델을 미리 올려 첫 응답을 빠르게 합니다.';
+
+  @override
+  String get afmTrimHistory => '컨텍스트가 넘치면 앞 대화 자르기';
+
+  @override
+  String get afmTrimHistoryDesc => '끄면 컨텍스트를 넘길 때 오류로 알려 줍니다.';
+
+  @override
+  String get afmConcurrent => '동시 요청 수';
+
+  @override
+  String get afmConcurrentDesc => '비우거나 0 이면 엔진 기본값을 씁니다.';
+
+  @override
+  String get folderPickerTitle => '폴더 선택';
+
+  @override
+  String get folderPickerUp => '상위 폴더';
+
+  @override
+  String get folderPickerEmpty => '하위 폴더가 없습니다';
+
+  @override
+  String get folderPickerFilesAppHint =>
+      '\'파일\' 앱의 Collabo IDE 폴더에서도 볼 수 있습니다.';
+
+  @override
+  String get sandboxUnavailableIOS =>
+      'iOS에서는 샌드박스를 실행할 수 없습니다. 채팅과 파일 편집은 쓸 수 있지만 명령을 실행하는 도구는 쓸 수 없습니다.';
+
+  @override
+  String get contextWindowLabel => '컨텍스트 크기';
+
+  @override
+  String get contextWindowHelp => '모델의 컨텍스트 토큰 수를 입력하세요. 모르면 비워 두세요.';
+
+  @override
+  String contextWindowDetected(int tokens) {
+    return '$tokens 토큰';
+  }
+
+  @override
+  String get contextWindowAssumed => '4096 토큰으로 가정합니다';
+
+  @override
+  String get autoFitContext => '작은 컨텍스트에 맞추기';
+
+  @override
+  String get autoFitContextDesc => '컨텍스트가 16K 이하인 모델에는 핵심 도구와 짧은 프롬프트만 보냅니다.';
+
+  @override
+  String fitBudget(int reserve, int input) {
+    return '응답에 $reserve 토큰, 입력에 $input 토큰을 씁니다.';
+  }
+
+  @override
+  String get fitPromptCompact => '기본 프롬프트 대신 짧은 프롬프트를 보냅니다.';
+
+  @override
+  String get fitPromptCustom => '직접 작성한 프롬프트를 그대로 보냅니다.';
+
+  @override
+  String get fitPromptTooLong => '이 모델에는 프롬프트가 너무 깁니다. 설정 › 프롬프트에서 줄여 주세요.';
+
+  @override
+  String get fitTools => '도구 설명을 줄여 최대한 많은 도구를 보냅니다.';
+
+  @override
+  String get fitDisabled => '서브에이전트, 검증, 계획, 프로젝트 상태 요약, 사전 평가, 감독자는 쓰지 않습니다.';
+
+  @override
+  String get fitRecommendTitle => '더 큰 모델을 권장합니다';
+
+  @override
+  String get fitRecommendBody => '긴 작업에는 컨텍스트가 큰 모델을 기본 프리셋으로 지정하세요.';
+
+  @override
+  String get afmModelVersion => '모델 버전';
 }

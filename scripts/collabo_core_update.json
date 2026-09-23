@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "scripts/update_collabo_core.py 의 설정. 경로는 전부 **이 파일이 있는 폴더(scripts/) 기준 상대 경로**다.",
+    "collabo_core 는 CollaboCore 체크아웃 자리. 그 안의 경로(package.from, runtimes.release_dir 등)는 CollaboCore 기준이다.",
+    "runtimes.sources 는 앞에서부터 찾는다: release = dist/release 의 압축본(SHA256SUMS·manifest 검증), runtime = dist/runtime 의 폴더(manifest 검증)."
+  ],
+  "collabo_core": "../../CollaboCore",
+  "package": {
+    "from": "dart/collabo_core",
+    "to": "../packages/collabo_core",
+    "exclude": [".dart_tool", "build", "pubspec.lock", ".packages", ".DS_Store"]
+  },
+  "runtimes": {
+    "to": "../collabo_core_runtime",
+    "platforms": ["darwin-arm64", "win-x64"],
+    "sources": ["release", "runtime"],
+    "release_dir": "dist/release",
+    "runtime_dir": "dist/runtime",
+    "version_file": "dist/release/VERSION"
+  }
+}

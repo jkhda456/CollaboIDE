@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../../l10n/app_localizations.dart';
 import '../app/project_session.dart';
 import '../files/file_viewer.dart';
+import '../platform/platform_features.dart';
 import '../webview/viewer_web_view.dart';
 
 /// 우측 패널 아래쪽 — **파일 뷰어의 틀**(네이티브) + 보기 영역(웹, [ViewerWebView]).
@@ -170,8 +171,9 @@ class _FileViewerFrameState extends State<FileViewerFrame> {
         ),
         const SizedBox(width: 2),
         iconBtn(Icons.content_copy, l.copySelection, hasFile ? v.copy : null),
-        iconBtn(Icons.open_in_new, l.openWith,
-            hasFile ? () => unawaited(widget.session.files.openExternal(path)) : null),
+        if (PlatformFeatures.canOpenExternally)
+          iconBtn(Icons.open_in_new, l.openWith,
+              hasFile ? () => unawaited(widget.session.files.openExternal(path)) : null),
         iconBtn(v.fullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
             v.fullscreen ? l.fullscreenExitTitle : l.fullscreenTitle, () => v.setFullscreen(!v.fullscreen)),
         iconBtn(Icons.search, l.contentSearchTitle, hasFile ? () => _toggleSearch(v, true) : null),

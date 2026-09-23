@@ -78,99 +78,158 @@ const String kSubAgentPlanningNote =
     'an approach that turned out not to work), record it as one line with '
     '`note_write` and mark it VERIFIED, ASSUMED or REFUTED honestly.';
 
-/// 기본 시스템 프롬프트(영어). 사용자가 설정에서 편집할 수 있으며,
+/// 기본 시스템 프롬프트(영어) — **항상 필요한 핵심만** 담는다. 사용자가 설정에서 편집할 수 있으며,
 /// 비워두거나 초기화하면 이 기본값이 쓰인다.
+///
+/// 도구마다 필요한 안내(위임·검증·긴 명령·터미널·큰 파일·계획)는 여기 박지 않는다 — 그 도구가
+/// **실제로 켜져 있을 때만** [toolGuidesFor] 가 붙인다(2026-09-23 정리: 꺼 둔 도구 설명이 매번
+/// 프롬프트를 차지하고, 없는 도구를 모델이 찾는 문제). 실행 환경(리눅스 샌드박스)의 세부 —
+/// 파이썬·네트워크 도구·경로 — 는 실행기가 붙이는 `environmentNote` 가 정본이다.
 const String kDefaultSystemPrompt = '''
 You are a coding agent inside Collabo IDE. You help the user build and modify
 software by conversing with them in the main conversation.
 
-$kPlanningNote
-
-Execution strategy
-- Treat the main conversation as the primary context and keep it concise. Your
-  main job here is to UNDERSTAND, PLAN, and ORCHESTRATE — not to do all the
-  hands-on work inline.
-- STRONGLY PREFER delegating actual work to sub-agents. For any non-trivial task
-  (multi-step changes, editing/creating files, running commands, investigating
-  the codebase), the DEFAULT is to write a focused prompt and call `run_subagent`
-  rather than doing it yourself in the main conversation. Doing small things
-  directly is acceptable, but when in doubt, delegate.
-- When the user gives a requirement, first turn it into a focused execution
-  prompt. Hand that prompt to a sub-agent (a branch) that receives the
-  requirement and may query the main model again if it needs clarification.
-- These planning and sub-agent steps run as separate branches. They are NOT
-  added to the main conversation, in order to save context and keep the chat
-  readable.
-- Only when a step is genuinely trivial should you call the tools directly from
-  the main conversation instead of delegating.
-
-Sub-agents and verification
-- Use the `run_subagent` tool to delegate a focused sub-task to a separate
-  sub-agent (fresh context, can use the file tools). This keeps the main
-  conversation context small. You write the sub-agent's prompt. This is the
-  PRIMARY way you should get work done — reach for it first.
-- Delegated work is marked so you can tell it apart from your own — see
-  "Markers used in this conversation" below.
-- After you finish a task, ALWAYS verify it: write a verification prompt based
-  on what you just did and call the `verify_work` tool. A sub-agent inspects the
-  project and returns a verdict (PASS/FAIL with reasons). If it fails, fix the
-  issues and verify again before giving your final answer.
-
-Long-running commands
-- `run_command` starts a shell command in the background. If it does not finish
-  within the wait window (30s by default) you still get the output so far, an
-  id, and the command KEEPS RUNNING — it is never killed by a timeout. At each
-  such report YOU decide: keep waiting, or give up.
-- When a command is still running and you expect it to finish, call `run_wait`
-  with its id to keep waiting (about 30s at a time). It returns ONLY the output
-  produced since your previous call, so repeated waits stay cheap — keep
-  calling it while the output shows progress.
-- Do not stop a command just because it is slow. Only when you decide to give
-  up (it hangs, or its result is no longer needed) either call `stop_command`
-  to terminate it, or leave it running and tell the user — the user can
-  inspect and stop any background command from the process viewer at any time.
-
-Terminal sessions
-- `run_command` has no memory: each call is a fresh process. When the work
-  needs STATE — a REPL, `ssh`, a database shell, a dev server you want to watch,
-  or any program that draws a screen — open a terminal with `term_open` and
-  drive it with `term_send` / `term_read`. It stays alive between calls and the
-  user can watch and type into it in the process viewer.
-- `term_read` gives you the SCREEN as a person sees it, not every frame that was
-  drawn, so progress bars and full-screen programs cost almost no context. For a
-  long session use `term_search` to find what you need instead of reading it all
-  back.
-- Reuse an open session rather than opening another, and `term_close` only when
-  the work in it is done. To interrupt a command running INSIDE a terminal, send
-  ctrl-c with `term_send` — that is not the same as closing the session.
+Working environment
+- Your tools run in an isolated Linux sandbox that holds the project folder and
+  nothing else from the user's computer. Shell commands are Linux commands, not
+  Windows or macOS ones. Privilege elevation is never needed or possible.
+- Only the project folder persists. Anything installed or written elsewhere in
+  the sandbox is gone after it restarts, so do not rely on it between sessions.
+- The execution environment note below says exactly what the sandbox has.
 
 Tools and safety
-- Perform every concrete action (reading/creating/saving/editing files and
-  directories, running commands, requesting privilege elevation, etc.) ONLY
-  through the provided tools via function calling. Never edit files or run
-  commands by any other means.
-- For large files, do not read or rewrite the whole file. Use `search_text` to
-  locate content, `read_lines` to read a window, and `replace_lines` to edit a
-  line range.
-- The tool layer exists to guard against dangerous edits and mistakes.
-  Prefer the most specific, least destructive tool for each step.
-- PREFER THE TOOLS YOU ALREADY HAVE. Before writing a script to do something,
-  check the tool list for one that already covers it — a purpose-built tool
-  understands the format and its pitfalls, while a hand-written script silently
-  corrupts things it does not know about. Write a script only when no tool fits.
-- When delegating, say what to accomplish, not how to implement it, and remind
-  the sub-agent to use an existing tool when one fits the job.
-- Scratch scripts: when you write a throwaway script to do or check something
-  (e.g. a small Python script to inspect data or apply a one-off change), create
-  it under `$kAgentScratchDir` and run it from there — never scatter temporary
-  scripts in the project root. That folder is the app's working area and is
-  excluded from project-wide search, so helpers do not pollute the user's
-  codebase. Files that belong to the user's project (real source, tests, config
-  they asked for) still go in their normal place.
-- Stay within the project workspace. Do not touch paths outside it unless the
-  user explicitly asks.
-- Be careful with destructive or irreversible actions (delete, overwrite,
-  privilege elevation): make sure they are clearly justified by the request.
-
-$kDelegationMarkerNote
+- Do every concrete action (reading, creating, editing, moving or deleting
+  files, running commands) ONLY through the provided tools. Never claim you did
+  something you did not do with a tool.
+- PREFER THE TOOLS YOU ALREADY HAVE. Before writing a script, check the tool
+  list for one that covers the job — a purpose-built tool understands the format
+  and its pitfalls, while a hand-written script silently corrupts what it does
+  not know about. Write a script only when no tool fits.
+- Scratch scripts: put throwaway helper scripts under `$kAgentScratchDir` and
+  run them from there, never in the project root. That folder is excluded from
+  project-wide search. Files that belong to the user's project (real source,
+  tests, config they asked for) still go in their normal place.
+- Use the most specific, least destructive tool for each step. Delete or
+  overwrite only when the request clearly calls for it.
 ''';
+
+/// 도구가 켜져 있을 때만 붙이는 안내 한 절.
+///
+/// [heading] 은 첫 줄 제목이자 **중복 확인 열쇠**다 — 사용자가 편집해 저장한 프롬프트(옛 기본값을
+/// 고쳐 쓴 것 포함)에 같은 제목이 이미 있으면 다시 붙이지 않는다.
+class ToolGuide {
+  const ToolGuide({
+    required this.heading,
+    required this.triggers,
+    required this.body,
+    this.mainOnly = false,
+  });
+
+  final String heading;
+
+  /// 이 중 하나라도 켜져 있으면 붙인다.
+  final Set<String> triggers;
+  final String body;
+
+  /// 메인 에이전트에만(위임·검증은 서브에이전트에게 의미가 없다).
+  final bool mainOnly;
+
+  String get text => '$heading\n$body';
+}
+
+/// 도구별 안내. **메인과 서브에이전트(실제 작업자)가 같은 문구**를 받는다([toolGuidesFor]).
+const List<ToolGuide> kToolGuides = [
+  ToolGuide(
+    heading: 'Delegating to sub-agents',
+    triggers: {'run_subagent'},
+    mainOnly: true,
+    body: '''
+- Keep the main conversation small: your job here is to understand, plan and
+  orchestrate. For any non-trivial task (multi-step changes, editing or
+  creating files, running commands, investigating the codebase) the DEFAULT is
+  to write a focused prompt and call `run_subagent`. Do trivial steps directly.
+- A sub-agent gets a fresh context and your prompt, and its steps are not added
+  to this conversation. Say what to accomplish, not how to implement it, and
+  remind it to use an existing tool when one fits.''',
+  ),
+  ToolGuide(
+    heading: 'Verifying your work',
+    triggers: {'verify_work'},
+    mainOnly: true,
+    body: '''
+- After finishing a task, ALWAYS call `verify_work` with a prompt describing
+  what you did. It returns PASS or FAIL with reasons. On FAIL, fix the issues
+  and verify again before giving your final answer.''',
+  ),
+  ToolGuide(
+    heading: 'Long-running commands',
+    triggers: {'run_command'},
+    body: '''
+- `run_command` runs in the background. If it has not finished within the wait
+  window (about 30s) you get the output so far and an id, and the command KEEPS
+  RUNNING — a timeout never kills it.
+- To keep waiting, call `run_wait` with the id; it returns only the output
+  produced since your last call. Do not stop a command just because it is slow.
+  If you give up, call `stop_command` or leave it running and tell the user —
+  they can inspect and stop it in the process viewer.''',
+  ),
+  ToolGuide(
+    heading: 'Terminal sessions',
+    triggers: {'term_open'},
+    body: '''
+- `run_command` has no memory; each call is a new process. When the work needs
+  state (a REPL, `ssh`, a database shell, a dev server you watch, or a program
+  that draws a screen), open a terminal with `term_open` and drive it with
+  `term_send` / `term_read`. The user can watch and type into it.
+- `term_read` returns the screen as a person sees it, so progress bars cost
+  little. In a long session use `term_search` instead of reading everything.
+- Reuse an open session instead of opening another. To interrupt a command in
+  it, send ctrl-c with `term_send`; `term_close` only when the work is done.''',
+  ),
+  ToolGuide(
+    heading: 'Large files',
+    triggers: {'read_lines', 'replace_lines', 'search_text'},
+    body: '''
+- Do not read or rewrite a large file whole. Find the spot with `search_text`,
+  read a window with `read_lines`, and change a line range with
+  `replace_lines`.''',
+  ),
+];
+
+/// 켜진 도구([toolNames])에 해당하는 안내를 이어 붙인다. 없으면 null.
+///
+/// [existing] 에 같은 제목이 이미 있으면 건너뛴다(사용자가 저장한 옛 프롬프트와 겹치지 않게).
+/// [forSubAgent] 면 위임·검증 안내는 뺀다.
+String? toolGuidesFor(Iterable<String> toolNames, {String existing = '', bool forSubAgent = false}) {
+  final names = toolNames.toSet();
+  final parts = [
+    for (final g in kToolGuides)
+      if (!(forSubAgent && g.mainOnly) &&
+          g.triggers.any(names.contains) &&
+          !existing.contains(g.heading))
+        g.text,
+  ];
+  return parts.isEmpty ? null : parts.join('\n\n');
+}
+
+/// 프롬프트 지문(공백 정규화 FNV-1a 32비트). 옛 기본 프롬프트를 알아보는 데만 쓴다.
+int promptFingerprint(String text) {
+  final norm = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  var h = 0x811c9dc5;
+  for (final c in norm.codeUnits) {
+    h ^= c;
+    h = (h * 0x01000193) & 0xFFFFFFFF;
+  }
+  return h;
+}
+
+/// 예전 기본 프롬프트들의 지문. 사용자가 "초기화 → 저장" 으로 **옛 기본값을 그대로** 저장해 둔
+/// 경우, 그건 편집이 아니라 기본값을 쓰겠다는 뜻이므로 지금 기본값으로 따라오게 한다.
+///  - 0x43859b50: 2026-09-23 이전(모든 도구 안내를 박아 둔 판, 7,967자)
+const Set<int> kLegacyDefaultPromptFingerprints = {0x43859b50};
+
+/// 저장된 값이 (옛) 기본 프롬프트 그대로인가.
+bool isDefaultPromptText(String text) =>
+    text.trim().isEmpty ||
+    text.trim() == kDefaultSystemPrompt.trim() ||
+    kLegacyDefaultPromptFingerprints.contains(promptFingerprint(text));

@@ -14,7 +14,8 @@ import 'tool_source.dart';
 ///   `<python> <script> describe`        → 도구 스키마(JSON)
 ///   `<python> <script> call <tool>`     → stdin(JSON 인자) → stdout(JSON 결과)
 class ToolRunner {
-  /// 시스템(또는 venv) 파이썬으로 실행한다 — 예전 생성자와 같은 뜻이다.
+  /// 호스트 파이썬으로 실행한다. **폐기(2026-09-23)** — [ToolRunner.withExecutor] 를 쓸 것.
+  @Deprecated('도구는 샌드박스에서만 돈다(2026-09-23). 시험용으로만 남아 있다.')
   ToolRunner(String interpreter,
       {void Function(ToolHandle handle)? onStart, Map<String, String> baseEnv = const {}})
       : this.withExecutor(HostToolExecutor(interpreter), onStart: onStart, baseEnv: baseEnv);

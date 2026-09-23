@@ -47,6 +47,8 @@ class LeftNav extends StatefulWidget {
     this.sandboxesSelected = false,
     this.runningSandboxCount = 0,
     this.onToggleSandboxes,
+    this.expanded,
+    this.collapseAfterTap = false,
   });
 
   final VoidCallback onNewProject;
@@ -93,6 +95,12 @@ class LeftNav extends StatefulWidget {
   /// 샌드박스 화면 토글. null 이면 항목을 감춘다(시스템 Python 모드이고 떠 있는 머신이 없을 때).
   final VoidCallback? onToggleSandboxes;
 
+  /// 펼침 상태(주면 바깥에서 알고 바꿀 수 있다 — 좁은 화면에서 덮을 때 바깥 누르기로 접으려고).
+  final ValueNotifier<bool>? expanded;
+
+  /// 항목을 누르면 접는다(좁은 화면에서 메뉴가 내용을 덮을 때).
+  final bool collapseAfterTap;
+
   static const double collapsedWidth = 56;
   static const double expandedWidth = 220;
 
@@ -104,9 +112,45 @@ class LeftNav extends StatefulWidget {
 }
 
 class _LeftNavState extends State<LeftNav> {
-  bool _expanded = false;
+  final ValueNotifier<bool> _own = ValueNotifier(false);
+  ValueNotifier<bool> get _state => widget.expanded ?? _own;
+  bool get _expanded => _state.value;
 
-  void _toggle() => setState(() => _expanded = !_expanded);
+  void _toggle() => _state.value = !_state.value;
+
+  /// 항목 누르기 — 좁은 화면이면 누른 뒤 접는다.
+  VoidCallback? _tap(VoidCallback? action) => action == null
+      ? null
+      : () {
+          action();
+          if (widget.collapseAfterTap) _state.value = false;
+        };
+
+  @override
+  void initState() {
+    super.initState();
+    _state.addListener(_rebuild);
+  }
+
+  @override
+  void didUpdateWidget(LeftNav old) {
+    super.didUpdateWidget(old);
+    if (old.expanded != widget.expanded) {
+      (old.expanded ?? _own).removeListener(_rebuild);
+      _state.addListener(_rebuild);
+    }
+  }
+
+  @override
+  void dispose() {
+    _state.removeListener(_rebuild);
+    _own.dispose();
+    super.dispose();
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -126,13 +170,13 @@ class _LeftNavState extends State<LeftNav> {
             icon: Icons.create_new_folder,
             label: l.navNewProject,
             expanded: _expanded,
-            onTap: widget.onNewProject,
+            onTap: _tap(widget.onNewProject)!,
           ),
           _NavItem(
             icon: Icons.folder_open,
             label: l.navOpenProject,
             expanded: _expanded,
-            onTap: widget.onOpenProject,
+            onTap: _tap(widget.onOpenProject)!,
           ),
           const Divider(height: 1),
 
@@ -160,7 +204,7 @@ class _LeftNavState extends State<LeftNav> {
                       selected: widget.projectSelected &&
                           s.path == widget.activeProject,
                       busy: s.isBusy,
-                      onTap: () => widget.onSelectProject?.call(s.path),
+                      onTap: _tap(() => widget.onSelectProject?.call(s.path))!,
                       trailing: IconButton(
                         icon: const Icon(Icons.close, size: 16),
                         tooltip: l.closeProject,
@@ -185,7 +229,7 @@ class _LeftNavState extends State<LeftNav> {
               expanded: _expanded,
               selected: widget.browserSelected,
               badgeCount: widget.browserTabCount,
-              onTap: widget.onToggleBrowser!,
+              onTap: _tap(widget.onToggleBrowser)!,
             ),
 
           // 샌드박스 — 프로젝트마다 하나씩 도는 리눅스 머신(콘솔·네트워크 기록).
@@ -199,7 +243,7 @@ class _LeftNavState extends State<LeftNav> {
               expanded: _expanded,
               selected: widget.sandboxesSelected,
               badgeCount: widget.runningSandboxCount,
-              onTap: widget.onToggleSandboxes!,
+              onTap: _tap(widget.onToggleSandboxes)!,
             ),
 
           // 진행 상태 (설정 바로 위) — 이것도 화면이다(예전엔 모달이었다).
@@ -207,7 +251,7 @@ class _LeftNavState extends State<LeftNav> {
             expanded: _expanded,
             runningCount: widget.runningProcessCount,
             selected: widget.processesSelected,
-            onTap: widget.onToggleProcesses,
+            onTap: _tap(widget.onToggleProcesses),
           ),
           const Divider(height: 1),
 
@@ -216,7 +260,7 @@ class _LeftNavState extends State<LeftNav> {
             icon: Icons.settings,
             label: l.navSettings,
             expanded: _expanded,
-            onTap: widget.onOpenSettings,
+            onTap: _tap(widget.onOpenSettings)!,
           ),
 
           // 접기/펼치기 토글
@@ -339,11 +383,14 @@ class _NavItem extends StatelessWidget {
                 ),
               )
             : null,
-        child: Row(
+        // 펼치는 애니메이션 중에는 폭이 아직 좁다 — 글자를 넣을 자리가 생긴 뒤에만 보인다(넘침 방지).
+        child: LayoutBuilder(builder: (context, box) {
+          final showLabel = expanded && box.maxWidth >= 120;
+          return Row(
           children: [
             SizedBox(width: selected ? 13 : 16),
             iconWidget,
-            if (expanded) ...[
+            if (showLabel) ...[
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
@@ -359,7 +406,8 @@ class _NavItem extends StatelessWidget {
               const SizedBox(width: 8),
             ],
           ],
-        ),
+        );
+        }),
       ),
     );
 
@@ -536,11 +584,12 @@ class _ActivityItemState extends State<_ActivityItem>
                   ),
                 )
               : null,
-          child: Row(
+          // 펼치는 애니메이션 중에는 폭이 아직 좁다 — 자리가 생긴 뒤에만 글자를 보인다(넘침 방지).
+          child: LayoutBuilder(builder: (context, box) => Row(
             children: [
               SizedBox(width: widget.selected ? 13 : 16),
               iconWithBadge,
-              if (widget.expanded) ...[
+              if (widget.expanded && box.maxWidth >= 120) ...[
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -554,7 +603,7 @@ class _ActivityItemState extends State<_ActivityItem>
                 const SizedBox(width: 8),
               ],
             ],
-          ),
+          )),
         ),
       ),
     );

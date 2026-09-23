@@ -1,19 +1,22 @@
 import 'dart:async';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../l10n/app_localizations.dart';
 import '../app/project_session.dart';
 import '../app/workspace_controller.dart';
+import 'adaptive.dart';
 import 'browser_panel.dart';
+import 'checkpoint_dialog.dart';
+import 'folder_picker_dialog.dart';
 import 'left_nav.dart';
 import 'new_project_dialog.dart';
 import 'process_panel.dart';
 import 'project_panel.dart';
 import 'sandbox_panel.dart';
 import 'settings_dialog.dart';
+import 'stop_choice_dialog.dart';
 import 'tool_activity_dialog.dart';
 
 /// 우측 영역에 올 수 있는 화면. **설정 버튼 위의 항목들이 이 중 하나를 고른다.**
@@ -54,6 +57,9 @@ class _AppLayoutState extends State<AppLayout> {
   /// (진행 상태 패널은 웹뷰가 없어 싸므로 처음부터 그냥 둔다.)
   bool _browserCreated = false;
 
+  /// 좌측 메뉴 펼침. 좁은 화면에서는 펼친 메뉴가 내용을 덮으므로 바깥 누르기로 접는다.
+  final ValueNotifier<bool> _navExpanded = ValueNotifier(false);
+
   /// 복원을 이미 시작했는지. 알림이 여러 번 오므로 한 번만 돌게 막는다.
   bool _restoreStarted = false;
 
@@ -69,6 +75,15 @@ class _AppLayoutState extends State<AppLayout> {
     _workspace.onOpenSettings = _onOpenSettings;
     _workspace.onOpenActivity = (session, id) =>
         showToolActivity(context, session.bridge!.toolCalls, initialId: id);
+    // 대화 화면의 창들도 앱 다이얼로그다(웹 모달이 아니라) — 중지 선택·대화 시작점.
+    _workspace.onStopChoice = (session) {
+      final loop = session.bridge?.loop;
+      if (loop != null) unawaited(showStopChoice(context, loop));
+    };
+    _workspace.onOpenCheckpoint = (session) {
+      final loop = session.bridge?.loop;
+      if (loop != null) unawaited(showCheckpointDialog(context, loop));
+    };
     WidgetsBinding.instance.addPostFrameCallback((_) => _onWorkspaceChanged());
   }
 
@@ -99,10 +114,13 @@ class _AppLayoutState extends State<AppLayout> {
 
   @override
   void dispose() {
+    _navExpanded.dispose();
     _workspace.removeListener(_onWorkspaceChanged);
     _workspace.onBrowserWanted = null;
     _workspace.onOpenSettings = null;
     _workspace.onOpenActivity = null;
+    _workspace.onStopChoice = null;
+    _workspace.onOpenCheckpoint = null;
     super.dispose();
   }
 
@@ -150,7 +168,7 @@ class _AppLayoutState extends State<AppLayout> {
   }
 
   Future<void> _onOpenProject() async {
-    final path = await getDirectoryPath(
+    final path = await pickDirectory(context,
         initialDirectory: _workspace.lastWorkspaceDir,
         confirmButtonText: AppLocalizations.of(context).navOpenProject);
     if (path != null) {
@@ -192,48 +210,86 @@ class _AppLayoutState extends State<AppLayout> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: ListenableBuilder(
+      // iPhone/iPad 의 상태 표시줄·홈 인디케이터를 피한다(데스크톱은 여백 0).
+      body: SafeArea(
+        child: ListenableBuilder(
         listenable: _workspace,
         builder: (context, _) {
           final sessions = _workspace.sessions;
-          return Row(
-            children: [
-              // 탭 개수 배지만 브라우저를 따로 듣는다. 컨트롤러 알림에 얹으면
-              // 페이지 로드 중 상태 변화마다 레이아웃 전체가 다시 그려진다.
-              ListenableBuilder(
-                listenable: _workspace.browser,
-                builder: (context, _) => LeftNav(
-                  onNewProject: _onNewProject,
-                  onOpenProject: _onOpenProject,
-                  onOpenSettings: _onOpenSettings,
-                  openProjects: sessions,
-                  activeProject: _workspace.projectPath ?? '',
-                  projectSelected: _view == AppView.project,
-                  onSelectProject: (path) => setState(() {
-                    _view = AppView.project;
-                    _workspace.activateProject(path);
-                  }),
-                  onCloseProject: _onCloseProject,
-                  runningProcessCount: _workspace.runningProcessCount,
-                  processesSelected: _view == AppView.processes,
-                  onToggleProcesses: () => _showView(AppView.processes),
-                  browserSelected: _view == AppView.browser,
-                  browserTabCount: _workspace.browser.tabs.length,
-                  onToggleBrowser: () => _showView(AppView.browser),
-                  // 샌드박스 모드이거나, 모드를 바꿨어도 아직 떠 있는 머신이 있을 때만.
-                  onToggleSandboxes: _workspace.usesSandbox ||
-                          _workspace.runningSandboxCount > 0
-                      ? () => _showView(AppView.sandboxes)
-                      : null,
-                  sandboxesSelected: _view == AppView.sandboxes,
-                  runningSandboxCount: _workspace.runningSandboxCount,
+          // 휴대폰·좁은 창: 좌측 메뉴는 접힌 폭만 차지하고, 펼치면 내용 위를 덮는다
+          // (내용 폭이 흔들리면 웹뷰가 매번 다시 배치된다).
+          final compact = MediaQuery.sizeOf(context).width < Breakpoints.compact;
+          final nav =
+            // 탭 개수 배지만 브라우저를 따로 듣는다. 컨트롤러 알림에 얹으면
+            // 페이지 로드 중 상태 변화마다 레이아웃 전체가 다시 그려진다.
+            ListenableBuilder(
+              listenable: _workspace.browser,
+              builder: (context, _) => LeftNav(
+                onNewProject: _onNewProject,
+                onOpenProject: _onOpenProject,
+                onOpenSettings: _onOpenSettings,
+                openProjects: sessions,
+                activeProject: _workspace.projectPath ?? '',
+                projectSelected: _view == AppView.project,
+                onSelectProject: (path) => setState(() {
+                  _view = AppView.project;
+                  _workspace.activateProject(path);
+                }),
+                onCloseProject: _onCloseProject,
+                runningProcessCount: _workspace.runningProcessCount,
+                processesSelected: _view == AppView.processes,
+                onToggleProcesses: () => _showView(AppView.processes),
+                browserSelected: _view == AppView.browser,
+                browserTabCount: _workspace.browser.tabs.length,
+                onToggleBrowser: () => _showView(AppView.browser),
+                onToggleSandboxes: () => _showView(AppView.sandboxes),
+                sandboxesSelected: _view == AppView.sandboxes,
+                runningSandboxCount: _workspace.runningSandboxCount,
+                expanded: _navExpanded,
+                collapseAfterTap: compact,
+              ),
+            );
+          if (compact) {
+            return Stack(children: [
+              Row(children: [
+                const SizedBox(width: LeftNav.collapsedWidth),
+                const VerticalDivider(width: 1, thickness: 1),
+                Expanded(child: _content(sessions)),
+              ]),
+              ValueListenableBuilder<bool>(
+                valueListenable: _navExpanded,
+                builder: (context, expanded, _) => expanded
+                    ? Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => _navExpanded.value = false,
+                          child: const ColoredBox(color: Color(0x55000000)),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: _navExpanded,
+                  builder: (context, expanded, child) =>
+                      Material(elevation: expanded ? 8 : 0, child: child),
+                  child: nav,
                 ),
               ),
+            ]);
+          }
+          return Row(
+            children: [
+              nav,
               const VerticalDivider(width: 1, thickness: 1),
               Expanded(child: _content(sessions)),
             ],
           );
         },
+      ),
       ),
     );
   }
@@ -330,8 +386,10 @@ class _EmptyState extends StatelessWidget {
     final theme = Theme.of(context);
     final l = AppLocalizations.of(context);
     final recent = recentProjects.take(LeftNav.maxRecent).toList();
-    return Container(
+    // Material 로 칠한다 — ColoredBox(Container 의 color) 위의 ListTile 은 눌림 효과가 가려진다.
+    return Material(
       color: theme.colorScheme.surface,
+      child: Container(
       alignment: Alignment.center,
       padding: const EdgeInsets.all(24),
       child: SingleChildScrollView(
@@ -391,6 +449,7 @@ class _EmptyState extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }

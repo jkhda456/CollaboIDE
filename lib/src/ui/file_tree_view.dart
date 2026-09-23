@@ -10,6 +10,7 @@ import '../app/project_session.dart';
 import '../files/project_files.dart';
 import '../fs/entry_name.dart';
 import '../fs/file_service.dart';
+import '../platform/platform_features.dart';
 
 /// 우측 패널 위쪽 — **네이티브 파일 트리**.
 ///
@@ -18,9 +19,12 @@ import '../fs/file_service.dart';
 /// 우클릭(모바일은 길게 누르기) 메뉴·드래그 이동(Ctrl/⌥ 를 누르고 놓으면 복사)·
 /// 계획 파일 바로가기·탐색기에서 열기.
 class FileTreeView extends StatefulWidget {
-  const FileTreeView({super.key, required this.session});
+  const FileTreeView({super.key, required this.session, this.onClose});
 
   final ProjectSession session;
+
+  /// 주어지면 머리에 닫기 버튼을 단다(좁은 화면에서 대화 위를 덮을 때 — [ProjectPanel]).
+  final VoidCallback? onClose;
 
   @override
   State<FileTreeView> createState() => _FileTreeViewState();
@@ -117,7 +121,8 @@ class _FileTreeViewState extends State<FileTreeView> {
           ),
         ],
         const PopupMenuDivider(),
-        if (!isRoot && !isDir) PopupMenuItem(value: 'openWith', child: Text(l.openWith)),
+        if (!isRoot && !isDir && PlatformFeatures.canOpenExternally)
+          PopupMenuItem(value: 'openWith', child: Text(l.openWith)),
         PopupMenuItem(value: 'copyPath', child: Text(l.copyPath)),
       ],
     );
@@ -289,8 +294,10 @@ class _FileTreeViewState extends State<FileTreeView> {
         // 계획 파일 바로가기 — `.collabo` 안에만 생겨 사용자가 존재를 모르고 지나치기 쉽다.
         if (files.playbookExists)
           iconBtn(Icons.checklist, l.openPlaybook, () => widget.session.openInViewer(files.playbookPath)),
-        iconBtn(Icons.folder_open_outlined, l.openInExplorer, () => unawaited(files.openExternal(files.root))),
+        if (PlatformFeatures.canOpenExternally)
+          iconBtn(Icons.folder_open_outlined, l.openInExplorer, () => unawaited(files.openExternal(files.root))),
         iconBtn(Icons.search, l.fileSearchTitle, () => _toggleSearch(true)),
+        if (widget.onClose case final onClose?) iconBtn(Icons.close, l.close, onClose),
       ]),
     );
   }

@@ -5,6 +5,7 @@
 import FlutterMacOS
 import Foundation
 
+import afm_bridge
 import file_selector_macos
 import package_info_plus
 import screen_retriever_macos
@@ -13,6 +14,7 @@ import webview_flutter_wkwebview
 import window_manager
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  AfmBridgePlugin.register(with: registry.registrar(forPlugin: "AfmBridgePlugin"))
   FileSelectorPlugin.register(with: registry.registrar(forPlugin: "FileSelectorPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   ScreenRetrieverMacosPlugin.register(with: registry.registrar(forPlugin: "ScreenRetrieverMacosPlugin"))

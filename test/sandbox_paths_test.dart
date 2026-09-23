@@ -45,6 +45,9 @@ void main() {
         ],
         'stdout': 'cd /work/src\nls\n',
         'diff': '--- /work/a.txt\n+++ /work/a.txt\n@@ -1 +1 @@\n-/work/x\n+/work/y',
+        // 문서 도구(collabo_docs)가 만든/복사한 파일을 부르는 이름.
+        'created': '/work/new.docx',
+        'copied_to': '/work/copy.docx',
       }) as Map;
       expect(out['path'], r'C:\Users\me\proj\a.txt');
       expect(out['src'], r'C:\Users\me\proj\old');
@@ -56,6 +59,10 @@ void main() {
       expect(out['diff'],
           '--- C:\\Users\\me\\proj\\a.txt\n+++ C:\\Users\\me\\proj\\a.txt\n@@ -1 +1 @@\n-/work/x\n+/work/y',
           reason: 'diff 는 헤더 두 줄만');
+      expect(out['created'], r'C:\Users\me\proj\new.docx');
+      expect(out['copied_to'], r'C:\Users\me\proj\copy.docx');
+      // `created: true` 처럼 경로가 아닌 값은 그대로(문자열만 바꾼다).
+      expect((m.resultToHost({'created': true}) as Map)['created'], isTrue);
     });
 
     test('인자: 모델이 되돌려 보낸 호스트 경로를 게스트로', () {

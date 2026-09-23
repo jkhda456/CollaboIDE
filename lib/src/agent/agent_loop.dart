@@ -13,6 +13,7 @@ import '../llm/llm_config.dart';
 import '../llm/message_shape.dart';
 import '../llm/openai_client.dart';
 import '../llm/stream_budget.dart';
+import '../llm/context_fit.dart';
 import '../llm/system_prompt.dart';
 import '../process/background_process_registry.dart';
 import '../tools/tool_call_log.dart';
@@ -202,6 +203,18 @@ class AgentLoop {
   /// 이번 생성의 감독자. 생성이 끝나면 버린다(궤적은 턴 단위로만 의미가 있다).
   Supervisor? _supervisor;
 
+  /// 샌드박스에서는 의미가 없는 호스트 시절 도구(권한 상승은 호스트 UAC 중계였다). 목록에서 뺀다.
+  static const Set<String> _hostOnlyTools = {'request_elevation'};
+
+  /// 레지스트리 도구 중 모델에게 보일 것.
+  static List<Map<String, Object?>> _registryTools(ToolRegistry? registry) => [
+        for (final t in registry?.openAiTools ?? const <Map<String, Object?>>[])
+          if (!_hostOnlyTools.contains(ContextFit.toolName(t))) t,
+      ];
+
+  /// 이번 생성의 컨텍스트 맞춤(작은 창 모델이면 도구·프롬프트·보조 주입을 줄인다 — [ContextFit]).
+  ContextFit _fit = ContextFit.of(const LlmConfig());
+
   /// 도구가 파일을 바꿀 때마다 증가한다(`_recordFileChange`).
   /// 감독자의 "진전" 판정에만 쓴다 — 절대값은 의미가 없고 **움직였는지**만 본다.
   int _fileChangeSeq = 0;
@@ -292,11 +305,11 @@ class AgentLoop {
     final cfg = _workspace.configForConversation(_session.path);
     return jsonEncode([
       [
-        for (final p in _workspace.llmPresets) [p.id, p.label, p.config.model],
+        for (final p in _workspace.llmPresets) [p.id, p.label, p.config.effectiveModel],
       ],
       _workspace.defaultPresetId,
       _workspace.presetIdForProject(_session.path),
-      cfg.model,
+      cfg.effectiveModel,
       cfg.multimodal,
       _missingSetup(),
     ]);
@@ -337,6 +350,8 @@ class AgentLoop {
                 'toolCalls': m.toolCalls,
                 'toolName': m.toolName,
                 'toolCallId': m.toolCallId,
+                // 감독자 개입 줄은 metadata(action·level·reason)로 다시 그린다.
+                if (m.pipeline == 'supervisor') ..._supervisorFields(m.metadata),
                 if (m.role == MessageRole.assistant)
                   'summary': _summaryFromMeta(m.metadata),
                 if (m.role == MessageRole.user)
@@ -345,6 +360,24 @@ class AgentLoop {
           .toList(),
     });
     await pushChatMeta();
+  }
+
+  /// 감독자 개입 기록의 metadata → 화면이 쓰는 필드(action·level·reason).
+  /// 읽지 못하면 빈 맵 — 그래도 줄은 기본 문구로 그려진다.
+  Map<String, Object?> _supervisorFields(String? metadata) {
+    if (metadata == null) return const {};
+    try {
+      final m = jsonDecode(metadata);
+      if (m is! Map) return const {};
+      return {
+        'action': m['action'],
+        'level': m['level'],
+        'reason': m['reason'],
+        'halt': m['halt'],
+      };
+    } catch (_) {
+      return const {};
+    }
   }
 
   /// 어시스턴트 메시지 metadata(JSON)에서 이 턴의 요약을 꺼낸다(없으면 '').
@@ -428,7 +461,7 @@ class AgentLoop {
     final convCfg = _workspace.configForConversation(_session.path);
     _post({
       'type': 'chat.meta',
-      'model': convCfg.model,
+      'model': convCfg.effectiveModel,
       'contextTokens': context,
       'totalTokens': total,
       'lastUpdated': lastUpdated,
@@ -436,7 +469,7 @@ class AgentLoop {
       // 프로젝트 대화 모델 전환용: 프리셋 목록 + 현재 선택(빈 값=기본 프리셋).
       'presets': [
         for (final p in _workspace.llmPresets)
-          {'id': p.id, 'name': p.label, 'model': p.config.model},
+          {'id': p.id, 'name': p.label, 'model': p.config.effectiveModel},
       ],
       'selectedPresetId': _workspace.presetIdForProject(_session.path),
       'defaultPresetId': _workspace.defaultPresetId,
@@ -589,8 +622,22 @@ class AgentLoop {
   /// 이번 중지 사이클에서 `chat.stopped` 를 이미 보냈는지(새 생성 시작 시 초기화).
   bool _stoppedPosted = false;
 
+  /// 중지할 때 **지금까지 한 것을 남길지**. [stop] 이 정하고 생성 경로가 읽는다.
+  ///
+  /// false(기본)면 이번 요청이 만든 것(어시스턴트 턴·도구 결과)을 전부 지워 요청 직전으로
+  /// 되돌린다. true 면 그대로 두고, 스트리밍 중이던 본문도 거기까지 저장한다 —
+  /// "여기까지 하고 끝낸 것" 이 된다. 도구가 이미 고친 파일은 어느 쪽이든 그대로다.
+  bool _keepOnStop = false;
+
   /// 진행 중인 생성을 강제로 중지하고, 대기 큐의 모든 요청을 취소한다.
-  void stop() {
+  ///
+  /// [keep] 이면 이번 요청이 남긴 기록을 지우지 않는다(§중지 경로).
+  void stop({bool keep = false}) {
+    _keepOnStop = keep;
+    _stopInternal();
+  }
+
+  void _stopInternal() {
     // 누를 때마다 한 번은 응답한다 — 두 번째 누름이 중복 가드에 막히면 그때부터
     // 다시 "중지 중…" 에 갇힌다. (한 번의 누름 안에서만 중복을 막는다.)
     _stoppedPosted = false;
@@ -669,11 +716,21 @@ class AgentLoop {
 
   // ===== 시작점(체크포인트): 지금까지의 대화를 (선택적으로 압축해) 새 시작점으로 =====
 
-  /// 시작점 압축 미리보기: 이전 내용을 LLM 으로 약 [sizeTokens] 토큰으로 요약해
-  /// 다이얼로그로 돌려준다(아직 시작점을 만들지는 않는다 → 사용자가 보고 편집).
-  Future<void> checkpointPreview(int sizeTokens) async {
+  /// 지금 컨텍스트 점유량(토큰) — 시작점 창이 "시작 전 컨텍스트" 로 보여 준다.
+  Future<int> currentContextTokens() async {
     final store = _store, convId = _convId;
-    if (store == null || convId == null || _generating) return;
+    if (store == null || convId == null) return 0;
+    return _currentContextTokens(await store.messages(convId));
+  }
+
+  /// 시작점 압축 미리보기: 이전 내용을 LLM 으로 약 [sizeTokens] 토큰으로 요약해
+  /// 돌려준다(아직 시작점을 만들지는 않는다 → 사용자가 보고 편집).
+  ///
+  /// 네이티브 시작점 창이 **돌려받은 값**을 쓴다. `checkpoint.preview` 이벤트도 그대로
+  /// 내보낸다(구독자가 있으면 받는다).
+  Future<String> checkpointPreview(int sizeTokens) async {
+    final store = _store, convId = _convId;
+    if (store == null || convId == null || _generating) return '';
     _generating = true;
     _status('Generating preview…', key: 'statusPreview');
     String summary = '';
@@ -685,6 +742,7 @@ class AgentLoop {
       _clearStatus();
     }
     _post({'type': 'checkpoint.preview', 'text': summary});
+    return summary;
   }
 
   /// 시작점 생성. [compress] 면 미리보기에서 받은(편집 가능) [content] 를 그대로
@@ -1032,8 +1090,7 @@ class AgentLoop {
   /// 그게 사실상 능력 화이트리스트처럼 읽혀 **모듈을 더 붙여도 모델이 모르는** 문제가
   /// 있었다(문서 도구를 두고도 파이썬 스크립트를 짜는 원인). 레지스트리에서 그대로
   /// 뽑아 쓰면 도구가 늘거나 사용자가 추가해도 문구가 저절로 따라온다.
-  static String _toolInventory(ToolRegistry? registry, [String? environmentNote]) {
-    final names = registry?.toolNames ?? const <String>[];
+  static String _toolInventory(List<String> names, [String? environmentNote]) {
     if (names.isEmpty) {
       return 'You have NO tools available right now — say so instead of '
           'pretending to act.';
@@ -1044,10 +1101,10 @@ class AgentLoop {
         '${environmentNote == null ? '' : ' $environmentNote'}';
   }
 
-  String _subAgentSystemFor(ToolRegistry? registry) =>
+  String _subAgentSystemFor(List<String> toolNames) =>
       'You are a focused sub-agent in Collabo IDE. Complete the given task using '
       'your tools. Work only within the project. '
-      '${_toolInventory(registry, _environmentNote)} '
+      '${_toolInventory(toolNames, _environmentNote)} '
       'A purpose-built tool understands the format and its pitfalls, while a '
       'hand-written script silently corrupts what it does not know about. '
       'If no tool fits and you must write a throwaway helper script, create it '
@@ -1056,10 +1113,10 @@ class AgentLoop {
       '(real source, tests, config they asked for) still go in their normal '
       'place. Return a concise result of what you did or found.';
 
-  String _verifySystemFor(ToolRegistry? registry) =>
+  String _verifySystemFor(List<String> toolNames) =>
       'You are a verification sub-agent in Collabo IDE. Inspect the project and '
       'verify whether the described work was completed correctly. '
-      '${_toolInventory(registry, _environmentNote)} '
+      '${_toolInventory(toolNames, _environmentNote)} '
       'If no tool fits and you need a throwaway check script, put it under '
       '`$kAgentScratchDir`. Be concise. End with a clear verdict: '
       'PASS or FAIL, with brief reasons.';
@@ -1094,8 +1151,10 @@ class AgentLoop {
       return;
     }
     _generating = true;
+    _fit = ContextFit.of(cfg);
     _cancelRequested = false; // 새 생성 시작 — 이전 중지 플래그 초기화
     _stoppedPosted = false;
+    _keepOnStop = false;
 
     // ⚠️ **플래그를 세운 뒤부터 전부 이 try 안이다.** 예전에는 아래 준비 단계
     // (요약 대기·계획 읽기·도구 구성·사전 평가·DB 조회)가 try 밖에 있어서,
@@ -1110,15 +1169,17 @@ class AgentLoop {
       // 계획 메모리는 **파일이 정본**이라 생성마다 다시 읽는다(사용자가 고쳤을 수 있다).
       // 감독자는 이번 생성 동안만 산다 — 궤적은 턴 단위로만 의미가 있다.
       await reloadPlaybook();
-      _supervisor = Supervisor(enabled: _workspace.supervisor);
+      // 작은 창 모델이면 감독자 개입(추가 system 주입)도 끈다.
+      _supervisor = Supervisor(enabled: _workspace.supervisor && !_fit.active);
 
       final registry = await _buildToolRegistry();
       // 파이썬 도구 + 네이티브 서브에이전트 도구 + 계획 도구를 메인 LLM 에 제공.
-      final tools = <Map<String, Object?>>[
-        if (registry != null) ...registry.openAiTools,
+      // 작은 창 모델이면 핵심 도구만 도구 몫 안에서 싣는다(위임·계획 도구 제외).
+      final tools = _fit.selectTools(<Map<String, Object?>>[
+        ..._registryTools(registry),
         ..._nativeTools,
         if (_playbook != null) ..._planTools,
-      ];
+      ]);
       final workspace = _session.path;
 
       // 사전 평가: 서브에이전트가 마지막 요청을 보고 "자기 차례가 있는지" 한 줄 피드백.
@@ -1142,7 +1203,7 @@ class AgentLoop {
         if (_cancelRequested) return; // 중지 요청됨 — 더 진행하지 않음
         try {
           final messages = await _buildContextMessages(store, convId,
-              preAssessment: triage);
+              preAssessment: triage, toolNames: tools.map(ContextFit.toolName).toSet());
           // 보낼 사용자 메시지가 하나도 없으면 부르지 않는다. 시작점을 만든 직후
           // "다시 시도" 를 누르면 이 상태가 된다(시작점 이후가 비어 있다) — 지시만
           // 있고 대화가 없는 요청이라, 로컬 서버는 템플릿 단계에서 그대로 실패한다.
@@ -1165,14 +1226,22 @@ class AgentLoop {
               // 판단 재료는 구조적인 것뿐이다 — 열린 단계와 "이 턴에 도구를 썼는가".
               // 답변 본문은 보지 않는다. 사용자를 기다리며 끝내려면 모델이
               // `update_plan` 으로 그 단계에 BLOCKED 를 찍으면 된다.
+              final openSteps = _playbook?.openSteps ?? const <String>[];
               final violations = _supervisor?.exitViolations(
-                    openSteps: _playbook?.openSteps ?? const [],
+                    openSteps: openSteps,
                     usedTools: toolsUsed.isNotEmpty,
                   ) ??
                   const <String>[];
-              if (violations.isNotEmpty && (_supervisor?.mayReinject ?? false)) {
-                _supervisor!.noteReinjection();
-                _applyIntervention(
+              // 계획이 움직이는 한 계속 되돌려보낸다. 같은 상태로 상한까지 가면 포기하되
+              // **조용히 끝내지 않는다** — 남은 단계를 사용자에게 알린다(아래).
+              if (violations.isNotEmpty && !(_supervisor?.mayReinjectFor(openSteps) ?? false)) {
+                _noticeOpenSteps(openSteps);
+              }
+              if (violations.isNotEmpty && (_supervisor?.mayReinjectFor(openSteps) ?? false)) {
+                _supervisor!.noteReinjection(openSteps);
+                await _applyIntervention(
+                  store,
+                  convId,
                   messages,
                   Intervention(
                     action: 'exit_guard',
@@ -1216,7 +1285,7 @@ class AgentLoop {
             iv ??= _supervisor?.roundDone(
                 progress: _fileChangeSeq != changesBeforeRound);
             if (iv != null) {
-              _applyIntervention(messages, iv);
+              await _applyIntervention(store, convId, messages, iv);
               if (iv.halt) {
                 // 마지막 단계다. 도구를 **거두고** 한 라운드만 더 돌려 사용자에게
                 // 무엇이 막혔는지 말하게 한다. 그냥 끊으면 사용자는 이유를 모른다.
@@ -1234,13 +1303,22 @@ class AgentLoop {
           if (!converged) {
             _notice('Reached the step limit ($_maxToolIterations).',
                 key: 'noticeStepLimit', args: {'max': _maxToolIterations});
+            // 한도로 끊겼어도 계획에 남은 것이 있으면 그것까지 알린다(모르고 넘어가지 않게).
+            _noticeOpenSteps(_playbook?.openSteps ?? const []);
           }
           await pushChatMeta();
           return;
         } catch (e) {
-          // 사용자가 중지를 누른 경우: 재시도하지 않고 이번 시도의 부분 기록만 정리.
+          // 사용자가 중지를 누른 경우: 재시도하지 않는다. "여기까지 남기기" 면 이번 시도가
+          // 남긴 기록을 그대로 두고(화면만 다시 그린다), 아니면 요청 직전으로 되돌린다.
           if (e is _GenerationStopped || _cancelRequested) {
-            await _cleanupAttempt(store, convId, baselineId);
+            if (_keepOnStop) {
+              _notice('Stopped here — what was done so far is kept.',
+                  key: 'noticeStoppedKept');
+              await pushHistory();
+            } else {
+              await _cleanupAttempt(store, convId, baselineId);
+            }
             _postStopped();
             return;
           }
@@ -1249,6 +1327,12 @@ class AgentLoop {
           if (e is LlmBudgetExceeded) {
             await _cleanupAttempt(store, convId, baselineId);
             _post({'type': 'chat.error', 'message': e.message});
+            return;
+          }
+          // 컨텍스트 길이 초과도 재시도하지 않는다 — 같은 입력이면 또 넘친다.
+          if (isContextLengthError(e)) {
+            await _cleanupAttempt(store, convId, baselineId);
+            _post({'type': 'chat.error', 'message': '$e'});
             return;
           }
           // 통신/타임아웃 등 오류는 재시도(이미 추가된 이번 시도 기록은 정리).
@@ -1289,6 +1373,8 @@ class AgentLoop {
   Future<String?> _triageRequest(
       ConversationStore store, int convId, LlmConfig cfg) async {
     if (!_workspace.preAssessment) return null;
+    // 작은 창 모델에는 사전 평가(서브에이전트 한 번 더 부르기)를 하지 않는다 — 위임 도구도 없다.
+    if (ContextFit.of(cfg).active) return null;
     String? lastUser;
     for (final m in (await store.messages(convId)).reversed) {
       if (m.role == MessageRole.user && m.content.trim().isNotEmpty) {
@@ -1338,8 +1424,11 @@ class AgentLoop {
   /// 남는 것이 곧 그 의미다.
   Future<List<Map<String, Object?>>> _buildContextMessages(
       ConversationStore store, int convId,
-      {String? preAssessment}) async {
-    final prompt = _workspace.systemPrompt.trim();
+      {String? preAssessment, Set<String> toolNames = const {}}) async {
+    // 작은 창 모델이고 기본 프롬프트를 쓰는 중이면 간결판으로(사용자 프롬프트는 그대로).
+    final userPrompt = _workspace.systemPrompt.trim();
+    final prompt = _fit.systemPrompt(userPrompt, isDefault: _workspace.usesDefaultPrompt).trim();
+    final compact = _fit.active;
     final all = await store.messages(convId);
     // 마지막 시작점(체크포인트)을 찾는다.
     var startIdx = 0;
@@ -1353,7 +1442,8 @@ class AgentLoop {
       }
     }
     // 프로젝트 상태(폴더 구조 + 이미 바꾼 파일) — 매 턴 새로 만들어 최신을 유지한다.
-    final state = await _projectStateContext();
+    // 작은 창 모델에는 싣지 않는다(도구로 직접 보게 한다).
+    final state = compact ? null : await _projectStateContext();
 
     final slice = all.sublist(startIdx);
     // 대화 **중간**에 있는 system 기록은 머리로 끌어올린다. 우리가 만드는 건
@@ -1361,26 +1451,33 @@ class AgentLoop {
     // 도구가 남긴 system 이 섞여 있을 수 있다 — 중간에 두면 로컬 템플릿이 거부한다.
     final strays = [
       for (final m in slice)
-        if (m.role == MessageRole.system && m.pipeline != 'checkpoint')
+        // 감독자 개입은 **그때 한 번** 주입한 것이다(기록으로만 남는다) — 다시 넣으면
+        // 지난 턴의 지시를 계속 따라간다.
+        if (m.role == MessageRole.system &&
+            m.pipeline != 'checkpoint' &&
+            m.pipeline != 'supervisor')
           m.content.trim(),
     ];
 
     final messages = <Map<String, Object?>>[
       ...systemHead([
         prompt,
-        // 마커 설명은 **항상** 들어가야 한다. 기본 프롬프트에도 들어 있지만, 사용자가
-        // 프롬프트를 편집해 저장하면 그 문단이 통째로 사라질 수 있다 — 그러면
-        // 컨텍스트에 남은 `[delegated]` 줄이 정체불명의 텍스트가 된다.
-        if (!prompt.contains(kDelegationMarker)) kDelegationMarkerNote,
-        // 계획 규율도 마커 설명과 같은 이유로 보강한다 — 사용자가 프롬프트를 편집해
-        // 저장했으면 이 문단이 통째로 없다. 계획 메모리가 꺼져 있으면 넣지 않는다
-        // (`_playbook == null`) — 없는 도구를 설명하지 않는다.
-        if (_playbook != null && !prompt.contains(kPlaybookPath)) kPlanningNote,
+        // 도구별 안내(위임·검증·긴 명령·터미널·큰 파일)는 **그 도구가 켜져 있을 때만** 붙인다.
+        // 기본 프롬프트에는 박지 않았다(꺼 둔 도구 설명이 매번 자리를 차지했다). 사용자가 저장한
+        // 옛 프롬프트에 같은 제목이 있으면 건너뛴다. 작은 창에서는 도구 설명만으로 둔다.
+        if (!compact) toolGuidesFor(toolNames, existing: prompt),
+        // 계획 규율 — 계획 도구가 있을 때만. 기본 프롬프트에서도 뺐다(계획 메모리가 꺼져 있으면
+        // 없는 도구를 설명하던 문제).
+        if (!compact && _playbook != null && toolNames.contains('set_goal') && !prompt.contains(kPlaybookPath))
+          kPlanningNote,
+        // 위임 마커 설명 — 위임 도구가 있을 때만. 없으면 `[delegated]` 줄도 생기지 않는다.
+        if (!compact && toolNames.contains('run_subagent') && !prompt.contains(kDelegationMarker))
+          kDelegationMarkerNote,
         // 도구가 샌드박스에서 돌면 그 사실을 메인에게도 알린다(메인도 도구를 직접 부른다).
         _environmentNote,
         // 계획은 상태보다 **먼저** 온다 — "무엇을 하려는가" 를 읽고 나서 "지금 어떤
         // 상태인가" 를 읽는 순서가 자연스럽다.
-        _planContext(forSubAgent: false),
+        if (!compact) _planContext(forSubAgent: false),
         state,
         // 사전 평가(트리아지)도 여기 합친다. 예전에는 **맨 뒤**에 system 으로 붙였는데,
         // 그러면 배열이 system 으로 끝나 대부분의 템플릿이 생성 프롬프트를 못 붙인다.
@@ -1603,8 +1700,17 @@ class AgentLoop {
   /// (§`message_shape.dart`). 도구 결과 뒤에 user 를 붙이는 것은 규격에 맞는다.
   /// 화면에는 한 줄만 남긴다 — 모델이 갑자기 방향을 바꾸는 이유가 보이지 않으면
   /// 사용자는 그걸 오작동으로 읽는다.
-  void _applyIntervention(
-      List<Map<String, Object?>> messages, Intervention iv) {
+  /// 개입을 이번 컨텍스트에 넣고, 화면에 알리고, **대화 기록에도 남긴다**.
+  ///
+  /// 기록에 남기는 이유: 모델이 갑자기 방향을 바꾼 까닭이 화면에 보여야 오작동으로
+  /// 오해받지 않는데, 예전에는 이 줄이 **그 순간에만** 있었다 — 앱을 다시 켜면 기록을
+  /// DB 에서 다시 그리므로 감독자 줄이 전부 사라졌다(2026-09-23).
+  ///
+  /// 역할은 `system` + `pipeline: 'supervisor'` 다. 다음 턴의 컨텍스트에는 넣지 않는다
+  /// ([_buildContextMessages] 가 이 파이프라인을 건너뛴다) — 이미 그때 한 번 주입했고,
+  /// 지난 개입을 매 요청마다 다시 보내면 모델이 옛 지시를 따라간다.
+  Future<void> _applyIntervention(ConversationStore store, int convId,
+      List<Map<String, Object?>> messages, Intervention iv) async {
     messages.add({'role': 'user', 'content': iv.message});
     _post({
       'type': 'chat.supervisor',
@@ -1614,6 +1720,22 @@ class AgentLoop {
       'message': iv.message,
       'halt': iv.halt,
     });
+    try {
+      await store.addMessage(
+        conversationId: convId,
+        role: MessageRole.system,
+        content: iv.message,
+        pipeline: 'supervisor',
+        metadata: jsonEncode({
+          'action': iv.action,
+          'level': iv.level,
+          'reason': iv.reason,
+          'halt': iv.halt,
+        }),
+      );
+    } catch (_) {
+      // 기록은 부가 정보다 — 실패해도 생성은 그대로 간다.
+    }
   }
 
   /// 서브 LLM 분기: 별도 컨텍스트로 프롬프트를 처리한다(메인 대화창에 미표시).
@@ -1638,17 +1760,20 @@ class AgentLoop {
     final presetId = _workspace.resolvedPresetIdForTool(toolName, _session.path);
     // 위임 도구(run_subagent/verify_work)는 빼서 재귀를 막고, 계획 도구는
     // `note_write` 하나만 준다(§_subPlanToolNames — 계획의 주인은 메인이다).
-    final subTools = <Map<String, Object?>>[
-      ...?registry?.openAiTools,
+    // 서브에이전트 모델도 작은 창이면 같은 방식으로 줄인다(모델이 메인과 다를 수 있다).
+    final subFit = ContextFit.of(cfg);
+    final subTools = subFit.selectTools(<Map<String, Object?>>[
+      ..._registryTools(registry),
       if (_playbook != null) ..._subPlanTools,
-    ];
+    ]);
+    final subToolNames = subTools.map(ContextFit.toolName).toList();
     // 이 서브에이전트만의 감독자. 마지막 단계는 "사용자에게 묻기" 가 아니라
     // **부모에게 보고하기** 다 — 서브에이전트 앞에는 사용자가 없다.
-    final subSup = Supervisor.forSubAgent(enabled: _workspace.supervisor);
+    final subSup = Supervisor.forSubAgent(enabled: _workspace.supervisor && !subFit.active);
     final procCtx = _runningProcessContext();
     // 서브에이전트는 매번 빈 컨텍스트로 시작한다 — 이미 만들어 둔 파일을 다시
     // 만들거나 같은 조사를 반복하지 않도록 프로젝트 상태를 함께 넣어 준다.
-    final stateCtx = await _projectStateContext();
+    final stateCtx = subFit.active ? null : await _projectStateContext();
     // 최근 사용자 메시지의 첨부를 서브 컨텍스트에 동반한다:
     // 경로 목록(모든 종류 — 도구로 읽기 가능) + 멀티모달이면 이미지 인라인.
     final atts = await _latestUserAttachments(store, parentConvId);
@@ -1666,10 +1791,12 @@ class AgentLoop {
     final subMessages = <Map<String, Object?>>[
       // 여기도 system 을 여러 개 쌓지 않는다(§systemHead — 로컬 템플릿이 거부한다).
       ...systemHead([
-        verify ? _verifySystemFor(registry) : _subAgentSystemFor(registry),
+        verify ? _verifySystemFor(subToolNames) : _subAgentSystemFor(subToolNames),
+        // 실제 작업자는 서브에이전트다 — 도구별 안내(긴 명령·터미널·큰 파일)를 메인과 같은 문구로.
+        if (!subFit.active) toolGuidesFor(subToolNames, forSubAgent: true),
         // 서브에이전트는 매번 빈 컨텍스트로 시작하므로 계획이 **여기서 더 중요하다**.
-        if (_playbook != null) kSubAgentPlanningNote,
-        _planContext(forSubAgent: true),
+        if (!subFit.active && _playbook != null) kSubAgentPlanningNote,
+        if (!subFit.active) _planContext(forSubAgent: true),
         stateCtx,
         procCtx,
         attCtx,
@@ -1898,7 +2025,7 @@ class AgentLoop {
         conversationId: subConvId,
         role: MessageRole.assistant,
         content: finalText,
-        model: cfg.model,
+        model: cfg.effectiveModel,
         provider: cfg.connection.name,
         api: 'chat/completions',
         pipeline: verify ? 'verify' : 'subagent',
@@ -2471,6 +2598,19 @@ class AgentLoop {
   void _notice(String text, {String? key, Map<String, Object?>? args}) =>
       _post({'type': 'chat.notice', 'text': text, 'key': ?key, 'args': ?args});
 
+  /// **계획에 남은 단계**를 사용자에게 알린다(턴이 그 상태로 끝날 때).
+  ///
+  /// 종료 차단은 계획이 움직이는 동안만 모델을 되돌려보낸다. 더 밀어도 소용없을 때
+  /// 그냥 끝내면 사용자는 "계속 돌다가 중간에 끝났다" 로만 본다 — 무엇이 남았는지
+  /// 한 줄로 말해 주고, 계획 카드(`chat.plan`)에서 그대로 확인할 수 있게 한다.
+  void _noticeOpenSteps(List<String> openSteps) {
+    if (openSteps.isEmpty) return;
+    final shown = openSteps.take(4).join(', ');
+    final more = openSteps.length > 4 ? ' (+${openSteps.length - 4})' : '';
+    _notice('The plan still has unfinished steps: $shown$more',
+        key: 'noticeOpenSteps', args: {'steps': '$shown$more'});
+  }
+
   /// 상태 풍선을 지운다. 단, 처리할 큐가 남아 있으면(곧 이어서 생성) 유지한다.
   void _clearStatus() {
     if (_queue.isNotEmpty) return;
@@ -2633,6 +2773,8 @@ class AgentLoop {
         // 예산 초과도 재시도 대상이 아니다 — 같은 조건이면 또 같은 자리에서 걸리고,
         // 그동안의 토큰만 두 배로 나간다. 사용자가 설정을 고치는 게 맞다.
         if (e is LlmBudgetExceeded) rethrow;
+        // 컨텍스트 길이 초과: 같은 입력이면 또 넘친다.
+        if (isContextLengthError(e)) rethrow;
         if (attempt >= maxAttempts) rethrow;
         await _retryDelay(attempt + 1, maxAttempts, '$reason: ${_briefErr(e)}');
       }
@@ -2743,6 +2885,22 @@ class AgentLoop {
             toolCalls = calls;
         }
       }
+    } on _GenerationStopped {
+      // "여기까지 남기기" 로 멈췄으면 **흘러온 본문까지** 저장한다 — 화면에 보이던 답이
+      // 사라지지 않게. (그냥 취소면 호출측이 이번 요청의 기록을 통째로 지운다.)
+      final partial = content.toString();
+      if (_keepOnStop && partial.trim().isNotEmpty) {
+        await store.addMessage(
+          conversationId: convId,
+          role: MessageRole.assistant,
+          content: partial,
+          model: cfg.effectiveModel,
+          provider: cfg.connection.name,
+          api: 'chat/completions',
+          pipeline: 'main',
+        );
+      }
+      rethrow;
     } finally {
       ticker.cancel();
     }
@@ -2765,7 +2923,7 @@ class AgentLoop {
       conversationId: convId,
       role: MessageRole.assistant,
       content: body,
-      model: cfg.model,
+      model: cfg.effectiveModel,
       provider: cfg.connection.name,
       api: 'chat/completions',
       pipeline: 'main',

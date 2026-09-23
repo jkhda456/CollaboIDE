@@ -1052,11 +1052,11 @@ abstract class AppLocalizations {
   /// **'Inspect tools'**
   String get toolInspect;
 
-  /// No description provided for @pythonNotReadyInspect.
+  /// No description provided for @sandboxNotReadyInspect.
   ///
   /// In en, this message translates to:
-  /// **'Python is not ready. Select an interpreter and try again.'**
-  String get pythonNotReadyInspect;
+  /// **'The tool runtime is not ready. Check the sandbox status under Settings → Tools.'**
+  String get sandboxNotReadyInspect;
 
   /// No description provided for @toolInfoFailed.
   ///
@@ -1220,36 +1220,6 @@ abstract class AppLocalizations {
   /// **'Could not read the file.'**
   String get viewerReadFailed;
 
-  /// No description provided for @toolRuntime.
-  ///
-  /// In en, this message translates to:
-  /// **'Tool runtime'**
-  String get toolRuntime;
-
-  /// No description provided for @toolRuntimeSandbox.
-  ///
-  /// In en, this message translates to:
-  /// **'Sandbox'**
-  String get toolRuntimeSandbox;
-
-  /// No description provided for @toolRuntimeSystem.
-  ///
-  /// In en, this message translates to:
-  /// **'System Python'**
-  String get toolRuntimeSystem;
-
-  /// No description provided for @toolRuntimeSandboxDesc.
-  ///
-  /// In en, this message translates to:
-  /// **'Tools run in an isolated Linux (WebAssembly) machine that sees only the project folder. Programs on this computer (git, node…) are not available there.'**
-  String get toolRuntimeSandboxDesc;
-
-  /// No description provided for @toolRuntimeSystemDesc.
-  ///
-  /// In en, this message translates to:
-  /// **'Tools run directly on this computer with the Python selected below, and can use every program and file it can reach.'**
-  String get toolRuntimeSystemDesc;
-
   /// No description provided for @sandboxUnavailable.
   ///
   /// In en, this message translates to:
@@ -1298,11 +1268,17 @@ abstract class AppLocalizations {
   /// **'No project is open. Each open project gets its own sandbox here.'**
   String get sandboxNoProjects;
 
-  /// No description provided for @sandboxSystemMode.
+  /// No description provided for @sandboxSystemMachine.
   ///
   /// In en, this message translates to:
-  /// **'Tools are set to run with System Python. You can switch to the sandbox in Settings → Tools.'**
-  String get sandboxSystemMode;
+  /// **'System sandbox'**
+  String get sandboxSystemMachine;
+
+  /// No description provided for @sandboxSystemMachineDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs tool work that belongs to no project, such as the tool list in settings. There is one per app.'**
+  String get sandboxSystemMachineDesc;
 
   /// No description provided for @sandboxStart.
   ///
@@ -1508,47 +1484,11 @@ abstract class AppLocalizations {
   /// **'View as'**
   String get viewerModeTitle;
 
-  /// No description provided for @pythonEnv.
-  ///
-  /// In en, this message translates to:
-  /// **'Python environment'**
-  String get pythonEnv;
-
   /// No description provided for @statusCheck.
   ///
   /// In en, this message translates to:
   /// **'Check status'**
   String get statusCheck;
-
-  /// No description provided for @pythonSettings.
-  ///
-  /// In en, this message translates to:
-  /// **'Python settings'**
-  String get pythonSettings;
-
-  /// No description provided for @pythonNotSetTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Python not set'**
-  String get pythonNotSetTitle;
-
-  /// No description provided for @pythonNotSetBody.
-  ///
-  /// In en, this message translates to:
-  /// **'Select an interpreter in \"Python settings\" first.'**
-  String get pythonNotSetBody;
-
-  /// No description provided for @pythonCheckTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Python environment check'**
-  String get pythonCheckTitle;
-
-  /// No description provided for @selectPythonPrompt.
-  ///
-  /// In en, this message translates to:
-  /// **'Select the Python interpreter to use.'**
-  String get selectPythonPrompt;
 
   /// No description provided for @notSelected.
   ///
@@ -1556,95 +1496,11 @@ abstract class AppLocalizations {
   /// **'Not selected'**
   String get notSelected;
 
-  /// No description provided for @selectPython.
-  ///
-  /// In en, this message translates to:
-  /// **'Select Python'**
-  String get selectPython;
-
-  /// No description provided for @pythonVerified.
-  ///
-  /// In en, this message translates to:
-  /// **'Verified'**
-  String get pythonVerified;
-
-  /// No description provided for @pythonMissing.
-  ///
-  /// In en, this message translates to:
-  /// **'No interpreter at that path.'**
-  String get pythonMissing;
-
-  /// No description provided for @pythonMissingQuestion.
-  ///
-  /// In en, this message translates to:
-  /// **'No Python? '**
-  String get pythonMissingQuestion;
-
-  /// No description provided for @downloadFromPythonOrg.
-  ///
-  /// In en, this message translates to:
-  /// **'Download from python.org'**
-  String get downloadFromPythonOrg;
-
   /// No description provided for @allFiles.
   ///
   /// In en, this message translates to:
   /// **'All files'**
   String get allFiles;
-
-  /// No description provided for @usePerProjectVenv.
-  ///
-  /// In en, this message translates to:
-  /// **'Use per-project virtual environment (venv)'**
-  String get usePerProjectVenv;
-
-  /// No description provided for @usePerProjectVenvDesc.
-  ///
-  /// In en, this message translates to:
-  /// **'Creates a dedicated venv under the project\'s .collabo/venv from the selected interpreter, and runs pip/tools inside it. Recommended on macOS/Linux, where installing into the system Python is often blocked (PEP 668) or needs root.'**
-  String get usePerProjectVenvDesc;
-
-  /// No description provided for @venvNoProject.
-  ///
-  /// In en, this message translates to:
-  /// **'A dedicated venv is created automatically when you open a project.'**
-  String get venvNoProject;
-
-  /// No description provided for @venvCreating.
-  ///
-  /// In en, this message translates to:
-  /// **'Creating virtual environment…'**
-  String get venvCreating;
-
-  /// No description provided for @venvReady.
-  ///
-  /// In en, this message translates to:
-  /// **'Virtual environment ready.'**
-  String get venvReady;
-
-  /// No description provided for @venvNotCreated.
-  ///
-  /// In en, this message translates to:
-  /// **'Not created yet.'**
-  String get venvNotCreated;
-
-  /// No description provided for @venvFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Failed to create the virtual environment.'**
-  String get venvFailed;
-
-  /// No description provided for @venvCreate.
-  ///
-  /// In en, this message translates to:
-  /// **'Create'**
-  String get venvCreate;
-
-  /// No description provided for @venvRecreate.
-  ///
-  /// In en, this message translates to:
-  /// **'Recreate'**
-  String get venvRecreate;
 
   /// No description provided for @console.
   ///
@@ -1753,6 +1609,318 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Skip'**
   String get skipSetup;
+
+  /// No description provided for @stopChoiceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop generating'**
+  String get stopChoiceTitle;
+
+  /// No description provided for @stopChoiceBody.
+  ///
+  /// In en, this message translates to:
+  /// **'What should happen to what has been done so far?'**
+  String get stopChoiceBody;
+
+  /// No description provided for @stopChoiceNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Files the tools already changed stay changed either way.'**
+  String get stopChoiceNote;
+
+  /// No description provided for @stopKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep what is done'**
+  String get stopKeep;
+
+  /// No description provided for @stopDiscard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard it all'**
+  String get stopDiscard;
+
+  /// No description provided for @stopContinue.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep going'**
+  String get stopContinue;
+
+  /// No description provided for @checkpointTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Create a starting point'**
+  String get checkpointTitle;
+
+  /// No description provided for @checkpointDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Fold the conversation so far and start fresh from here. The AI will only see messages after the starting point.'**
+  String get checkpointDesc;
+
+  /// No description provided for @checkpointPlanNote.
+  ///
+  /// In en, this message translates to:
+  /// **'The plan (PLAYBOOK) is cleared too. The previous plan is kept in .collabo/playbook-archive.'**
+  String get checkpointPlanNote;
+
+  /// No description provided for @checkpointCurrentContext.
+  ///
+  /// In en, this message translates to:
+  /// **'Context before start'**
+  String get checkpointCurrentContext;
+
+  /// No description provided for @checkpointCompress.
+  ///
+  /// In en, this message translates to:
+  /// **'Compress & keep the earlier content'**
+  String get checkpointCompress;
+
+  /// No description provided for @checkpointSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Compressed size'**
+  String get checkpointSize;
+
+  /// No description provided for @checkpointPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate preview'**
+  String get checkpointPreview;
+
+  /// No description provided for @checkpointGenerating.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating…'**
+  String get checkpointGenerating;
+
+  /// No description provided for @checkpointMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Past memory'**
+  String get checkpointMemory;
+
+  /// No description provided for @checkpointCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create starting point'**
+  String get checkpointCreate;
+
+  /// No description provided for @checkpointModeCheckpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting point'**
+  String get checkpointModeCheckpoint;
+
+  /// No description provided for @checkpointModePlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset plan only'**
+  String get checkpointModePlan;
+
+  /// No description provided for @planResetDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the conversation and clear only the plan (PLAYBOOK). The previous plan is kept in .collabo/playbook-archive.'**
+  String get planResetDesc;
+
+  /// No description provided for @planResetButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset plan'**
+  String get planResetButton;
+
+  /// No description provided for @appleFoundation.
+  ///
+  /// In en, this message translates to:
+  /// **'Apple Foundation Models'**
+  String get appleFoundation;
+
+  /// No description provided for @appleFoundationDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs on Apple\'s on-device model, so conversations stay on this device. Requires macOS or iOS 26.4+ with Apple Intelligence on.'**
+  String get appleFoundationDesc;
+
+  /// No description provided for @afmPermissive.
+  ///
+  /// In en, this message translates to:
+  /// **'Relax the guardrails'**
+  String get afmPermissive;
+
+  /// No description provided for @afmPermissiveDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Recommended: the default guardrails sometimes block ordinary questions.'**
+  String get afmPermissiveDesc;
+
+  /// No description provided for @afmPromptedTools.
+  ///
+  /// In en, this message translates to:
+  /// **'Put tools in the prompt'**
+  String get afmPromptedTools;
+
+  /// No description provided for @afmPromptedToolsDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn this on if the model never calls a tool. The tool list goes into the prompt and calls are read back from the answer.'**
+  String get afmPromptedToolsDesc;
+
+  /// No description provided for @afmPrewarm.
+  ///
+  /// In en, this message translates to:
+  /// **'Load the model early'**
+  String get afmPrewarm;
+
+  /// No description provided for @afmPrewarmDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Loads the model when you check the connection, so the first answer comes sooner.'**
+  String get afmPrewarmDesc;
+
+  /// No description provided for @afmTrimHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Trim old turns when the context is full'**
+  String get afmTrimHistory;
+
+  /// No description provided for @afmTrimHistoryDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'When off, going over the context reports an error instead.'**
+  String get afmTrimHistoryDesc;
+
+  /// No description provided for @afmConcurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Concurrent requests'**
+  String get afmConcurrent;
+
+  /// No description provided for @afmConcurrentDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty or 0 uses the engine default.'**
+  String get afmConcurrentDesc;
+
+  /// No description provided for @folderPickerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a folder'**
+  String get folderPickerTitle;
+
+  /// No description provided for @folderPickerUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Up'**
+  String get folderPickerUp;
+
+  /// No description provided for @folderPickerEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No subfolders'**
+  String get folderPickerEmpty;
+
+  /// No description provided for @folderPickerFilesAppHint.
+  ///
+  /// In en, this message translates to:
+  /// **'These folders also appear in the Files app under Collabo IDE.'**
+  String get folderPickerFilesAppHint;
+
+  /// No description provided for @sandboxUnavailableIOS.
+  ///
+  /// In en, this message translates to:
+  /// **'The sandbox can\'t run on iOS. Chat and file editing work, but tools that run commands are unavailable.'**
+  String get sandboxUnavailableIOS;
+
+  /// No description provided for @contextWindowLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Context size'**
+  String get contextWindowLabel;
+
+  /// No description provided for @contextWindowHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the model\'s context size in tokens. Leave empty if unknown.'**
+  String get contextWindowHelp;
+
+  /// No description provided for @contextWindowDetected.
+  ///
+  /// In en, this message translates to:
+  /// **'{tokens} tokens'**
+  String contextWindowDetected(int tokens);
+
+  /// No description provided for @contextWindowAssumed.
+  ///
+  /// In en, this message translates to:
+  /// **'Assuming 4096 tokens'**
+  String get contextWindowAssumed;
+
+  /// No description provided for @autoFitContext.
+  ///
+  /// In en, this message translates to:
+  /// **'Fit to small context'**
+  String get autoFitContext;
+
+  /// No description provided for @autoFitContextDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'For models with 16K or less, send only core tools and a short prompt.'**
+  String get autoFitContextDesc;
+
+  /// No description provided for @fitBudget.
+  ///
+  /// In en, this message translates to:
+  /// **'Uses {reserve} tokens for the reply and {input} for input.'**
+  String fitBudget(int reserve, int input);
+
+  /// No description provided for @fitPromptCompact.
+  ///
+  /// In en, this message translates to:
+  /// **'Sends a short prompt instead of the default one.'**
+  String get fitPromptCompact;
+
+  /// No description provided for @fitPromptCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Sends your prompt as is.'**
+  String get fitPromptCustom;
+
+  /// No description provided for @fitPromptTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'Your prompt is too long for this model. Shorten it in Settings › Prompt.'**
+  String get fitPromptTooLong;
+
+  /// No description provided for @fitTools.
+  ///
+  /// In en, this message translates to:
+  /// **'Shortens tool descriptions to send as many tools as possible.'**
+  String get fitTools;
+
+  /// No description provided for @fitDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Sub-agents, verification, plans, project summary, pre-assessment and supervisor are off.'**
+  String get fitDisabled;
+
+  /// No description provided for @fitRecommendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'A larger model is recommended'**
+  String get fitRecommendTitle;
+
+  /// No description provided for @fitRecommendBody.
+  ///
+  /// In en, this message translates to:
+  /// **'For long tasks, make a model with a larger context the default preset.'**
+  String get fitRecommendBody;
+
+  /// No description provided for @afmModelVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Model version'**
+  String get afmModelVersion;
 }
 
 class _AppLocalizationsDelegate

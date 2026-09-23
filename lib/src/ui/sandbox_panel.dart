@@ -7,7 +7,10 @@ import 'package:xterm/xterm.dart';
 import '../../l10n/app_localizations.dart';
 import '../app/project_session.dart';
 import '../app/workspace_controller.dart';
+import '../platform/platform_features.dart';
 import '../sandbox/project_sandbox.dart';
+import 'adaptive.dart';
+import 'ime_terminal_view.dart';
 
 /// 샌드박스 화면 — 열린 프로젝트마다 하나씩 있는 collaboCore 머신을 보고 만진다.
 ///
@@ -33,6 +36,9 @@ class SandboxPanel extends StatefulWidget {
 
 class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderStateMixin {
   String? _selectedPath;
+
+  /// 좁은 화면에서 상세를 보고 있는가(목록 → 상세 한 장씩 — [MasterDetail]).
+  bool _showDetail = false;
   final FocusNode _terminalFocus = FocusNode(debugLabel: 'sandbox-terminal');
   // initState 에서 만든다 — `late final` 로 늦게 만들면 한 번도 안 그린 채(프로젝트 없음)
   // dispose 에서 처음 만들어지며 비활성 트리를 조회해 터진다.
@@ -58,6 +64,9 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
     await box.start();
     if (mounted && box.isRunning) _terminalFocus.requestFocus();
   }
+
+  /// 목록에서 시스템 머신을 고른 상태([_selectedPath] 에 넣는 값 — 프로젝트 경로와 안 겹친다).
+  static const String _systemKey = '::system';
 
   ProjectSession? _selected(List<ProjectSession> sessions) {
     if (sessions.isEmpty) return null;
@@ -108,7 +117,10 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
       listenable: workspace,
       builder: (context, _) {
         final sessions = workspace.sessions;
-        final sel = _selected(sessions);
+        // 시스템 머신은 **앱에 하나 고정**이고 목록 맨 위에 늘 있다.
+        final systemBox = workspace.systemSandbox();
+        final sel = _selectedPath == _systemKey ? null : _selected(sessions);
+        final systemSelected = systemBox != null && (sel == null || _selectedPath == _systemKey);
         // Container(color) 가 아니라 Material — ListTile 의 선택 배경·잉크가 그 위에 그려진다.
         return Material(
           color: theme.colorScheme.surface,
@@ -125,25 +137,29 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
                   ],
                 ),
               ),
-              if (!workspace.usesSandbox)
-                _Notice(text: l.sandboxSystemMode)
-              else if (!workspace.sandboxAvailable)
-                _Notice(text: l.sandboxUnavailable, error: true),
+              if (!workspace.sandboxAvailable)
+                _Notice(
+                    text: PlatformFeatures.isIOS ? l.sandboxUnavailableIOS : l.sandboxUnavailable,
+                    error: true),
               const Divider(height: 1),
               Expanded(
-                child: sessions.isEmpty
+                child: sessions.isEmpty && systemBox == null
                     ? Center(
                         child: Text(l.sandboxNoProjects,
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyMedium
                                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant)))
-                    : Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(width: 280, child: _buildList(l, theme, sessions, sel)),
-                          const VerticalDivider(width: 1),
-                          Expanded(child: _buildDetail(l, theme, sel!)),
-                        ],
+                    : MasterDetail(
+                        master: _buildList(l, theme, sessions, sel, systemBox, systemSelected),
+                        detail: systemSelected
+                            ? _buildDetail(l, theme,
+                                title: l.sandboxSystemMachine,
+                                subtitle: l.sandboxSystemMachineDesc,
+                                box: systemBox)
+                            : _buildDetail(l, theme, title: sel!.name, box: workspace.sandboxOf(sel)),
+                        showDetail: _showDetail,
+                        detailTitle: systemSelected ? l.sandboxSystemMachine : sel?.name,
+                        onBack: () => setState(() => _showDetail = false),
                       ),
               ),
             ],
@@ -153,38 +169,70 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildList(
-      AppLocalizations l, ThemeData theme, List<ProjectSession> sessions, ProjectSession? sel) {
+  Widget _buildList(AppLocalizations l, ThemeData theme, List<ProjectSession> sessions,
+      ProjectSession? sel, ProjectSandbox? systemBox, bool systemSelected) {
+    // 맨 위 한 줄이 시스템 머신(있을 때), 그 아래가 열린 프로젝트들.
+    final rows = <Widget>[
+      if (systemBox != null)
+        _tile(l, theme,
+            title: l.sandboxSystemMachine,
+            box: systemBox,
+            selected: systemSelected,
+            icon: Icons.settings_suggest_outlined,
+            onTap: () => setState(() {
+                  _selectedPath = _systemKey;
+                  _showDetail = true;
+                })),
+      for (final s in sessions)
+        _tile(l, theme,
+            title: s.name,
+            box: s.sandbox,
+            selected: identical(s, sel) && !systemSelected,
+            icon: null,
+            onTap: () => setState(() {
+                  _selectedPath = s.path;
+                  _showDetail = true;
+                })),
+    ];
     return ListView.separated(
-      itemCount: sessions.length,
+      itemCount: rows.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (_, i) {
-        final s = sessions[i];
-        final box = s.sandbox;
-        final running = box?.isRunning ?? false;
-        return ListTile(
-          dense: true,
-          selected: identical(s, sel),
-          leading: Icon(
-            running ? Icons.shield : Icons.shield_outlined,
-            size: 18,
-            color: box?.state == SandboxState.failed
-                ? theme.colorScheme.error
-                : running
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.onSurfaceVariant,
-          ),
-          title: Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(_stateLabel(l, box), maxLines: 1, overflow: TextOverflow.ellipsis),
-          onTap: () => setState(() => _selectedPath = s.path),
-        );
-      },
+      itemBuilder: (_, i) => rows[i],
     );
   }
 
-  Widget _buildDetail(AppLocalizations l, ThemeData theme, ProjectSession session) {
-    // 화면에서 처음 본 프로젝트에도 머신 자리를 만들어 둔다(부팅은 "시작" 때).
-    final box = workspace.sandboxOf(session);
+  Widget _tile(
+    AppLocalizations l,
+    ThemeData theme, {
+    required String title,
+    required ProjectSandbox? box,
+    required bool selected,
+    required IconData? icon,
+    required VoidCallback onTap,
+  }) {
+    final running = box?.isRunning ?? false;
+    return ListTile(
+      dense: true,
+      selected: selected,
+      leading: Icon(
+        icon ?? (running ? Icons.shield : Icons.shield_outlined),
+        size: 18,
+        color: box?.state == SandboxState.failed
+            ? theme.colorScheme.error
+            : running
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+      ),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(_stateLabel(l, box), maxLines: 1, overflow: TextOverflow.ellipsis),
+      onTap: onTap,
+    );
+  }
+
+  /// 고른 머신의 상세 — 프로젝트 머신과 시스템 머신이 같은 화면을 쓴다.
+  /// (프로젝트 머신은 화면에서 처음 볼 때 자리만 만들어 둔다 — 부팅은 "시작" 때.)
+  Widget _buildDetail(AppLocalizations l, ThemeData theme,
+      {required String title, required ProjectSandbox? box, String? subtitle}) {
     final running = box?.isRunning ?? false;
     final starting = box?.state == SandboxState.starting;
     final mono = theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace', height: 1.35);
@@ -202,7 +250,11 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(session.name, style: theme.textTheme.bodyLarge),
+                    Text(title, style: theme.textTheme.bodyLarge),
+                    if (subtitle != null)
+                      Text(subtitle,
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                     Text(
                       since != null
                           ? l.sandboxUptime(_hhmm(since))
@@ -308,7 +360,8 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
         // 안 보이면 뺀다 — 크기를 잘못 재 머신에 엉뚱한 콘솔 크기를 보내지 않게.
         // 모델([SandboxConsole.terminal])은 그대로라 다시 보이면 스크롤백까지 돌아온다.
         ? const SizedBox.shrink()
-        : TerminalView(
+        // 한글 조합이 쪼개지지 않게 글자 입력(IME)은 따로 받는다 — ImeTerminalView 참고.
+        : ImeTerminalView(
             box.console.terminal,
             key: ValueKey(box),
             focusNode: _terminalFocus,
@@ -319,8 +372,6 @@ class _SandboxPanelState extends State<SandboxPanel> with SingleTickerProviderSt
             shortcuts: _terminalShortcuts,
             // 머신이 없으면 칠 곳이 없다 — 입력을 받지 않는다(선택·복사·스크롤은 된다).
             readOnly: !running,
-            // 데스크톱 앱이다. 소프트 키보드를 띄우지 않되 한글 IME 입력은 받는다.
-            keyboardType: TextInputType.text,
           );
     return ColoredBox(
       color: _terminalTheme.background,

@@ -188,18 +188,7 @@ void main() {
     expect(wc.sessionFor(a)!.name, 'my-app');
   });
 
-  test('venv 경로는 프로젝트마다 다르다', () async {
-    final a = await makeProject('a');
-    final b = await makeProject('b');
-    await wc.openProject(a);
-    await wc.openProject(b);
-
-    final va = wc.sessionFor(a)!.venvPathFor(useVenv: true);
-    final vb = wc.sessionFor(b)!.venvPathFor(useVenv: true);
-    expect(va, p.join(a, '.collabo', 'venv'));
-    expect(vb, p.join(b, '.collabo', 'venv'));
-    expect(wc.sessionFor(a)!.venvPathFor(useVenv: false), isNull);
-  });
+  // (venv 경로 시험은 2026-09-23 에 없앴다 — 시스템 파이썬·venv 자체가 빠졌다.)
 
   /// ★ **열어 둔 프로젝트는 앱을 껐다 켜도 그대로다.** 최근(MRU) 목록과 다른
   /// 개념이다 — MRU 는 "예전에 열었던 것", 이쪽은 "지금 열려 있는 것" 이다.

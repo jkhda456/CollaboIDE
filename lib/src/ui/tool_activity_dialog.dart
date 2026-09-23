@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../tools/tool_call_log.dart';
+import 'adaptive.dart';
 
 /// 도구 호출 내역 창을 연다(대화의 "호출 내역" 링크 → 이 다이얼로그).
 /// [initialId] 가 있으면 그 호출을 선택한 상태로 연다.
@@ -35,6 +36,9 @@ class ToolActivityDialog extends StatefulWidget {
 
 class _ToolActivityDialogState extends State<ToolActivityDialog> {
   String? _selectedId;
+
+  /// 좁은 화면에서 상세를 보고 있는가. 특정 기록을 열라고 왔으면 상세부터 보여 준다.
+  late bool _showDetail = widget.initialId.isNotEmpty;
 
   @override
   void initState() {
@@ -83,9 +87,15 @@ class _ToolActivityDialogState extends State<ToolActivityDialog> {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final records = widget.log.records;
+    // 휴대폰에서는 화면 전체를 쓴다(작은 창에 목록·상세를 끼우면 둘 다 못 읽는다).
+    final compact = isCompactScreen(context);
     return Dialog(
+      insetPadding: compact ? EdgeInsets.zero : null,
+      shape: compact ? const RoundedRectangleBorder() : null,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 640),
+        constraints: compact
+            ? const BoxConstraints.expand()
+            : const BoxConstraints(maxWidth: 900, maxHeight: 640),
         child: Column(
           children: [
             Padding(
@@ -120,19 +130,15 @@ class _ToolActivityDialogState extends State<ToolActivityDialog> {
                           style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant)),
                     )
-                  : Row(
-                      children: [
-                        SizedBox(
-                          width: 280,
-                          child: ListView.builder(
-                            itemCount: records.length,
-                            itemBuilder: (context, i) =>
-                                _row(context, records[i]),
-                          ),
-                        ),
-                        const VerticalDivider(width: 1),
-                        Expanded(child: _detail(context)),
-                      ],
+                  : MasterDetail(
+                      master: ListView.builder(
+                        itemCount: records.length,
+                        itemBuilder: (context, i) => _row(context, records[i]),
+                      ),
+                      detail: _detail(context),
+                      showDetail: _showDetail && _selected != null,
+                      detailTitle: _selected?.name,
+                      onBack: () => setState(() => _showDetail = false),
                     ),
             ),
             const Divider(height: 1),
@@ -177,7 +183,10 @@ class _ToolActivityDialogState extends State<ToolActivityDialog> {
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall,
       ),
-      onTap: () => setState(() => _selectedId = r.id),
+      onTap: () => setState(() {
+        _selectedId = r.id;
+        _showDetail = true;
+      }),
     );
   }
 

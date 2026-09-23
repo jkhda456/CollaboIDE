@@ -10,7 +10,16 @@
   "tabAppearance": "Appearance",
   "tabAbout": "About",
   "aboutVersion": "Version {version} (build {build})",
-  "@aboutVersion": { "placeholders": { "version": { "type": "String" }, "build": { "type": "String" } } },
+  "@aboutVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "build": {
+        "type": "String"
+      }
+    }
+  },
   "openSourceTitle": "Open source",
   "openSourceIntro": "Built with these open-source components. See the full licenses below.",
   "viewLicenses": "View all open-source licenses",
@@ -33,14 +42,12 @@
   "save": "Save",
   "saved": "Saved",
   "selectButton": "Select",
-
   "theme": "Theme",
   "themeLight": "Light",
   "themeDark": "Dark",
   "themeSystem": "Follow system",
   "language": "Language",
   "languageSystem": "System",
-
   "navNewProject": "New Project",
   "navOpenProject": "Open Project",
   "noProjectTitle": "No project is open",
@@ -54,8 +61,13 @@
   "projectBusy": "Working",
   "closeBusyProjectTitle": "This project is still working",
   "closeBusyProjectBody": "{name} has a generation in progress. Closing it stops that work. Other open projects are not affected.",
-  "@closeBusyProjectBody": { "placeholders": { "name": { "type": "String" } } },
-
+  "@closeBusyProjectBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "browserBack": "Back",
   "browserForward": "Forward",
   "browserReload": "Reload",
@@ -74,11 +86,22 @@
   "browserUserAgentHint": "Platform default",
   "activityTitle": "Activity",
   "activityRunningLabel": "Running ({count})",
-  "@activityRunningLabel": { "placeholders": { "count": { "type": "int" } } },
+  "@activityRunningLabel": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "activityRunningTooltip": "Running processes: {count}",
-  "@activityRunningTooltip": { "placeholders": { "count": { "type": "int" } } },
+  "@activityRunningTooltip": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "activityIdleTooltip": "No running processes",
-
   "activityTitleNative": "Tool calls",
   "activityEmptyNative": "No tool calls yet.",
   "activitySelectHint": "Select a call to see its arguments and full result.",
@@ -90,13 +113,18 @@
   "activityScopeVerify": "verify",
   "activityScopeDelegate": "delegate",
   "copy": "Copy",
-
   "procTitle": "Processes",
   "procEmpty": "No background processes.",
   "procSelectHint": "Select a process to view its output.",
   "procStatusRunning": "Running",
   "procStatusExited": "Exited ({code})",
-  "@procStatusExited": { "placeholders": { "code": { "type": "int" } } },
+  "@procStatusExited": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
   "procStatusKilled": "Stopped",
   "procStop": "Stop",
   "procInputHint": "Send input to stdin…",
@@ -106,22 +134,32 @@
   "procTerminal": "Terminal",
   "procTerminalInputHint": "Type into the terminal…",
   "procNoPty": "No pseudo-terminal is available, so interactive programs will not work in this session.",
-
   "newProjectTitle": "New Project",
   "selectParentPath": "Select a parent folder",
   "selectPath": "Select folder",
   "projectNameLabel": "Project name (folder name)",
   "createLocation": "Location: {path}",
-  "@createLocation": { "placeholders": { "path": { "type": "String" } } },
+  "@createLocation": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "pathExists": "A project (folder) with the same name already exists.",
   "createFailed": "Failed to create folder: {error}",
-  "@createFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@createFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "nameEmpty": "Enter a name.",
   "nameInvalidChars": "Contains invalid characters: < > : \" / \\ | ? *",
   "nameInvalidName": "Invalid name.",
   "nameTrailingDot": "Name cannot end with a dot (.) or space.",
   "nameReserved": "Reserved names cannot be used.",
-
   "presetLabel": "Preset",
   "presetNameLabel": "Preset name",
   "addPreset": "Add preset",
@@ -154,11 +192,16 @@
   "tokPerSecDesc": "Leave empty and the app measures it from real responses. A value here wins over the measurement. Current limit for this connection",
   "tokPerSecAuto": "Empty = measure automatically (assumes 100 tok/s until then)",
   "tokPerSecMeasured": "Measured: {tps} tok/s",
-  "@tokPerSecMeasured": { "placeholders": { "tps": { "type": "String" } } },
+  "@tokPerSecMeasured": {
+    "placeholders": {
+      "tps": {
+        "type": "String"
+      }
+    }
+  },
   "testConnection": "Test connection",
   "showKey": "Show key",
   "hideKey": "Hide key",
-
   "useDefaultModel": "Use default model",
   "toolSubagentLabel": "Sub-agent (run_subagent)",
   "toolVerifyLabel": "Verify (verify_work)",
@@ -175,16 +218,24 @@
   "mcpArgsHint": "e.g. -y @modelcontextprotocol/server-filesystem .",
   "nameOptional": "Name (optional)",
   "toolInspect": "Inspect tools",
-  "pythonNotReadyInspect": "Python is not ready. Select an interpreter and try again.",
+  "sandboxNotReadyInspect": "The tool runtime is not ready. Check the sandbox status under Settings → Tools.",
   "toolInfoFailed": "Could not get tool info.",
   "toolsCount": "{name} tools ({count})",
-  "@toolsCount": { "placeholders": { "name": { "type": "String" }, "count": { "type": "int" } } },
+  "@toolsCount": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "extractPending": "Extracting…",
   "viewTools": "View tools",
   "toolToggleDesc": "Unchecked tools are never passed to the agent. The entry stays, so you can turn it back on any time.",
   "toolListLoading": "Reading the tool list…",
   "toolNativeFixed": "Run by the app · always on",
-
   "viewersDesc": "Extend the file viewer (bottom right) with a JS file. Added viewers show up in the viewer's mode dropdown right away.",
   "viewerRulesTitle": "File type assignment",
   "viewerRulesDesc": "Choose which extensions each viewer handles. A viewer with extensions is used automatically for those files only; leaving the field empty makes it a fallback for files no viewer claims. Unchecking turns the viewer off entirely (built-in ones too). When several viewers claim the same extension the one higher in this list wins — drag the handle to reorder.",
@@ -205,23 +256,30 @@
   "viewSource": "View source",
   "viewerFileMissing": "File not found",
   "viewerReadFailed": "Could not read the file.",
-
-  "toolRuntime": "Tool runtime",
-  "toolRuntimeSandbox": "Sandbox",
-  "toolRuntimeSystem": "System Python",
-  "toolRuntimeSandboxDesc": "Tools run in an isolated Linux (WebAssembly) machine that sees only the project folder. Programs on this computer (git, node…) are not available there.",
-  "toolRuntimeSystemDesc": "Tools run directly on this computer with the Python selected below, and can use every program and file it can reach.",
   "sandboxUnavailable": "This app has no sandbox runtime for this platform. Tools cannot run until you switch to System Python.",
   "sandboxIdle": "Starts when a tool first runs",
   "sandboxStarting": "Starting the sandbox…",
   "sandboxRunning": "Sandbox running",
   "sandboxFailed": "Sandbox error: {error}",
-  "@sandboxFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@sandboxFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "navSandboxes": "Sandboxes",
   "navSandboxesRunning": "{count} running",
-  "@navSandboxesRunning": { "placeholders": { "count": { "type": "int" } } },
+  "@navSandboxesRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "sandboxNoProjects": "No project is open. Each open project gets its own sandbox here.",
-  "sandboxSystemMode": "Tools are set to run with System Python. You can switch to the sandbox in Settings → Tools.",
+  "sandboxSystemMachine": "System sandbox",
+  "sandboxSystemMachineDesc": "Runs tool work that belongs to no project, such as the tool list in settings. There is one per app.",
   "sandboxStart": "Start",
   "sandboxRestart": "Restart",
   "sandboxStop": "Stop",
@@ -234,7 +292,13 @@
   "sandboxNetworkEmpty": "No network access yet.",
   "sandboxMountRo": "read-only",
   "sandboxUptime": "Running since {since}",
-  "@sandboxUptime": { "placeholders": { "since": { "type": "String" } } },
+  "@sandboxUptime": {
+    "placeholders": {
+      "since": {
+        "type": "String"
+      }
+    }
+  },
   "newFile": "New file",
   "newFolder": "New folder",
   "rename": "Rename",
@@ -257,53 +321,125 @@
   "noResults": "No results",
   "treeLoading": "Loading…",
   "viewerModeTitle": "View as",
-
-  "pythonEnv": "Python environment",
   "statusCheck": "Check status",
-  "pythonSettings": "Python settings",
-  "pythonNotSetTitle": "Python not set",
-  "pythonNotSetBody": "Select an interpreter in \"Python settings\" first.",
-  "pythonCheckTitle": "Python environment check",
-  "selectPythonPrompt": "Select the Python interpreter to use.",
   "notSelected": "Not selected",
-  "selectPython": "Select Python",
-  "pythonVerified": "Verified",
-  "pythonMissing": "No interpreter at that path.",
-  "pythonMissingQuestion": "No Python? ",
-  "downloadFromPythonOrg": "Download from python.org",
   "allFiles": "All files",
-  "usePerProjectVenv": "Use per-project virtual environment (venv)",
-  "usePerProjectVenvDesc": "Creates a dedicated venv under the project's .collabo/venv from the selected interpreter, and runs pip/tools inside it. Recommended on macOS/Linux, where installing into the system Python is often blocked (PEP 668) or needs root.",
-  "venvNoProject": "A dedicated venv is created automatically when you open a project.",
-  "venvCreating": "Creating virtual environment…",
-  "venvReady": "Virtual environment ready.",
-  "venvNotCreated": "Not created yet.",
-  "venvFailed": "Failed to create the virtual environment.",
-  "venvCreate": "Create",
-  "venvRecreate": "Recreate",
-
   "console": "Console",
   "consoleStarting": "Starting…",
   "consoleInputHint": "Type and press Enter (e.g. y / n)",
   "consoleEnded": "Process has ended",
   "consoleProcessExited": "[process exited: {code}]",
-  "@consoleProcessExited": { "placeholders": { "code": { "type": "int" } } },
+  "@consoleProcessExited": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
   "consoleExecFailed": "Execution failed: {error}",
-  "@consoleExecFailed": { "placeholders": { "error": { "type": "String" } } },
-
+  "@consoleExecFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "webviewUnsupported": "The WebView backend for this platform is not connected yet.",
   "webviewInitFailed": "WebView initialization failed\n{error}",
-  "@webviewInitFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@webviewInitFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "webviewRuntimeMissing": "Microsoft Edge WebView2 Runtime is required to display this view.\nInstall it and restart the app.",
   "webviewRuntimeDownload": "Download WebView2 Runtime",
   "noOpenProject": "No project open",
-
   "wizardTitle": "Initial setup",
   "wizardIntro": "Let's get Collabo IDE ready. You can change any of this later in Settings.",
   "wizardStep": "Step {current} / {total}",
-  "@wizardStep": { "placeholders": { "current": { "type": "int" }, "total": { "type": "int" } } },
+  "@wizardStep": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "next": "Next",
   "back": "Back",
   "finish": "Finish",
-  "skipSetup": "Skip"
+  "skipSetup": "Skip",
+  "stopChoiceTitle": "Stop generating",
+  "stopChoiceBody": "What should happen to what has been done so far?",
+  "stopChoiceNote": "Files the tools already changed stay changed either way.",
+  "stopKeep": "Keep what is done",
+  "stopDiscard": "Discard it all",
+  "stopContinue": "Keep going",
+  "checkpointTitle": "Create a starting point",
+  "checkpointDesc": "Fold the conversation so far and start fresh from here. The AI will only see messages after the starting point.",
+  "checkpointPlanNote": "The plan (PLAYBOOK) is cleared too. The previous plan is kept in .collabo/playbook-archive.",
+  "checkpointCurrentContext": "Context before start",
+  "checkpointCompress": "Compress & keep the earlier content",
+  "checkpointSize": "Compressed size",
+  "checkpointPreview": "Generate preview",
+  "checkpointGenerating": "Generating…",
+  "checkpointMemory": "Past memory",
+  "checkpointCreate": "Create starting point",
+  "checkpointModeCheckpoint": "Starting point",
+  "checkpointModePlan": "Reset plan only",
+  "planResetDesc": "Keep the conversation and clear only the plan (PLAYBOOK). The previous plan is kept in .collabo/playbook-archive.",
+  "planResetButton": "Reset plan",
+  "appleFoundation": "Apple Foundation Models",
+  "appleFoundationDesc": "Runs on Apple's on-device model, so conversations stay on this device. Requires macOS or iOS 26.4+ with Apple Intelligence on.",
+  "afmPermissive": "Relax the guardrails",
+  "afmPermissiveDesc": "Recommended: the default guardrails sometimes block ordinary questions.",
+  "afmPromptedTools": "Put tools in the prompt",
+  "afmPromptedToolsDesc": "Turn this on if the model never calls a tool. The tool list goes into the prompt and calls are read back from the answer.",
+  "afmPrewarm": "Load the model early",
+  "afmPrewarmDesc": "Loads the model when you check the connection, so the first answer comes sooner.",
+  "afmTrimHistory": "Trim old turns when the context is full",
+  "afmTrimHistoryDesc": "When off, going over the context reports an error instead.",
+  "afmConcurrent": "Concurrent requests",
+  "afmConcurrentDesc": "Empty or 0 uses the engine default.",
+  "folderPickerTitle": "Choose a folder",
+  "folderPickerUp": "Up",
+  "folderPickerEmpty": "No subfolders",
+  "folderPickerFilesAppHint": "These folders also appear in the Files app under Collabo IDE.",
+  "sandboxUnavailableIOS": "The sandbox can't run on iOS. Chat and file editing work, but tools that run commands are unavailable.",
+  "contextWindowLabel": "Context size",
+  "contextWindowHelp": "Enter the model's context size in tokens. Leave empty if unknown.",
+  "contextWindowDetected": "{tokens} tokens",
+  "contextWindowAssumed": "Assuming 4096 tokens",
+  "autoFitContext": "Fit to small context",
+  "autoFitContextDesc": "For models with 16K or less, send only core tools and a short prompt.",
+  "fitBudget": "Uses {reserve} tokens for the reply and {input} for input.",
+  "fitPromptCompact": "Sends a short prompt instead of the default one.",
+  "fitPromptCustom": "Sends your prompt as is.",
+  "fitPromptTooLong": "Your prompt is too long for this model. Shorten it in Settings › Prompt.",
+  "fitTools": "Shortens tool descriptions to send as many tools as possible.",
+  "fitDisabled": "Sub-agents, verification, plans, project summary, pre-assessment and supervisor are off.",
+  "fitRecommendTitle": "A larger model is recommended",
+  "fitRecommendBody": "For long tasks, make a model with a larger context the default preset.",
+  "@contextWindowDetected": {
+    "placeholders": {
+      "tokens": {
+        "type": "int"
+      }
+    }
+  },
+  "@fitBudget": {
+    "placeholders": {
+      "reserve": {
+        "type": "int"
+      },
+      "input": {
+        "type": "int"
+      }
+    }
+  },
+  "afmModelVersion": "Model version"
 }

@@ -442,80 +442,6 @@
     </div>
   </div>
 
-  <!-- 대화 시작점(체크포인트) 만들기 모달 -->
-  <div class="modal fade" id="checkpoint-modal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header py-2">
-          <h6 class="modal-title mb-0" data-i18n="checkpointTitle">대화 시작점 만들기</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <!-- 모드: 시작점 만들기(계획도 비움) / 계획만 비우기(대화는 그대로) -->
-          <div class="btn-group btn-group-sm w-100 mb-3" role="group">
-            <input type="radio" class="btn-check" name="cp-mode" id="cp-mode-checkpoint"
-                   value="checkpoint" checked>
-            <label class="btn btn-outline-primary" for="cp-mode-checkpoint"
-                   data-i18n="checkpointModeCheckpoint">시작점 만들기</label>
-            <input type="radio" class="btn-check" name="cp-mode" id="cp-mode-plan" value="plan">
-            <label class="btn btn-outline-primary" for="cp-mode-plan"
-                   data-i18n="checkpointModePlan">계획만 초기화</label>
-          </div>
-          <div id="cp-plan-body" class="d-none">
-            <p class="small text-secondary mb-0" data-i18n="planResetDesc">
-              대화는 그대로 두고 계획(PLAYBOOK)만 비웁니다. 이전 계획은
-              .collabo/playbook-archive 에 보관됩니다.</p>
-          </div>
-          <div id="cp-checkpoint-body">
-          <p class="small text-secondary" data-i18n="checkpointDesc">
-            지금까지의 대화를 접고 새 시작점을 만듭니다. 이후 AI는 시작점 이후만 봅니다.</p>
-          <p class="small text-secondary" data-i18n="checkpointPlanNote">
-            계획(PLAYBOOK)도 함께 비웁니다. 이전 계획은 .collabo/playbook-archive 에 보관됩니다.</p>
-          <div class="small text-secondary mb-2">
-            <span data-i18n="checkpointCurrentContext">시작 전 컨텍스트</span>:
-            <span id="cp-current" class="fw-semibold">–</span> tok
-          </div>
-          <div class="form-check form-switch mb-2">
-            <input class="form-check-input" type="checkbox" id="cp-compress" checked>
-            <label class="form-check-label" for="cp-compress"
-                   data-i18n="checkpointCompress">기존 내용을 압축해서 보관</label>
-          </div>
-          <div id="cp-size-row">
-            <label class="form-label small mb-1">
-              <span data-i18n="checkpointSize">압축 크기</span>:
-              <span id="cp-size-label" class="fw-semibold"></span>
-            </label>
-            <input type="range" class="form-range" id="cp-size"
-                   min="100" max="10000" step="100" value="2000">
-            <button type="button" class="btn btn-sm btn-outline-primary mt-1" id="cp-preview">
-              <span data-i18n="checkpointPreview">미리보기 생성</span>
-            </button>
-          </div>
-          <div id="cp-preview-row" class="mt-2 d-none">
-            <label class="form-label small mb-1">
-              <span data-i18n="checkpointMemory">지난 기억</span>
-              (~<span id="cp-preview-tokens">0</span> tok)
-            </label>
-            <textarea id="cp-preview-text" class="form-control form-control-sm"
-                      rows="7" style="font-size:.8rem"></textarea>
-          </div>
-          </div><!-- /cp-checkpoint-body -->
-        </div>
-        <div class="modal-footer py-2">
-          <button type="button" class="btn btn-sm btn-outline-secondary"
-                  data-bs-dismiss="modal" data-i18n="cancel">취소</button>
-          <button type="button" class="btn btn-sm btn-primary" id="cp-create" disabled>
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
-                 fill="currentColor" viewBox="0 0 16 16" class="me-1">
-              <path d="M3.5 3.5c-.614-.884-.074-1.962.858-2.5L8 7.226 11.642 1c.932.538 1.472 1.616.858 2.5L8.81 8.61l1.556 2.661a2.5 2.5 0 1 1-.794.637L8 9.73l-1.572 2.177a2.5 2.5 0 1 1-.794-.637L7.19 8.61zm2.5 10a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0m7 0a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0"/>
-            </svg>
-            <span id="cp-create-label">시작점 만들기</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- 서브에이전트 실시간 보기 모달 -->
   <div class="modal fade" id="sub-modal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -568,12 +494,12 @@
         case 'project.changed': onProjectChanged(msg.path); break;
         case 'chat.meta': onChatMeta(msg); break;
         case 'chat.history': onChatHistory(msg.messages || []); break;
-        case 'chat.message': onChatMessage(msg); break;
+        case 'chat.message': producedThisTurn = false; onChatMessage(msg); break;
         case 'chat.begin': onChatBegin(); break;
-        case 'chat.delta': onChatDelta(msg); break;
+        case 'chat.delta': markProduced(); onChatDelta(msg); break;
         case 'chat.stats': onChatStats(msg); break;
-        case 'chat.done': onChatDone(msg); break;
-        case 'chat.tool': onChatTool(msg); break;
+        case 'chat.done': producedThisTurn = false; onChatDone(msg); break;
+        case 'chat.tool': markProduced(); onChatTool(msg); break;
         case 'chat.activity': break; // 배지는 네이티브가 센다(activity.count)
         case 'activity.count': setActivityCount(msg.count); break;
         case 'chat.sub': onChatSub(msg); break;
@@ -582,9 +508,8 @@
         case 'chat.supervisor': onChatSupervisor(msg); break;
         case 'status': onStatus(msg); break;
         case 'chat.queue': onQueue(msg); break;
-        case 'checkpoint.preview': onCheckpointPreview(msg); break;
-        case 'chat.error': onChatError(msg); break;
-        case 'chat.stopped': onChatStopped(msg); break;
+        case 'chat.error': producedThisTurn = false; onChatError(msg); break;
+        case 'chat.stopped': producedThisTurn = false; onChatStopped(msg); break;
         case 'composer.insert':
           if (window.collaboComposerInsert) window.collaboComposerInsert(msg.text);
           break;
@@ -647,11 +572,7 @@
         var stopBtn = el.querySelector('.status-stop');
         stopBtn.querySelector('.status-stop-label').textContent = T('stop', '중지');
         stopBtn.title = T('stopRequest', '요청 중지');
-        stopBtn.addEventListener('click', function () {
-          stopBtn.disabled = true;
-          stopBtn.querySelector('.status-stop-label').textContent = T('stopping', '중지 중…');
-          send({ type: 'chat.stop' });
-        });
+        stopBtn.addEventListener('click', requestStop);
       }
       var box = document.getElementById('messages');
       if (box) { box.appendChild(el); box.scrollTop = box.scrollHeight; }
@@ -695,13 +616,40 @@
       var stop = document.getElementById('raw-stop');
       stop.textContent = T('stop', '중지');
       stop.disabled = false;
-      stop.onclick = function () {
-        stop.disabled = true;
-        send({ type: 'chat.stop' });
-      };
+      stop.onclick = requestStop;
       bootstrap.Modal.getOrCreateInstance(el).show();
       // show 직후에 스크롤해야 실제 높이가 잡힌다.
       setTimeout(function () { body.scrollTop = body.scrollHeight; }, 50);
+    }
+
+    // ===== 중지 =====
+    // 이번 요청에서 **뭔가 나왔는지**(본문 한 조각이라도, 또는 도구 호출). 그때만 묻는다 —
+    // 아직 아무것도 안 나왔으면 물어볼 것이 없다(취소해도 잃을 것이 없다).
+    var producedThisTurn = false;
+
+    function markProduced() { producedThisTurn = true; }
+
+    /// 중지 버튼들의 표시를 "중지 중…" 으로 바꾼다.
+    function markStopping() {
+      document.querySelectorAll('.status-stop').forEach(function (b) {
+        b.disabled = true;
+        var label = b.querySelector('.status-stop-label');
+        if (label) label.textContent = T('stopping', '중지 중…');
+      });
+      var raw = document.getElementById('raw-stop');
+      if (raw) raw.disabled = true;
+    }
+
+    function sendStop(keep) {
+      markStopping();
+      send({ type: 'chat.stop', keep: !!keep });
+    }
+
+    /// 중지 버튼이 부른다. 진행된 것이 있으면 **앱 창**이 어떻게 할지 먼저 묻는다
+    /// (그 창이 직접 루프를 멈춘다 — 여기서는 버튼 표시도 바꾸지 않는다).
+    function requestStop() {
+      if (producedThisTurn) { send({ type: 'chat.stop.ask' }); return; }
+      sendStop(false);
     }
 
     function onStatus(msg) {
@@ -767,100 +715,11 @@
       });
     })();
 
-    // ===== 시작점 만들기 다이얼로그 (압축 미리보기 → 생성) =====
-    var cpPreviewText = document.getElementById('cp-preview-text');
-    var cpCreateBtn = document.getElementById('cp-create');
-    var cpPreviewBtn = document.getElementById('cp-preview');
-    // 미리보기 결과 수신 → 텍스트 채우고 토큰 추정 + 생성 버튼 활성화.
-    function onCheckpointPreview(msg) {
-      var text = (msg && msg.text) || '';
-      document.getElementById('cp-preview-row').classList.remove('d-none');
-      cpPreviewText.value = text;
-      updateCpPreviewTokens();
-      cpPreviewBtn.disabled = false;
-      cpPreviewBtn.querySelector('span').textContent = T('checkpointPreview', '미리보기 생성');
-      cpCreateBtn.disabled = false;
-    }
-    function updateCpPreviewTokens() {
-      document.getElementById('cp-preview-tokens').textContent =
-        Math.round((cpPreviewText.value || '').length / 4).toLocaleString();
-    }
-    (function () {
-      var btn = document.getElementById('checkpoint-btn');
-      var modalEl = document.getElementById('checkpoint-modal');
-      var sizeEl = document.getElementById('cp-size');
-      var labelEl = document.getElementById('cp-size-label');
-      var compressEl = document.getElementById('cp-compress');
-      var rowEl = document.getElementById('cp-size-row');
-      var prevRow = document.getElementById('cp-preview-row');
-      var modeCp = document.getElementById('cp-mode-checkpoint');
-      var modePlan = document.getElementById('cp-mode-plan');
-      var cpBody = document.getElementById('cp-checkpoint-body');
-      var planBody = document.getElementById('cp-plan-body');
-      var createLabel = document.getElementById('cp-create-label');
-      function planOnly() { return modePlan.checked; }
-      function syncLabel() {
-        labelEl.textContent = (sizeEl.value / 1000).toFixed(1) + 'k tok';
-      }
-      function syncMode() {
-        // "계획만 초기화" 는 시작점을 만들지 않는다 — 압축·미리보기가 필요 없다.
-        cpBody.classList.toggle('d-none', planOnly());
-        planBody.classList.toggle('d-none', !planOnly());
-        createLabel.textContent = planOnly()
-          ? T('planResetButton', '계획 초기화')
-          : T('checkpointCreate', '시작점 만들기');
-        if (planOnly()) {
-          cpCreateBtn.disabled = false;
-          return;
-        }
-        rowEl.style.display = compressEl.checked ? '' : 'none';
-        // 압축 OFF면 미리보기 불필요 → 바로 생성 가능. ON이면 미리보기 후 활성화.
-        if (!compressEl.checked) {
-          prevRow.classList.add('d-none');
-          cpCreateBtn.disabled = false;
-        } else {
-          cpCreateBtn.disabled = cpPreviewText.value.trim() === '';
-        }
-      }
-      sizeEl.addEventListener('input', syncLabel);
-      compressEl.addEventListener('change', syncMode);
-      modeCp.addEventListener('change', syncMode);
-      modePlan.addEventListener('change', syncMode);
-      cpPreviewText.addEventListener('input', function () {
-        updateCpPreviewTokens();
-        cpCreateBtn.disabled = cpPreviewText.value.trim() === '';
-      });
-      cpPreviewBtn.addEventListener('click', function () {
-        cpPreviewBtn.disabled = true;
-        cpPreviewBtn.querySelector('span').textContent = T('checkpointGenerating', '만드는 중입니다…');
-        send({ type: 'chat.checkpoint.preview', size: parseInt(sizeEl.value, 10) });
-      });
-      btn.addEventListener('click', function () {
-        // 열 때마다 초기화: 현재 컨텍스트 표시 + 미리보기 비움.
-        document.getElementById('cp-current').textContent =
-          '~' + lastContextTokens.toLocaleString();
-        cpPreviewText.value = '';
-        prevRow.classList.add('d-none');
-        cpPreviewBtn.disabled = false;
-        cpPreviewBtn.querySelector('span').textContent = T('checkpointPreview', '미리보기 생성');
-        modeCp.checked = true; // 열 때마다 기본 모드(시작점 만들기)로
-        syncLabel(); syncMode();
-        bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      });
-      cpCreateBtn.addEventListener('click', function () {
-        if (planOnly()) {
-          send({ type: 'chat.plan.reset' });
-        } else {
-          // 시작점을 만들면 네이티브가 계획(PLAYBOOK)도 같이 비운다.
-          send({
-            type: 'chat.checkpoint.create',
-            compress: compressEl.checked,
-            content: compressEl.checked ? cpPreviewText.value : '',
-          });
-        }
-        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
-      });
-    })();
+    // 대화 시작점 창은 **앱 다이얼로그**다(2026-09-23). 여기서는 열어 달라고만 한다 —
+    // 모드·압축·미리보기·생성은 전부 네이티브가 처리한다(`checkpoint_dialog.dart`).
+    document.getElementById('checkpoint-btn').addEventListener('click', function () {
+      send({ type: 'chat.checkpoint.open' });
+    });
 
     // 마우스 휠 우회: webview_windows 가 휠을 (0,0) 으로 보내는 버그 때문에
     // 네이티브가 휠 신호를 잡아 collaboWheel 로 넘겨주면, 커서 아래의
@@ -1430,6 +1289,11 @@
       list.forEach(function (m) {
         if (m.pipeline === 'checkpoint') {
           makeCheckpoint(m.id, m.content || '');
+          return;
+        }
+        // 감독자 개입은 기록에도 남는다 — 살아 있을 때와 같은 줄로 다시 그린다.
+        if (m.pipeline === 'supervisor') {
+          onChatSupervisor(m);
           return;
         }
         if (m.role === 'user') {

@@ -524,8 +524,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get toolInspect => 'Inspect tools';
 
   @override
-  String get pythonNotReadyInspect =>
-      'Python is not ready. Select an interpreter and try again.';
+  String get sandboxNotReadyInspect =>
+      'The tool runtime is not ready. Check the sandbox status under Settings → Tools.';
 
   @override
   String get toolInfoFailed => 'Could not get tool info.';
@@ -618,23 +618,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get viewerReadFailed => 'Could not read the file.';
 
   @override
-  String get toolRuntime => 'Tool runtime';
-
-  @override
-  String get toolRuntimeSandbox => 'Sandbox';
-
-  @override
-  String get toolRuntimeSystem => 'System Python';
-
-  @override
-  String get toolRuntimeSandboxDesc =>
-      'Tools run in an isolated Linux (WebAssembly) machine that sees only the project folder. Programs on this computer (git, node…) are not available there.';
-
-  @override
-  String get toolRuntimeSystemDesc =>
-      'Tools run directly on this computer with the Python selected below, and can use every program and file it can reach.';
-
-  @override
   String get sandboxUnavailable =>
       'This app has no sandbox runtime for this platform. Tools cannot run until you switch to System Python.';
 
@@ -665,8 +648,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'No project is open. Each open project gets its own sandbox here.';
 
   @override
-  String get sandboxSystemMode =>
-      'Tools are set to run with System Python. You can switch to the sandbox in Settings → Tools.';
+  String get sandboxSystemMachine => 'System sandbox';
+
+  @override
+  String get sandboxSystemMachineDesc =>
+      'Runs tool work that belongs to no project, such as the tool list in settings. There is one per app.';
 
   @override
   String get sandboxStart => 'Start';
@@ -777,76 +763,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get viewerModeTitle => 'View as';
 
   @override
-  String get pythonEnv => 'Python environment';
-
-  @override
   String get statusCheck => 'Check status';
-
-  @override
-  String get pythonSettings => 'Python settings';
-
-  @override
-  String get pythonNotSetTitle => 'Python not set';
-
-  @override
-  String get pythonNotSetBody =>
-      'Select an interpreter in \"Python settings\" first.';
-
-  @override
-  String get pythonCheckTitle => 'Python environment check';
-
-  @override
-  String get selectPythonPrompt => 'Select the Python interpreter to use.';
 
   @override
   String get notSelected => 'Not selected';
 
   @override
-  String get selectPython => 'Select Python';
-
-  @override
-  String get pythonVerified => 'Verified';
-
-  @override
-  String get pythonMissing => 'No interpreter at that path.';
-
-  @override
-  String get pythonMissingQuestion => 'No Python? ';
-
-  @override
-  String get downloadFromPythonOrg => 'Download from python.org';
-
-  @override
   String get allFiles => 'All files';
-
-  @override
-  String get usePerProjectVenv => 'Use per-project virtual environment (venv)';
-
-  @override
-  String get usePerProjectVenvDesc =>
-      'Creates a dedicated venv under the project\'s .collabo/venv from the selected interpreter, and runs pip/tools inside it. Recommended on macOS/Linux, where installing into the system Python is often blocked (PEP 668) or needs root.';
-
-  @override
-  String get venvNoProject =>
-      'A dedicated venv is created automatically when you open a project.';
-
-  @override
-  String get venvCreating => 'Creating virtual environment…';
-
-  @override
-  String get venvReady => 'Virtual environment ready.';
-
-  @override
-  String get venvNotCreated => 'Not created yet.';
-
-  @override
-  String get venvFailed => 'Failed to create the virtual environment.';
-
-  @override
-  String get venvCreate => 'Create';
-
-  @override
-  String get venvRecreate => 'Recreate';
 
   @override
   String get console => 'Console';
@@ -912,4 +835,183 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get skipSetup => 'Skip';
+
+  @override
+  String get stopChoiceTitle => 'Stop generating';
+
+  @override
+  String get stopChoiceBody =>
+      'What should happen to what has been done so far?';
+
+  @override
+  String get stopChoiceNote =>
+      'Files the tools already changed stay changed either way.';
+
+  @override
+  String get stopKeep => 'Keep what is done';
+
+  @override
+  String get stopDiscard => 'Discard it all';
+
+  @override
+  String get stopContinue => 'Keep going';
+
+  @override
+  String get checkpointTitle => 'Create a starting point';
+
+  @override
+  String get checkpointDesc =>
+      'Fold the conversation so far and start fresh from here. The AI will only see messages after the starting point.';
+
+  @override
+  String get checkpointPlanNote =>
+      'The plan (PLAYBOOK) is cleared too. The previous plan is kept in .collabo/playbook-archive.';
+
+  @override
+  String get checkpointCurrentContext => 'Context before start';
+
+  @override
+  String get checkpointCompress => 'Compress & keep the earlier content';
+
+  @override
+  String get checkpointSize => 'Compressed size';
+
+  @override
+  String get checkpointPreview => 'Generate preview';
+
+  @override
+  String get checkpointGenerating => 'Generating…';
+
+  @override
+  String get checkpointMemory => 'Past memory';
+
+  @override
+  String get checkpointCreate => 'Create starting point';
+
+  @override
+  String get checkpointModeCheckpoint => 'Starting point';
+
+  @override
+  String get checkpointModePlan => 'Reset plan only';
+
+  @override
+  String get planResetDesc =>
+      'Keep the conversation and clear only the plan (PLAYBOOK). The previous plan is kept in .collabo/playbook-archive.';
+
+  @override
+  String get planResetButton => 'Reset plan';
+
+  @override
+  String get appleFoundation => 'Apple Foundation Models';
+
+  @override
+  String get appleFoundationDesc =>
+      'Runs on Apple\'s on-device model, so conversations stay on this device. Requires macOS or iOS 26.4+ with Apple Intelligence on.';
+
+  @override
+  String get afmPermissive => 'Relax the guardrails';
+
+  @override
+  String get afmPermissiveDesc =>
+      'Recommended: the default guardrails sometimes block ordinary questions.';
+
+  @override
+  String get afmPromptedTools => 'Put tools in the prompt';
+
+  @override
+  String get afmPromptedToolsDesc =>
+      'Turn this on if the model never calls a tool. The tool list goes into the prompt and calls are read back from the answer.';
+
+  @override
+  String get afmPrewarm => 'Load the model early';
+
+  @override
+  String get afmPrewarmDesc =>
+      'Loads the model when you check the connection, so the first answer comes sooner.';
+
+  @override
+  String get afmTrimHistory => 'Trim old turns when the context is full';
+
+  @override
+  String get afmTrimHistoryDesc =>
+      'When off, going over the context reports an error instead.';
+
+  @override
+  String get afmConcurrent => 'Concurrent requests';
+
+  @override
+  String get afmConcurrentDesc => 'Empty or 0 uses the engine default.';
+
+  @override
+  String get folderPickerTitle => 'Choose a folder';
+
+  @override
+  String get folderPickerUp => 'Up';
+
+  @override
+  String get folderPickerEmpty => 'No subfolders';
+
+  @override
+  String get folderPickerFilesAppHint =>
+      'These folders also appear in the Files app under Collabo IDE.';
+
+  @override
+  String get sandboxUnavailableIOS =>
+      'The sandbox can\'t run on iOS. Chat and file editing work, but tools that run commands are unavailable.';
+
+  @override
+  String get contextWindowLabel => 'Context size';
+
+  @override
+  String get contextWindowHelp =>
+      'Enter the model\'s context size in tokens. Leave empty if unknown.';
+
+  @override
+  String contextWindowDetected(int tokens) {
+    return '$tokens tokens';
+  }
+
+  @override
+  String get contextWindowAssumed => 'Assuming 4096 tokens';
+
+  @override
+  String get autoFitContext => 'Fit to small context';
+
+  @override
+  String get autoFitContextDesc =>
+      'For models with 16K or less, send only core tools and a short prompt.';
+
+  @override
+  String fitBudget(int reserve, int input) {
+    return 'Uses $reserve tokens for the reply and $input for input.';
+  }
+
+  @override
+  String get fitPromptCompact =>
+      'Sends a short prompt instead of the default one.';
+
+  @override
+  String get fitPromptCustom => 'Sends your prompt as is.';
+
+  @override
+  String get fitPromptTooLong =>
+      'Your prompt is too long for this model. Shorten it in Settings › Prompt.';
+
+  @override
+  String get fitTools =>
+      'Shortens tool descriptions to send as many tools as possible.';
+
+  @override
+  String get fitDisabled =>
+      'Sub-agents, verification, plans, project summary, pre-assessment and supervisor are off.';
+
+  @override
+  String get fitRecommendTitle => 'A larger model is recommended';
+
+  @override
+  String get fitRecommendBody =>
+      'For long tasks, make a model with a larger context the default preset.';
+
+  @override
+  String get afmModelVersion => 'Model version';
 }

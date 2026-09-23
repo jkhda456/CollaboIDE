@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'apple_foundation_client.dart';
 import 'llm_config.dart';
 import 'openai_client.dart';
 import 'openai_prompted_client.dart';
@@ -106,5 +107,8 @@ LlmProvider createLlmProvider(LlmConnection connection, {http.Client? client}) {
       return OpenAiClient(client: client);
     case LlmConnection.openaiPrompted:
       return OpenAiPromptedClient(client: client);
+    case LlmConnection.appleFoundation:
+      // 기기 안에서 도는 모델 — HTTP 클라이언트를 쓰지 않는다(플러그인 채널).
+      return AppleFoundationClient();
   }
 }

@@ -273,8 +273,39 @@ class Supervisor {
     ];
   }
 
-  bool get mayReinject => reinjections < maxReinjections;
-  void noteReinjection() => reinjections++;
+  /// 종료 차단을 **한 번 더** 밀어도 되는가.
+  ///
+  /// 상한([maxReinjections])은 "**헛도는** 되돌려보내기" 에만 건다. 모델이 되돌려보낸
+  /// 뒤 계획을 실제로 움직였다면(단계를 끝냈거나 DROP/BLOCKED 로 바꿨거나 새 단계를
+  /// 열었다면) 그건 먹힌 것이므로 예산을 되돌린다.
+  ///
+  /// 예전에는 생성 한 번에 두 번이 전부였다 — 단계가 많은 작업은 세 번째부터 차단이
+  /// 조용히 사라져, **계획에 할 일이 남은 채 턴이 그냥 끝났다**(2026-09-23).
+  bool mayReinjectFor(List<String> openSteps) =>
+      !_sameAsLastExit(openSteps) || reinjections < maxReinjections;
+
+  /// 되돌려보냈음을 기록한다. 계획 상태가 지난번과 **같으면** 헛돈 것으로 세고,
+  /// 달라졌으면 다시 0부터 센다.
+  void noteReinjection(List<String> openSteps) {
+    reinjections = _sameAsLastExit(openSteps) ? reinjections + 1 : 1;
+    _lastExitSteps = List.unmodifiable(openSteps);
+  }
+
+  /// 이번 생성에서 더 밀어붙일 수 없게 됐는가(같은 계획 상태로 상한까지 갔다).
+  /// 이때는 조용히 끝내지 말고 **사용자에게** 남은 단계를 알려야 한다.
+  bool exhaustedFor(List<String> openSteps) => !mayReinjectFor(openSteps);
+
+  List<String>? _lastExitSteps;
+
+  bool _sameAsLastExit(List<String> openSteps) {
+    final last = _lastExitSteps;
+    if (last == null) return false;
+    if (last.length != openSteps.length) return false;
+    for (var i = 0; i < last.length; i++) {
+      if (last[i] != openSteps[i]) return false;
+    }
+    return true;
+  }
 
   Map<String, Object?> snapshot() => {
         'level': level,

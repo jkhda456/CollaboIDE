@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:collabo_core/collabo_core.dart' show CollaboRuntime;
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import '../browser/browser_channel.dart';
 import '../browser/browser_controller.dart';
@@ -11,13 +9,8 @@ import '../conversation/conversation_store.dart';
 import '../files/file_viewer.dart';
 import '../files/project_files.dart';
 import '../process/background_process_registry.dart';
-import '../process/process_manager.dart';
-import '../process/python_environment.dart';
 import '../sandbox/project_sandbox.dart';
 import '../webview/web_bridge.dart';
-
-/// 프로젝트별 venv 준비 상태.
-enum VenvStatus { idle, creating, ready, error }
 
 /// **열려 있는 프로젝트 하나.** 그 프로젝트에만 속한 것을 전부 들고 있다.
 ///
@@ -108,13 +101,6 @@ class ProjectSession extends ChangeNotifier {
   /// 세션이 만들어질 때 [WorkspaceController] 가 채우고, 세션을 닫을 때만 버려진다.
   WebBridge? bridge;
 
-  /// 런쳐 프로세스 매니저. venv 가 프로젝트별이라 이것도 프로젝트별이다.
-  ProcessManager? processManager;
-
-  PythonEnvironment? pythonEnv;
-  VenvStatus venvStatus = VenvStatus.idle;
-  String venvError = '';
-
   /// 이 프로젝트의 리눅스 머신(도구 실행 환경이 샌드박스일 때). 처음 필요할 때 만든다.
   ProjectSandbox? _sandbox;
   ProjectSandbox? get sandbox => _sandbox;
@@ -149,84 +135,6 @@ class ProjectSession extends ChangeNotifier {
     return parts.isEmpty ? path : parts.last;
   }
 
-  /// 프로젝트 폴더 안에서 venv 를 두는 상대 경로.
-  static const List<String> venvSubdir = ['.collabo', 'venv'];
-
-  /// 이 프로젝트에 적용될 venv 경로(정책이 꺼져 있으면 null).
-  String? venvPathFor({required bool useVenv}) =>
-      useVenv ? p.join(path, venvSubdir[0], venvSubdir[1]) : null;
-
-  /// base 인터프리터 + venv 정책으로 파이썬 환경을 다시 만든다.
-  ///
-  /// 전역 설정(인터프리터 경로·venv 사용 여부)이 바뀌면 **열린 세션 전부**가
-  /// 이걸 다시 받는다 — 한 프로젝트만 갱신하면 나머지는 옛 인터프리터로 돈다.
-  void rebuildPythonEnv(String interpreterPath, {required bool useVenv}) {
-    final env = PythonEnvironment(interpreterPath,
-        venvPath: venvPathFor(useVenv: useVenv));
-    pythonEnv = env;
-    if (processManager == null) {
-      processManager = ProcessManager(env);
-    } else {
-      processManager!.updateEnvironment(env);
-    }
-    notifyListeners();
-  }
-
-  /// 실제 도구 실행에 쓰는 파이썬(venv 준비 시 venv, 아니면 base). 미설정이면 null.
-  String? get effectivePython {
-    final e = pythonEnv;
-    if (e == null || !e.isInstalled) return null;
-    return e.executablePath;
-  }
-
-  /// 이 프로젝트의 venv 를 (없으면) 만든다. 상태를 갱신하며 알린다.
-  Future<void> ensureVenv() async {
-    final env = pythonEnv;
-    if (env == null || env.venvPath == null) {
-      venvStatus = VenvStatus.idle;
-      venvError = '';
-      notifyListeners();
-      return;
-    }
-    if (env.venvReady) {
-      venvStatus = VenvStatus.ready;
-      venvError = '';
-      notifyListeners();
-      return;
-    }
-    if (!env.isInstalled) return; // base 미설정: 인터프리터 지정 시 다시 시도된다.
-    venvStatus = VenvStatus.creating;
-    venvError = '';
-    notifyListeners();
-    final r = await env.ensureVenv();
-    // 도중에 설정이 바뀌었으면 결과를 버린다(경합 방지).
-    if (!identical(env, pythonEnv)) return;
-    if (r.ok) {
-      venvStatus = VenvStatus.ready;
-      venvError = '';
-    } else {
-      venvStatus = VenvStatus.error;
-      venvError = r.error ?? 'Failed to create venv.';
-    }
-    notifyListeners();
-  }
-
-  /// venv 를 지우고 다시 만든다(설정의 "재생성" 버튼).
-  Future<void> recreateVenv({required bool useVenv}) async {
-    final vp = venvPathFor(useVenv: useVenv);
-    if (vp == null) return;
-    try {
-      final dir = Directory(vp);
-      if (await dir.exists()) await dir.delete(recursive: true);
-    } catch (e) {
-      venvStatus = VenvStatus.error;
-      venvError = '$e';
-      notifyListeners();
-      return;
-    }
-    await ensureVenv();
-  }
-
   var _closed = false;
 
   /// 세션을 닫고 가진 것을 전부 버린다. **두 번 불러도 안전하다**
@@ -247,7 +155,6 @@ class ProjectSession extends ChangeNotifier {
     browserChannel.dispose();
     backgroundProcesses.removeListener(notifyListeners);
     backgroundProcesses.dispose();
-    processManager?.dispose();
     final box = _sandbox;
     _sandbox = null;
     box?.removeListener(notifyListeners);

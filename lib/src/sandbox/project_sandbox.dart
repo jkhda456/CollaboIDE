@@ -49,6 +49,14 @@ class ProjectSandbox extends ChangeNotifier {
   final String toolsDir;
   final CollaboRuntime runtime;
 
+  /// 이 런타임에 네트워크 도구 이미지(`tools.cpio` — curl·ssh·git)가 있는가.
+  ///
+  /// 같은 릴리스(2026-09-22 밤)부터 python 이미지에 pip 도 들었다. 둘은 함께 들어왔으므로
+  /// 에이전트 안내([SandboxToolExecutor.environmentNote])는 이 하나로 가른다. 들여온 복사본은
+  /// 둘 다 이 릴리스지만, COLLABO_CORE_RUNTIME 으로 옛 런타임을 가리킬 수 있다 — 없는 것을
+  /// 있다고 안내하면 모델이 헛돈다.
+  bool get hasNetworkTools => runtime.arguments.contains('--tools-image');
+
   late final PathMapping paths = PathMapping([
     (projectPath, guestWorkspace),
     (toolsDir, guestTools),
@@ -115,8 +123,8 @@ class ProjectSandbox extends ChangeNotifier {
         runtime: runtime,
       );
       // 콘솔은 broadcast 라 먼저 붙어야 흘려보내지 않는다. 부팅 메시지는 quiet 로 꺼 뒀다.
-      // 준비가 끝날 때까지는 **가린다** — 아래에서 셸을 바꿔 끼우는 명령의 에코가 사용자
-      // 터미널에 찍히지 않게. 준비가 끝나면 새 프롬프트를 띄운다.
+      // 준비(예열)가 끝날 때까지는 **가린다** — 그 사이 지나간 첫 프롬프트는 준비가 끝난 뒤
+      // Enter 하나로 다시 띄운다(예열 도중 사용자가 친 것과 섞이지 않게).
       console.mark('boot ${_clock(DateTime.now())}');
       var muted = true;
       _subs
@@ -124,12 +132,10 @@ class ProjectSandbox extends ChangeNotifier {
           if (!muted) console.addBytes(bytes);
         }))
         ..add(core.networkEvents.listen(console.addEvent));
-      // devpts: 게스트 /init 이 아직 안 올린다(CollaboCore TODO). 없으면 파이썬 pty 가
-      // 구식 BSD pty 로 물러선다 — term_runner 가 그 경우도 견디지만 정식 경로가 낫다.
       // 첫 python 실행은 게스트 프로그램 컴파일 캐시를 채우느라 수 초 걸린다 → 미리 한 번.
-      await core.run('mkdir -p /dev/pts && mount -t devpts devpts /dev/pts 2>/dev/null; '
-          'python3 -c pass');
-      await _ensureConsoleJobControl(core);
+      // (devpts 와 콘솔 셸의 제어 터미널은 게스트 /init 이 직접 한다 — 2026-09-22 밤 릴리스부터.
+      // 그 전 이미지에는 없어서 앱이 부팅 직후 대신 했다.)
+      await core.run('python3 -c pass');
       muted = false;
       if (_closed) {
         unawaited(core.stop());
@@ -141,7 +147,7 @@ class ProjectSandbox extends ChangeNotifier {
       _state = SandboxState.running;
       notifyListeners();
       // 셸 프롬프트는 가려 둔 사이에 지나갔다 — Enter 하나로 다시 띄운다.
-      unawaited(core.writeConsole('\r').then((_) {}, onError: (_) {}));
+      unawaited(writeConsole('\r'));
       unawaited(core.done.then((exit) {
         if (!identical(_core, core)) return;
         _core = null;
@@ -163,37 +169,6 @@ class ProjectSandbox extends ChangeNotifier {
       _error = '$e';
       notifyListeners();
       rethrow;
-    }
-  }
-
-  /// 콘솔 root 셸이 **제어 터미널을 갖게** 한다 — 없으면 Ctrl-C·Ctrl-Z·job control 이 안 된다.
-  ///
-  /// 지금 게스트 `/init` 은 셸을 새 세션 없이 띄운다(tty_nr 0). 그러면 줄 규칙이 `^C` 를
-  /// 에코만 하고 SIGINT 를 보낼 포그라운드 그룹이 없어, `sleep 20` 에 Ctrl-C 를 눌러도 끝까지
-  /// 돈다. 그 셸에 `exec setsid -c sh -l` 을 쳐서 **같은 pid 로** 세션 리더 + 제어 터미널(hvc0)
-  /// 로 바꾼다(init 의 재시작 감시도 그대로 맞는다). CollaboCore `init.c` 는 같은 것을 직접
-  /// 하도록 고쳤다 — 그 이미지가 들어오면 셸에 이미 제어 터미널이 있어 여기서는 아무것도 안 한다.
-  Future<void> _ensureConsoleJobControl(CollaboCore core) async {
-    try {
-      // init(pid 1)의 자식 sh 중 제어 터미널(7번째 필드 tty_nr)이 없는 것.
-      final found = await core.run(
-        r'for d in /proc/[0-9]*; do s=$(cat $d/stat 2>/dev/null) || continue; '
-        r'set -- $s; [ "$4" = 1 ] && [ "$2" = "(sh)" ] && [ "$7" = 0 ] && echo "$1"; done; true',
-        timeout: const Duration(seconds: 10),
-      );
-      final pid = found.stdoutText.trim().split('\n').first.trim();
-      if (pid.isEmpty || int.tryParse(pid) == null) return;
-      await core.writeConsole('exec setsid -c /bin/sh -l\r');
-      // 바뀔 때까지 기다린다(보통 수십 ms). 끝내 안 바뀌면 그냥 둔다 — 셸은 그대로 쓸 수 있다.
-      for (var i = 0; i < 30; i++) {
-        final r = await core.run('cut -d" " -f7 /proc/$pid/stat 2>/dev/null',
-            timeout: const Duration(seconds: 5));
-        final tty = r.stdoutText.trim();
-        if (tty.isNotEmpty && tty != '0') return;
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      }
-    } catch (_) {
-      // 보완이다 — 실패해도 셸은 쓸 수 있다(Ctrl-C 만 안 먹는다).
     }
   }
 
@@ -240,12 +215,20 @@ class ProjectSandbox extends ChangeNotifier {
     await start();
   }
 
-  /// root 셸에 입력한다(샌드박스 화면의 콘솔).
-  Future<void> writeConsole(String text) async {
+  /// root 셸에 입력한다(샌드박스 화면의 콘솔). **보낸 순서대로** 도착한다.
+  ///
+  /// 엔진은 요청마다 스레드를 따로 띄워 처리한다(CollaboCore `protocol.rs`) — `console.write` 를
+  /// 연달아 보내면 게스트에 뒤바뀐 순서로 닿을 수 있다(빠른 타이핑, IME 확정 직후의 Enter:
+  /// "#" 다음 Enter 가 다음 줄 글자 뒤로 갔다). 그래서 앞의 쓰기가 끝난 뒤에 다음을 보낸다.
+  Future<void> writeConsole(String text) {
     final core = _core;
-    if (core == null) return;
-    await core.writeConsole(text);
+    if (core == null) return Future.value();
+    return _consoleTail = _consoleTail
+        .then((_) => identical(_core, core) ? core.writeConsole(text) : null)
+        .then((_) {}, onError: (_) {});
   }
+
+  Future<void> _consoleTail = Future.value();
 
   /// 사용자 CLI 도구 스크립트를 게스트에 복사한다(바뀌었을 때만). 게스트 경로를 준다.
   ///
@@ -375,14 +358,22 @@ class SandboxToolExecutor extends ToolExecutor {
   @override
   String get environmentNote =>
       'Execution environment: your tools run inside an isolated Linux sandbox '
-      '(busybox shell + Python 3.13 with its standard library and the openai SDK). '
-      'There is no git, node, compiler or package manager (pip is not installed), '
+      '${sandbox.hasNetworkTools ? _withNetworkTools : _withoutNetworkTools}'
       'and nothing from the user\'s computer except the project folder. Inside '
       'commands (run_command, terminals) the project folder is `$guestWorkspaceName` '
       'and is the current directory — use relative paths there. File tools accept '
       'and report the project\'s normal paths.';
 
   static const String guestWorkspaceName = ProjectSandbox.guestWorkspace;
+
+  static const String _withNetworkTools =
+      '(busybox shell + Python 3.13 with its standard library, pip and the openai SDK; '
+      'curl, wget, git and ssh are available). Packages installed with pip live in the '
+      'sandbox only and are gone after it restarts. There is no node or compiler, ';
+
+  static const String _withoutNetworkTools =
+      '(busybox shell + Python 3.13 with its standard library and the openai SDK). '
+      'There is no git, node, compiler or package manager (pip is not installed), ';
 
   @override
   Future<ToolProcessResult> run(

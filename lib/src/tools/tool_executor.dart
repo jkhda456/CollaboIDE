@@ -33,8 +33,8 @@ abstract class ToolHandle {
 /// **도구 스크립트를 어디서 돌리는가.** 도구 계약(describe/call, stdin JSON → stdout
 /// JSON)은 그대로이고, 실행 위치와 경로의 모양만 다르다.
 ///
-/// - [HostToolExecutor] — 시스템(또는 venv) 파이썬. 예전부터의 방식.
-/// - `SandboxToolExecutor` — collaboCore 게스트의 CPython (`lib/src/sandbox/`).
+/// - `SandboxToolExecutor` — collaboCore 게스트의 CPython (`lib/src/sandbox/`). **앱이 쓰는 것.**
+/// - [HostToolExecutor] — 호스트의 파이썬. **폐기**(2026-09-23): 앱은 더 이상 쓰지 않는다.
 ///
 /// 경로는 **앱 쪽(호스트) 경로가 정본**이다. 트리·뷰어·`file_changes`·시스템 프롬프트가
 /// 전부 호스트 경로로 말하므로, 실행 환경이 경로를 달리 부르면(게스트의 `/work/...`)
@@ -73,7 +73,12 @@ abstract class ToolExecutor {
   String? get environmentNote => null;
 }
 
-/// 시스템(또는 venv) 파이썬으로 실행한다. 경로는 그대로다.
+/// 호스트의 파이썬으로 실행한다. 경로는 그대로다.
+///
+/// **폐기(2026-09-23).** 도구는 언제나 샌드박스에서 돈다 — 앱에는 이 실행기로 가는 길이
+/// 없다(설정의 실행 환경 선택·인터프리터·venv·pip 을 전부 걷어냈다). 호스트에서 돌려 보는
+/// 시험·도구를 위해 클래스만 남겨 둔다. 다음 정리 때 지워도 된다.
+@Deprecated('도구는 샌드박스에서만 돈다(2026-09-23). 시험용으로만 남아 있다.')
 class HostToolExecutor extends ToolExecutor {
   HostToolExecutor(this.interpreter);
 
@@ -197,6 +202,9 @@ class PathMapping {
 
   static const Set<String> _pathKeys = {
     'src', 'dst', 'cwd', 'root', 'dir', 'directory', 'file', 'target', 'workspace', 'location',
+    // 문서 도구가 만든 파일을 이 이름으로 돌려준다(collabo_docs `create`·`copy_to`) — 빠뜨리면
+    // 그 두 도구만 게스트 경로(`/work/...`)를 말해 다른 도구와 어긋난다.
+    'created', 'copied_to',
   };
 
   /// 값이 경로인 결과 키. `*path*` 는 전부(`path`·`paths`·`saved_path`…).

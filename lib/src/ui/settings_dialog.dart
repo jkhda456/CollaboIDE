@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:afm_bridge/afm_bridge.dart' show AfmStatus;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -9,14 +10,15 @@ import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../app/project_session.dart' show VenvStatus;
 import '../app/workspace_controller.dart';
+import '../llm/apple_foundation_client.dart' show appleFoundationStatus, appleFoundationSupported;
+import '../llm/context_fit.dart';
 import '../llm/llm_config.dart';
 import '../llm/llm_preset.dart';
 import '../llm/openai_client.dart';
 import '../llm/system_prompt.dart';
-import '../platform/mac_file_picker.dart';
-import '../sandbox/project_sandbox.dart' show SandboxState;
+import '../platform/platform_features.dart';
+import '../sandbox/project_sandbox.dart' show SandboxState, SandboxToolExecutor;
 import '../tools/tool_executor.dart';
 import '../tools/tool_module.dart';
 import '../tools/tool_runner.dart';
@@ -24,7 +26,8 @@ import '../tools/tool_source.dart';
 import '../viewers/viewer_assets.dart';
 import '../viewers/viewer_rule.dart';
 import '../viewers/viewer_source.dart';
-import 'console_dialog.dart';
+import 'adaptive.dart';
+import 'folder_picker_dialog.dart';
 
 /// 설정 창을 띄운다(탭: 모델 / 프롬프트 / 도구 / 모양 / 정보).
 /// [initialTab] 으로 처음 보일 탭을 고른다([settingsTabIndexFor] 참고).
@@ -207,9 +210,15 @@ class _SettingsDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
+    // 휴대폰에서는 화면 전체를 쓴다(닫기 버튼을 머리에 단다 — 바깥을 누를 자리가 없다).
+    final compact = isCompactScreen(context);
     return Dialog(
+      insetPadding: compact ? EdgeInsets.zero : null,
+      shape: compact ? const RoundedRectangleBorder() : null,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 620),
+        constraints: compact
+            ? const BoxConstraints.expand()
+            : const BoxConstraints(maxWidth: 560, maxHeight: 620),
         child: DefaultTabController(
           length: _tabCount,
           // 범위를 벗어난 값이 들어와도 첫 탭으로 (num 을 돌려주는 clamp 대신 명시적으로).
@@ -224,6 +233,14 @@ class _SettingsDialog extends StatelessWidget {
                   children: [
                     Text(l.settingsTitle,
                         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    if (compact) ...[
+                      const Spacer(),
+                      IconButton(
+                        tooltip: l.close,
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -394,10 +411,19 @@ class _ModelTabState extends State<_ModelTab> {
   late final TextEditingController _tokenBudget; // 응답 하나의 토큰 예산
   late final TextEditingController _speed; // 처리 속도(tok/s, 비우면 실측)
 
+  late final TextEditingController _afmConcurrent; // Apple: 동시 요청 수(0=기본)
+  late final TextEditingController _ctxWindow; // 컨텍스트 창(토큰, 빈칸=모름). Apple 은 기기에서 읽어 채운다
+  bool _autoFit = true; // 작은 컨텍스트에 자동으로 맞추기
+  AfmStatus? _afmStatus; // Apple: 기기 모델 상태(세대·변형·창 크기) — 연결 목록·모델 탭에 표시
+
   bool _testing = false;
   bool _showKey = false; // API 키 마스크 해제 여부
   bool _multimodal = false; // 멀티모달(이미지 입력) 지원
   bool _parseTextToolCalls = false; // 본문 텍스트 도구호출 파싱(openai 폴백)
+  bool _afmPromptedTools = false; // Apple: 도구를 프롬프트로 주입
+  bool _afmPermissive = true; // Apple: 느슨한 가드레일
+  bool _afmPrewarm = true; // Apple: 미리 올리기
+  bool _afmTrimHistory = true; // Apple: 컨텍스트 넘치면 앞 대화 자르기
   String _reasoningEffort = ''; // 추론 강도('' = 미전송 | none | low | high)
   LlmTestResult? _result;
 
@@ -417,6 +443,8 @@ class _ModelTabState extends State<_ModelTab> {
     _firstTimeout = TextEditingController();
     _tokenBudget = TextEditingController();
     _speed = TextEditingController();
+    _afmConcurrent = TextEditingController();
+    _ctxWindow = TextEditingController();
     final presets = widget.workspace.llmPresets;
     _selectedId = widget.workspace.defaultPresetId.isNotEmpty
         ? widget.workspace.defaultPresetId
@@ -445,6 +473,14 @@ class _ModelTabState extends State<_ModelTab> {
     _model.text = cfg.model;
     _multimodal = cfg.multimodal;
     _parseTextToolCalls = cfg.parseTextToolCalls;
+    _afmPromptedTools = cfg.afmPromptedTools;
+    _afmPermissive = cfg.afmPermissiveGuardrails;
+    _afmPrewarm = cfg.afmPrewarm;
+    _afmTrimHistory = cfg.afmTrimHistory;
+    _afmConcurrent.text = cfg.afmMaxConcurrent > 0 ? '${cfg.afmMaxConcurrent}' : '';
+    _ctxWindow.text = cfg.contextWindow > 0 ? '${cfg.contextWindow}' : '';
+    _autoFit = cfg.autoFitContext;
+    if (cfg.connection == LlmConnection.appleFoundation) unawaited(_detectAppleWindow());
     _reasoningEffort =
         _reasoningOptions.contains(cfg.reasoningEffort) ? cfg.reasoningEffort : '';
     _firstTimeout.text = cfg.firstResponseTimeoutSec.toString();
@@ -501,6 +537,8 @@ class _ModelTabState extends State<_ModelTab> {
     _firstTimeout.dispose();
     _tokenBudget.dispose();
     _speed.dispose();
+    _afmConcurrent.dispose();
+    _ctxWindow.dispose();
     super.dispose();
   }
 
@@ -517,7 +555,26 @@ class _ModelTabState extends State<_ModelTab> {
         speedTps: _speedValue,
         // 실측치는 앱이 관리한다 — 편집 폼이 덮지 않도록 그대로 가져간다.
         measuredTps: _selectedPreset?.config.measuredTps ?? 0,
+        afmPromptedTools: _afmPromptedTools,
+        afmPermissiveGuardrails: _afmPermissive,
+        afmPrewarm: _afmPrewarm,
+        afmMaxConcurrent: int.tryParse(_afmConcurrent.text.trim()) ?? 0,
+        afmTrimHistory: _afmTrimHistory,
+        contextWindow: int.tryParse(_ctxWindow.text.trim()) ?? 0,
+        autoFitContext: _autoFit,
       );
+
+  /// Apple 온디바이스: 기기 모델의 컨텍스트 창을 읽어 채운다(바뀌었을 때만 저장).
+  Future<void> _detectAppleWindow() async {
+    final status = await appleFoundationStatus();
+    if (!mounted) return;
+    if (status != null) setState(() => _afmStatus = status);
+    final size = status?.contextSize;
+    if (size == null || size <= 0) return;
+    if (_connection != LlmConnection.appleFoundation || _ctxWindow.text == '$size') return;
+    setState(() => _ctxWindow.text = '$size');
+    await _persist();
+  }
 
   /// 변경 즉시 선택된 프리셋에 자동 저장한다(이름 + 설정).
   Future<void> _persist() => widget.workspace
@@ -593,6 +650,220 @@ class _ModelTabState extends State<_ModelTab> {
       _testing = false;
       _result = r;
     });
+    if (_connection == LlmConnection.appleFoundation) await _detectAppleWindow();
+  }
+
+  /// 컨텍스트 창 + 작은 창 자동 맞춤(`ContextFit`) + 더 큰 모델 권고.
+  ///
+  /// Apple 온디바이스는 창을 기기에서 읽어 보여 주기만 하고(편집 없음), 네트워크 연결은
+  /// 사용자가 적는다(모르면 비움 = 맞추지 않음). 창이 16K 이하이고 자동 맞춤이 켜져 있으면
+  /// 무엇이 어떻게 줄어드는지와, 쓸 수 있는 더 큰 프리셋을 함께 보여 준다.
+  Widget _buildContextSection(AppLocalizations l, ThemeData theme) {
+    final small = theme.textTheme.bodySmall;
+    final cfg = _current;
+    final fit = ContextFit.of(cfg);
+    final isApple = _connection == LlmConnection.appleFoundation;
+    final userPrompt = widget.workspace.systemPrompt.trim();
+    final isDefaultPrompt = widget.workspace.usesDefaultPrompt;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 12),
+        if (isApple && _afmStatus?.modelLabel != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                const Icon(Icons.memory, size: 18),
+                const SizedBox(width: 6),
+                Text('${l.afmModelVersion}: ', style: theme.textTheme.bodyMedium),
+                Expanded(
+                  child: Text(
+                    [
+                      _afmStatus!.modelLabel!,
+                      if (_afmStatus!.modelName != null && _afmStatus!.modelName != _afmStatus!.modelLabel)
+                        '(${_afmStatus!.modelName})',
+                    ].join(' '),
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (isApple)
+          Row(
+            children: [
+              const Icon(Icons.data_usage, size: 18),
+              const SizedBox(width: 6),
+              Text('${l.contextWindowLabel}: ', style: theme.textTheme.bodyMedium),
+              Expanded(
+                child: Text(
+                  cfg.contextWindow > 0 ? l.contextWindowDetected(cfg.contextWindow) : l.contextWindowAssumed,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          )
+        else
+          TextField(
+            controller: _ctxWindow,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: l.contextWindowLabel,
+              helperText: l.contextWindowHelp,
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) {
+              setState(() {});
+              _persist();
+            },
+          ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(l.autoFitContext),
+          subtitle: Text(l.autoFitContextDesc, style: small),
+          value: _autoFit,
+          onChanged: (v) {
+            setState(() => _autoFit = v);
+            _persist();
+          },
+        ),
+        // 두 상자는 글자 길이가 아니라 설정 폭에 맞춘다(Column 은 자식을 내용 폭으로 그린다).
+        if (fit.active) ...[
+          SizedBox(
+            width: double.infinity,
+            child: Card(
+              margin: const EdgeInsets.only(top: 4),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(l.fitBudget(fit.outputReserve, fit.inputBudget),
+                        style: small),
+                    const SizedBox(height: 6),
+                    Text(isDefaultPrompt ? l.fitPromptCompact : l.fitPromptCustom, style: small),
+                    if (!isDefaultPrompt && fit.promptTooLong(userPrompt))
+                      Text(l.fitPromptTooLong, style: small?.copyWith(color: theme.colorScheme.error)),
+                    const SizedBox(height: 4),
+                    Text(l.fitTools, style: small),
+                    const SizedBox(height: 4),
+                    Text(l.fitDisabled, style: small),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: double.infinity,
+            child: Card(
+              margin: const EdgeInsets.only(top: 8),
+              color: theme.colorScheme.secondaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.tips_and_updates_outlined,
+                            size: 18, color: theme.colorScheme.onSecondaryContainer),
+                        const SizedBox(width: 6),
+                        Text(l.fitRecommendTitle,
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(color: theme.colorScheme.onSecondaryContainer)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(l.fitRecommendBody, style: small),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Apple Foundation Models 전용 설정.
+  ///
+  /// 주소·키·모델 이름이 없는 대신 **엔진 설정**이 있다(플러그인 `configure`):
+  /// 가드레일·동시 요청 수·컨텍스트 자르기. 지시문은 프롬프트 설정(시스템 프롬프트)을 쓴다. 도구 호출은 기본이 네이티브이고,
+  /// 모델이 무시하면 프롬프트 주입으로 바꾼다. 실제 사용 가능 여부는 아래 "연결 확인" 이
+  /// 알려 준다(기기 지원·Apple Intelligence 켜짐·OS 버전).
+  Widget _buildAppleSection(AppLocalizations l, ThemeData theme) {
+    final small = theme.textTheme.bodySmall;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Icon(Icons.memory, size: 18),
+            const SizedBox(width: 6),
+            Expanded(child: Text(l.appleFoundationDesc, style: small)),
+          ],
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(l.afmPermissive),
+          subtitle: Text(l.afmPermissiveDesc, style: small),
+          value: _afmPermissive,
+          onChanged: (v) {
+            setState(() => _afmPermissive = v);
+            _persist();
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(l.afmPromptedTools),
+          subtitle: Text(l.afmPromptedToolsDesc, style: small),
+          value: _afmPromptedTools,
+          onChanged: (v) {
+            setState(() => _afmPromptedTools = v);
+            _persist();
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(l.afmPrewarm),
+          subtitle: Text(l.afmPrewarmDesc, style: small),
+          value: _afmPrewarm,
+          onChanged: (v) {
+            setState(() => _afmPrewarm = v);
+            _persist();
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(l.afmTrimHistory),
+          subtitle: Text(l.afmTrimHistoryDesc, style: small),
+          value: _afmTrimHistory,
+          onChanged: (v) {
+            setState(() => _afmTrimHistory = v);
+            _persist();
+          },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _afmConcurrent,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: l.afmConcurrent,
+            helperText: l.afmConcurrentDesc,
+            border: const OutlineInputBorder(),
+          ),
+          onChanged: (_) => _persist(),
+        ),
+      ],
+    );
   }
 
   /// 프로필 아바타 + 팝업 메뉴(프리셋 선택/추가/이름변경/기본설정/삭제)를 한 곳에서.
@@ -601,7 +872,7 @@ class _ModelTabState extends State<_ModelTab> {
     final presets = widget.workspace.llmPresets;
     final defaultId = widget.workspace.defaultPresetId;
     final current = _selectedPreset;
-    final currentModel = current?.config.model.trim() ?? '';
+    final currentModel = current?.config.effectiveModel.trim() ?? '';
     return MenuAnchor(
       controller: _presetMenuCtrl,
       builder: (context, controller, _) => InkWell(
@@ -746,6 +1017,8 @@ class _ModelTabState extends State<_ModelTab> {
           _buildPresetSwitcher(context, l, theme),
           const Divider(height: 24),
           DropdownButtonFormField<LlmConnection>(
+            // 좁은 화면에서 긴 항목 이름이 넘치지 않게 폭을 채우고 말줄임.
+            isExpanded: true,
             initialValue: _connection,
             decoration: InputDecoration(
                 labelText: l.connectionMethod, border: const OutlineInputBorder()),
@@ -755,49 +1028,63 @@ class _ModelTabState extends State<_ModelTab> {
               DropdownMenuItem(
                   value: LlmConnection.openaiPrompted,
                   child: Text(l.openaiPrompted)),
+              // 기기 안에서 도는 모델 — mac/iOS 에서만 고를 수 있다.
+              if (appleFoundationSupported)
+                DropdownMenuItem(
+                    value: LlmConnection.appleFoundation,
+                    // 기기 모델 세대·변형을 함께 보여 준다(예: "… · AFM 2", 27 은 "… · AFM 3 Core Advanced").
+                    child: Text(_afmStatus?.modelLabel == null
+                        ? l.appleFoundation
+                        : '${l.appleFoundation} · ${_afmStatus!.modelLabel}')),
             ],
             onChanged: (v) {
               setState(() => _connection = v ?? _connection);
               _persist();
+              if (_connection == LlmConnection.appleFoundation) unawaited(_detectAppleWindow());
             },
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _baseUrl,
-            decoration: const InputDecoration(
-              labelText: 'Base URL',
-              hintText: 'https://api.openai.com/v1',
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (_) => _persist(),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _apiKey,
-            obscureText: !_showKey,
-            decoration: InputDecoration(
-              labelText: 'API Key',
-              border: const OutlineInputBorder(),
-              // 오른쪽 아이콘으로 마스크 보기/숨기기 토글.
-              suffixIcon: IconButton(
-                icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility,
-                    size: 18),
-                tooltip: _showKey ? l.hideKey : l.showKey,
-                onPressed: () => setState(() => _showKey = !_showKey),
+          // 기기 안의 모델에는 주소도 키도 모델 이름도 없다 — 그 줄들을 아예 감춘다.
+          if (connectionUsesNetwork(_connection)) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _baseUrl,
+              decoration: const InputDecoration(
+                labelText: 'Base URL',
+                hintText: 'https://api.openai.com/v1',
+                border: OutlineInputBorder(),
               ),
+              onChanged: (_) => _persist(),
             ),
-            onChanged: (_) => _persist(),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _model,
-            decoration: InputDecoration(
-              labelText: l.modelLabel,
-              hintText: 'gpt-4o-mini',
-              border: const OutlineInputBorder(),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _apiKey,
+              obscureText: !_showKey,
+              decoration: InputDecoration(
+                labelText: 'API Key',
+                border: const OutlineInputBorder(),
+                // 오른쪽 아이콘으로 마스크 보기/숨기기 토글.
+                suffixIcon: IconButton(
+                  icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility,
+                      size: 18),
+                  tooltip: _showKey ? l.hideKey : l.showKey,
+                  onPressed: () => setState(() => _showKey = !_showKey),
+                ),
+              ),
+              onChanged: (_) => _persist(),
             ),
-            onChanged: (_) => _persist(),
-          ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _model,
+              decoration: InputDecoration(
+                labelText: l.modelLabel,
+                hintText: 'gpt-4o-mini',
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) => _persist(),
+            ),
+          ] else
+            _buildAppleSection(l, theme),
+          _buildContextSection(l, theme),
           const SizedBox(height: 4),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -1120,6 +1407,7 @@ class _WebTab extends StatelessWidget {
             SizedBox(
               width: 240,
               child: DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue: current,
                 isDense: true,
                 decoration: const InputDecoration(
@@ -1242,15 +1530,14 @@ class _ToolsTabState extends State<_ToolsTab> {
   @override
   void dispose() {
     workspace.removeListener(_onWorkspaceChanged);
+    // 시스템 머신은 앱에 하나 고정이라 여기서 내리지 않는다(샌드박스 화면에서 끌 수 있다).
     super.dispose();
   }
 
   void _onWorkspaceChanged() => _loadModules();
 
   String _configSignature() => [
-        workspace.toolRuntime,
         workspace.projectPath ?? '',
-        workspace.effectivePython ?? '',
         ...workspace.baseToolModulePaths,
         ...workspace.toolSources.map((s) => s.id),
       ].join('|');
@@ -1261,17 +1548,12 @@ class _ToolsTabState extends State<_ToolsTab> {
     if (sig == _signature) return;
     _signature = sig;
 
-    // 실제 도구를 돌리는 **같은 실행기**로 물어야 목록이 실제와 같다(샌드박스면 게스트
-    // 파이썬 — 필요하면 여기서 부팅된다). 프로젝트가 없으면 시스템 파이썬으로라도 보여 준다.
-    final session = workspace.activeSession;
-    final interp = workspace.effectivePython;
+    // 실제 도구를 돌리는 **같은 실행기**로 물어야 목록이 실제와 같다 — **시스템 머신**
+    // (앱에 하나 고정)에게 묻는다. 프로젝트 머신은 그 프로젝트의 작업에만 쓴다(예전에는
+    // 설정을 여는 것만으로 활성 프로젝트의 머신이 임의로 켜졌다).
     final dir = workspace.toolAdaptersDir;
-    ToolExecutor? executor;
-    if (session != null && workspace.toolsReadyFor(session)) {
-      executor = workspace.toolExecutorFor(session);
-    } else if (workspace.pythonInstalled && interp != null) {
-      executor = HostToolExecutor(interp);
-    }
+    final box = workspace.systemSandbox();
+    final ToolExecutor? executor = box == null ? null : SandboxToolExecutor(box);
     if (executor == null || dir == null) {
       if (mounted) {
         setState(() {
@@ -1415,7 +1697,7 @@ class _ToolsTabState extends State<_ToolsTab> {
       await _showTextDialog(
         context,
         l.toolInspect,
-        _modules.containsKey(sourceId) ? l.toolInfoFailed : l.pythonNotReadyInspect,
+        _modules.containsKey(sourceId) ? l.toolInfoFailed : l.sandboxNotReadyInspect,
       );
       return;
     }
@@ -1439,16 +1721,8 @@ class _ToolsTabState extends State<_ToolsTab> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // 평소엔 아무것도 그리지 않는다(문제가 있을 때만) — 그만큼 목록이 위로 온다.
             _RuntimeBar(workspace: workspace),
-            // 시스템 Python 은 **시스템 모드의 하위 설정**이다 — 샌드박스 모드에서는
-            // 도구가 게스트 파이썬으로 돌아 인터프리터·venv·pip 이 아무 뜻이 없다.
-            if (!workspace.usesSandbox)
-              Padding(
-                padding: const EdgeInsets.only(left: 24),
-                child: _PythonStatusBar(workspace: workspace),
-              ),
-            const SizedBox(height: 8),
-            const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Column(
@@ -1929,7 +2203,7 @@ class _ViewersTab extends StatelessWidget {
 
     String? path;
     if (folder) {
-      path = await getDirectoryPath(confirmButtonText: l.selectButton);
+      path = await pickDirectory(context, confirmButtonText: l.selectButton);
     } else {
       const typeGroup = XTypeGroup(label: 'JavaScript', extensions: ['js']);
       path = (await openFile(acceptedTypeGroups: [typeGroup]))?.path;
@@ -2097,11 +2371,14 @@ class _ViewerRuleTileState extends State<_ViewerRuleTile> {
   }
 }
 
-/// 도구 탭 상단: Python 환경 + 상태 확인(콘솔 점검) / Python 설정 버튼.
-/// 도구 실행 환경 선택: 샌드박스(collaboCore) / 시스템 Python.
+/// 도구 탭 상단: **평소에는 아무것도 그리지 않는다.**
 ///
-/// 샌드박스를 골랐는데 런타임이 없으면 **시스템으로 몰래 물러서지 않는다**
-/// (`WorkspaceController.toolsReadyFor`) — 그래서 여기서 그 사실을 분명히 보여 준다.
+/// 고를 것이 없다 — 도구는 언제나 collaboCore 샌드박스(게스트 CPython)에서 돈다(2026-09-23).
+/// "샌드박스에서 돕니다" 를 늘 띄워 둘 이유가 없어서, **그렇지 않을 때만** 말한다:
+///  - 이 플랫폼용 런타임이 앱에 없다 → 도구를 아예 쓸 수 없다.
+///  - 시스템 머신이 부팅에 실패했다 → 이 화면의 도구 목록도 그 머신이 답하므로 여기서 알린다.
+///
+/// 머신의 평상시 상태(멈춤·시작 중·실행 중)는 샌드박스 화면에서 본다.
 class _RuntimeBar extends StatelessWidget {
   const _RuntimeBar({required this.workspace});
   final WorkspaceController workspace;
@@ -2110,373 +2387,30 @@ class _RuntimeBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    final sandbox = workspace.usesSandbox;
-    final box = workspace.activeSession?.sandbox;
+    final box = workspace.systemSandboxOrNull;
     final String status;
-    var error = false;
-    if (!sandbox) {
-      status = l.toolRuntimeSystemDesc;
-    } else if (!workspace.sandboxAvailable) {
-      status = l.sandboxUnavailable;
-      error = true;
+    if (!workspace.sandboxAvailable) {
+      status = PlatformFeatures.isIOS ? l.sandboxUnavailableIOS : l.sandboxUnavailable;
+    } else if (box?.state == SandboxState.failed) {
+      status = l.sandboxFailed(box?.error ?? '');
     } else {
-      final state = box?.state ?? SandboxState.idle;
-      final line = switch (state) {
-        SandboxState.idle => l.sandboxIdle,
-        SandboxState.starting => l.sandboxStarting,
-        SandboxState.running => l.sandboxRunning,
-        SandboxState.failed => l.sandboxFailed(box?.error ?? ''),
-      };
-      error = state == SandboxState.failed;
-      status = '${l.toolRuntimeSandboxDesc}\n$line';
+      return const SizedBox.shrink(); // 잘 도는 중 — 자리를 차지하지 않는다
     }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.shield_outlined, size: 18),
-              const SizedBox(width: 6),
-              Text(l.toolRuntime),
-              const Spacer(),
-              SegmentedButton<String>(
-                segments: [
-                  ButtonSegment(
-                    value: WorkspaceController.toolRuntimeSandbox,
-                    label: Text(l.toolRuntimeSandbox),
-                    icon: const Icon(Icons.shield_outlined, size: 16),
-                  ),
-                  ButtonSegment(
-                    value: WorkspaceController.toolRuntimeSystem,
-                    label: Text(l.toolRuntimeSystem),
-                    icon: const Icon(Icons.computer, size: 16),
-                  ),
-                ],
-                selected: {workspace.toolRuntime},
-                onSelectionChanged: (v) => workspace.setToolRuntime(v.first),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            status,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: error ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PythonStatusBar extends StatelessWidget {
-  const _PythonStatusBar({required this.workspace});
-  final WorkspaceController workspace;
-
-  /// 상태 확인: 내장 점검 스크립트를 콘솔로 실행(실시간 출력 + 입력).
-  Future<void> _check(BuildContext context) async {
-    final l = AppLocalizations.of(context);
-    // 실효 파이썬(venv 준비 시 venv) 으로 점검·설치해야 실제 도구와 같은 환경을 본다.
-    // base 로 하면 Homebrew/시스템 파이썬의 PEP 668(externally-managed)로 pip 이 막힌다.
-    final interp = workspace.effectivePython;
-    final dir = workspace.toolAdaptersDir;
-    if (interp == null || !workspace.pythonInstalled || dir == null) {
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(l.pythonNotSetTitle),
-          content: Text(l.pythonNotSetBody),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l.close)),
-          ],
-        ),
-      );
-      return;
-    }
-    final lang = workspace.pythonLangFile;
-    await showDialog<void>(
-      context: context,
-      builder: (_) => ConsoleDialog(
-        interpreter: interp,
-        scriptPath: p.join(dir, 'env_check.py'),
-        title: l.pythonCheckTitle,
-        environment: lang != null ? {'COLLABO_LANG': lang} : null,
-      ),
-    );
-  }
-
-  Future<void> _openSettings(BuildContext context) {
-    return showDialog<void>(
-      context: context,
-      builder: (_) => _PythonSettingsDialog(workspace: workspace),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.code, size: 18),
+          Icon(Icons.error_outline, size: 18, color: theme.colorScheme.error),
           const SizedBox(width: 6),
-          Text(l.pythonEnv),
-          const Spacer(),
-          OutlinedButton.icon(
-            onPressed: () => _check(context),
-            icon: const Icon(Icons.health_and_safety_outlined, size: 18),
-            label: Text(l.statusCheck),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.tonalIcon(
-            onPressed: () => _openSettings(context),
-            icon: const Icon(Icons.settings, size: 18),
-            label: Text(l.pythonSettings),
+          Expanded(
+            child: Text(
+              status,
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
+            ),
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Python 설정: 사용자가 인터프리터를 직접 선택한다(자동 다운로드 없음).
-///
-/// 경로는 직접 입력(텍스트 필드)하거나 파일 선택으로 지정할 수 있고,
-/// 입력을 멈춘 뒤 잠시 후 자동으로 검증되어 "확인됨" 표시가 갱신된다.
-class _PythonSettingsDialog extends StatefulWidget {
-  const _PythonSettingsDialog({required this.workspace});
-  final WorkspaceController workspace;
-
-  @override
-  State<_PythonSettingsDialog> createState() => _PythonSettingsDialogState();
-}
-
-class _PythonSettingsDialogState extends State<_PythonSettingsDialog> {
-  static final Uri _downloadUrl = Uri.parse('https://www.python.org/downloads/');
-
-  /// 입력 후 자동 검증까지의 대기 시간.
-  static const Duration _verifyDelay = Duration(milliseconds: 700);
-
-  late final TextEditingController _controller;
-  Timer? _debounce;
-
-  WorkspaceController get _ws => widget.workspace;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: _ws.pythonInterpreter ?? '');
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  /// 입력 중에는 디바운스로 기다렸다가, 멈추면 경로를 적용/저장한다.
-  void _onChanged(String value) {
-    _debounce?.cancel();
-    _debounce = Timer(_verifyDelay, () => _commit(value));
-  }
-
-  Future<void> _commit(String value) async {
-    final path = value.trim();
-    if (path == (_ws.pythonInterpreter ?? '')) return;
-    await _ws.setPythonInterpreter(path);
-  }
-
-  /// venv 경로 + 준비 상태 + 재생성 버튼. 상태 변화 시 ListenableBuilder 로 갱신됨.
-  Widget _venvStatusRow(AppLocalizations l, ThemeData theme) {
-    final vp = _ws.venvPath;
-    if (vp == null) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 2),
-        child: Text(l.venvNoProject, style: theme.textTheme.bodySmall),
-      );
-    }
-    final status = _ws.venvStatus;
-    final small = theme.textTheme.bodySmall;
-    Widget indicator;
-    switch (status) {
-      case VenvStatus.creating:
-        indicator = Row(children: [
-          const SizedBox(
-              width: 14, height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2)),
-          const SizedBox(width: 8),
-          Text(l.venvCreating, style: small),
-        ]);
-      case VenvStatus.ready:
-        indicator = Row(children: [
-          const Icon(Icons.check_circle, size: 16, color: Colors.green),
-          const SizedBox(width: 6),
-          Expanded(child: Text(l.venvReady, style: small)),
-        ]);
-      case VenvStatus.error:
-        indicator = Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.error, size: 16, color: theme.colorScheme.error),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                _ws.venvError.isEmpty ? l.venvFailed
-                    : '${l.venvFailed}\n${_ws.venvError}',
-                style: small?.copyWith(color: theme.colorScheme.error),
-              ),
-            ),
-          ],
-        );
-      case VenvStatus.idle:
-        indicator = Text(l.venvNotCreated, style: small);
-    }
-    final busy = status == VenvStatus.creating;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 2),
-        Text(vp,
-            style: small?.copyWith(fontFamily: 'monospace'),
-            maxLines: 1, overflow: TextOverflow.ellipsis),
-        const SizedBox(height: 4),
-        indicator,
-        const SizedBox(height: 6),
-        OutlinedButton.icon(
-          onPressed: busy ? null : () => _ws.recreateVenv(),
-          icon: const Icon(Icons.refresh, size: 16),
-          label: Text(status == VenvStatus.ready ? l.venvRecreate : l.venvCreate),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _pick(String allFilesLabel) async {
-    final String? path;
-    if (MacFilePicker.supported) {
-      // macOS: venv 의 bin/python 심링크를 풀지 않고 고른 경로 그대로 받는다
-      // (file_selector/기본 패널은 심링크를 base 로 해석해 venv 가 깨진다).
-      path = await MacFilePicker.pickFile();
-    } else {
-      // Windows 는 python.exe, 그 외는 확장자 없는 실행 파일.
-      final file = await openFile(acceptedTypeGroups: [
-        const XTypeGroup(label: 'Python', extensions: ['exe']),
-        XTypeGroup(label: allFilesLabel),
-      ]);
-      path = file?.path;
-    }
-    if (path == null) return;
-    _debounce?.cancel();
-    _controller.text = path;
-    await _ws.setPythonInterpreter(path);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final l = AppLocalizations.of(context);
-    return AlertDialog(
-      title: Text(l.pythonSettings),
-      content: SizedBox(
-        width: 480,
-        child: ListenableBuilder(
-          listenable: _ws,
-          builder: (context, _) {
-            final path = _ws.pythonInterpreter;
-            final installed = _ws.pythonInstalled;
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(l.selectPythonPrompt),
-                const SizedBox(height: 10),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        onChanged: _onChanged,
-                        style: const TextStyle(fontSize: 12),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          hintText: l.notSelected,
-                          border: const OutlineInputBorder(),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 10),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: () => _pick(l.allFiles),
-                      icon: const Icon(Icons.folder_open, size: 18),
-                      label: Text(l.selectPython),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (path != null)
-                  Row(
-                    children: [
-                      Icon(installed ? Icons.check_circle : Icons.error,
-                          size: 16,
-                          color: installed
-                              ? Colors.green
-                              : theme.colorScheme.error),
-                      const SizedBox(width: 6),
-                      Text(installed ? l.pythonVerified : l.pythonMissing),
-                    ],
-                  ),
-                const Divider(height: 24),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: Text(l.usePerProjectVenv),
-                  subtitle: Text(l.usePerProjectVenvDesc,
-                      style: theme.textTheme.bodySmall),
-                  value: _ws.useVenv,
-                  onChanged: (v) => _ws.setUseVenv(v),
-                ),
-                if (_ws.useVenv) _venvStatusRow(l, theme),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Text(l.pythonMissingQuestion, style: theme.textTheme.bodySmall),
-                    InkWell(
-                      onTap: () => launchUrl(_downloadUrl,
-                          mode: LaunchMode.externalApplication),
-                      child: Text(
-                        l.downloadFromPythonOrg,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.primary,
-                          decoration: TextDecoration.underline,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () async {
-            // 닫기 전에 디바운스 중인 입력을 즉시 반영한다.
-            _debounce?.cancel();
-            await _commit(_controller.text);
-            if (context.mounted) Navigator.of(context).pop();
-          },
-          child: Text(l.close),
-        ),
-      ],
     );
   }
 }
@@ -2514,6 +2448,7 @@ class _AppearanceTab extends StatelessWidget {
             Text(l.language),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: workspace.localeCode,
               decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
               items: [

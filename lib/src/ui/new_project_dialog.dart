@@ -1,11 +1,13 @@
 import 'dart:io';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../l10n/app_localizations.dart';
 import '../fs/entry_name.dart';
+import '../platform/platform_features.dart';
+import 'adaptive.dart';
+import 'folder_picker_dialog.dart';
 
 // 이름 규칙은 트리의 새 파일/폴더·이름 변경과 공유한다(../fs/entry_name.dart).
 // 예전부터 이 파일에서 import 하던 곳이 있어 그대로 다시 내보낸다.
@@ -48,7 +50,8 @@ class _NewProjectDialogState extends State<_NewProjectDialog> {
   @override
   void initState() {
     super.initState();
-    _parentDir = widget.initialDir; // 직전 워크스페이스를 기본값으로
+    // 직전 워크스페이스를 기본값으로. iOS 는 처음이면 앱 Documents/Projects.
+    _parentDir = widget.initialDir ?? PlatformFeatures.projectsDir;
   }
 
   @override
@@ -82,7 +85,7 @@ class _NewProjectDialogState extends State<_NewProjectDialog> {
       !_creating;
 
   Future<void> _pickDir() async {
-    final dir = await getDirectoryPath(
+    final dir = await pickDirectory(context,
         initialDirectory: _parentDir,
         confirmButtonText: AppLocalizations.of(context).selectButton);
     // 경로를 고르면 경로 관련 오류 표시는 자동으로 사라진다(실시간 재계산).
@@ -131,7 +134,7 @@ class _NewProjectDialogState extends State<_NewProjectDialog> {
     return AlertDialog(
       title: Text(l.newProjectTitle),
       content: SizedBox(
-        width: 460,
+        width: adaptiveDialogWidth(context, 460),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,

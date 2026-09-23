@@ -34,15 +34,34 @@ Widget _app(WorkspaceController wc) => MaterialApp(
 void main() {
   setUpAll(initSqliteFfi);
 
-  testWidgets('시스템 Python 모드이고 프로젝트가 없으면 안내만 한다', (tester) async {
+  testWidgets('런타임이 없으면 도구를 쓸 수 없다고 알린다', (tester) async {
+    // 런타임을 못 찾은 상태(debugUseSandbox 를 부르지 않았다) — 만들 머신이 없다.
     final wc = WorkspaceController();
     await tester.pumpWidget(_app(wc));
-    expect(find.text('도구가 시스템 Python 으로 실행되도록 설정되어 있습니다. 설정 → 도구에서 샌드박스로 바꿀 수 있습니다.'),
-        findsOneWidget);
+    expect(find.textContaining('샌드박스 런타임이 앱에 들어 있지 않습니다'), findsOneWidget);
     expect(find.textContaining('열린 프로젝트가 없습니다'), findsOneWidget);
   });
 
   final runtime = _runtime();
+
+  testWidgets('샌드박스 모드면 프로젝트가 없어도 시스템 머신이 목록 맨 위에 있다', (tester) async {
+    final tools = Directory('assets/python').absolute.path;
+    final wc = WorkspaceController()
+      ..debugUseSandbox(runtime: runtime!, baseModules: [p.join(tools, 'collabo_tools.py')]);
+    await tester.pumpWidget(_app(wc));
+    await tester.pump();
+
+    // 앱에 하나 고정 — 프로젝트 머신을 대신 켜지 않는다(설정 창이 그랬다).
+    expect(find.text('시스템 샌드박스'), findsWidgets);
+    expect(find.textContaining('열린 프로젝트가 없습니다'), findsNothing);
+    expect(find.textContaining('프로젝트에 속하지 않는 도구 작업'), findsOneWidget,
+        reason: '고른 것이 없으면 시스템 머신을 보여 준다');
+    expect(wc.systemSandboxRunning, isFalse, reason: '화면을 여는 것만으로 부팅하지는 않는다');
+
+    await tester.runAsync(() => wc.stopSystemSandbox());
+    wc.dispose();
+  }, skip: runtime == null); // collabo_core_runtime 없음
+
   testWidgets('떠 있는 머신의 root 셸에 명령을 보내고 답을 본다', (tester) async {
     final tmp = Directory.systemTemp.createTempSync('collabo-sbxpanel-');
     File(p.join(tmp.path, 'marker.txt')).writeAsStringSync('hi');
